@@ -1,0 +1,39 @@
+{
+  "name": "amiri-finance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AMIRI Finance \u2014 production-grade financial management / accounting ERP",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "db:up": "docker compose up -d && node scripts/wait-for-mongo.mjs",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && npm run db:up",
+    "db:local": "node scripts/dev-mongo.mjs",
+    "build:shared": "npm run build --workspace @amiri/shared",
+    "dev": "npm run build:shared && concurrently -n api,web -c cyan,magenta \"npm run dev --workspace @amiri/api\" \"npm run dev --workspace @amiri/web\"",
+    "dev:api": "npm run dev --workspace @amiri/api",
+    "dev:web": "npm run dev --workspace @amiri/web",
+    "build": "npm run build:shared && npm run build --workspace @amiri/api && npm run build --workspace @amiri/web",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "npm run build:shared && npm run test --workspace @amiri/api && npm run test --workspace @amiri/web",
+    "seed": "npm run seed --workspace @amiri/api",
+    "test:api": "npm run build:shared && npm run test --workspace @amiri/api",
+    "test:web": "npm run build:shared && npm run test --workspace @amiri/web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  },
+  "//overrides": "Vitest and the web app both depend on Vite. Two installed copies means two sets of Plugin types, and @vitejs/plugin-react then fails to typecheck against the app's Vite. Pinning one version keeps a single copy hoisted.",
+  "overrides": {
+    "vite": "^6.0.7"
+  }
+}

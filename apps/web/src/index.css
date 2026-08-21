@@ -1,0 +1,331 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Design tokens.
+ *
+ * Light and dark are two independently authored palettes, not one inverted (§49). The
+ * dark surfaces are a desaturated navy-charcoal rather than pure black: on an OLED panel
+ * true black next to white text produces harsh halation, and a slight blue cast reads as
+ * "financial instrument" rather than "terminal".
+ *
+ * Accent is indigo. Success/warning/danger are tuned so that at their `subtle` weights
+ * they still clear 4.5:1 against their foreground in both themes — a status chip that is
+ * unreadable is worse than no chip.
+ */
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 32% 12%;
+
+    --surface: 0 0% 100%;
+    --surface-muted: 210 20% 96%;
+    --surface-raised: 0 0% 100%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 32% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 32% 12%;
+
+    /* Deep navy — the "high trust" anchor of the palette. */
+    --primary: 224 44% 20%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 20% 94%;
+    --secondary-foreground: 222 32% 18%;
+
+    --muted: 210 20% 95%;
+    --muted-foreground: 215 16% 44%;
+
+    /* Electric indigo — interactive accent, links, selection, focus. */
+    --accent: 239 68% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 47%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 60% 34%;
+    --success-foreground: 0 0% 100%;
+    --success-subtle: 152 55% 94%;
+
+    --warning: 35 85% 44%;
+    --warning-foreground: 0 0% 100%;
+    --warning-subtle: 40 90% 94%;
+
+    --info: 214 80% 48%;
+    --info-foreground: 0 0% 100%;
+    --info-subtle: 214 90% 95%;
+
+    /* Money in / money out. Distinct from success/danger on purpose: an outgoing payment
+       is not an error, and colouring it with the same red as a failure trains people to
+       ignore real failures. */
+    --money-in: 152 62% 30%;
+    --money-out: 4 66% 46%;
+    --money-neutral: 215 16% 44%;
+
+    --border: 214 20% 89%;
+    --input: 214 20% 89%;
+    --ring: 239 68% 58%;
+    --shadow: 222 40% 20%;
+
+    --sidebar: 224 44% 14%;
+    --sidebar-foreground: 214 25% 84%;
+    --sidebar-muted: 215 18% 58%;
+    --sidebar-accent: 239 70% 66%;
+    --sidebar-border: 224 35% 22%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 224 38% 8%;
+    --foreground: 210 24% 93%;
+
+    --surface: 224 34% 11%;
+    --surface-muted: 224 32% 14%;
+    --surface-raised: 224 32% 13%;
+
+    --card: 224 34% 11%;
+    --card-foreground: 210 24% 93%;
+
+    --popover: 224 34% 12%;
+    --popover-foreground: 210 24% 93%;
+
+    --primary: 210 30% 92%;
+    --primary-foreground: 224 44% 12%;
+
+    --secondary: 224 28% 17%;
+    --secondary-foreground: 210 24% 90%;
+
+    --muted: 224 26% 16%;
+    --muted-foreground: 215 18% 62%;
+
+    /* Lifted and slightly desaturated: the light-mode indigo vibrates on a dark ground. */
+    --accent: 239 74% 68%;
+    --accent-foreground: 224 44% 10%;
+
+    --destructive: 0 66% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 52% 46%;
+    --success-foreground: 224 44% 10%;
+    --success-subtle: 152 40% 16%;
+
+    --warning: 38 88% 58%;
+    --warning-foreground: 224 44% 10%;
+    --warning-subtle: 38 50% 16%;
+
+    --info: 214 84% 64%;
+    --info-foreground: 224 44% 10%;
+    --info-subtle: 214 50% 18%;
+
+    --money-in: 152 54% 52%;
+    --money-out: 6 74% 62%;
+    --money-neutral: 215 18% 62%;
+
+    --border: 224 24% 20%;
+    --input: 224 24% 22%;
+    --ring: 239 74% 68%;
+    --shadow: 224 60% 2%;
+
+    --sidebar: 224 38% 10%;
+    --sidebar-foreground: 214 22% 80%;
+    --sidebar-muted: 215 16% 54%;
+    --sidebar-accent: 239 74% 70%;
+    --sidebar-border: 224 26% 18%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+  }
+
+  /* A single visible focus treatment everywhere — keyboard operation is a stated
+     requirement (§42), and it is unusable if focus is invisible on half the controls. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Shown only on paper — see the print block at the foot of this file. */
+  .print-only {
+    display: none;
+  }
+
+  /* Amounts use tabular figures so columns of numbers line up digit for digit. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  ::selection {
+    @apply bg-accent/25;
+  }
+
+  /* Slim, unobtrusive scrollbars — a data-dense app has a lot of them. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Skeleton shimmer, used by every loading state. */
+  .skeleton-shimmer {
+    @apply relative overflow-hidden;
+  }
+  .skeleton-shimmer::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-foreground/[0.06] to-transparent;
+    content: "";
+  }
+
+  /* Sticky table header (§42). Needs a solid background or rows show through as they
+     scroll under it. */
+  .table-sticky-head th {
+    @apply sticky top-0 z-10 bg-surface-muted/95 backdrop-blur supports-[backdrop-filter]:bg-surface-muted/80;
+  }
+}
+
+/**
+ * Print (§53).
+ *
+ * Somebody will press Ctrl-P on the Balance Sheet. Without this they get the sidebar, the
+ * topbar, the date pickers and an export dropdown across four pages, with the actual
+ * report cut off at a scroll boundary. The exports are the proper route out of the system
+ * — they carry the provenance block §54 requires — but printing has to produce something
+ * defensible rather than something broken.
+ *
+ * `screen-only` marks chrome that has no business on paper; `print-full` releases a
+ * virtualised table from its scroll container so the whole thing prints rather than the
+ * visible window. Both are opt-in classes, so a screen has to say what it means.
+ */
+@media print {
+  @page {
+    margin: 14mm 12mm;
+  }
+
+  /* Force the light palette. A dark-mode print is a page of toner and unreadable text. */
+  :root,
+  .dark {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --surface: 0 0% 100%;
+    --surface-muted: 0 0% 96%;
+    --muted-foreground: 0 0% 30%;
+    --border: 0 0% 75%;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Application chrome: navigation, toolbars, actions, toasts. */
+  .screen-only,
+  aside,
+  header,
+  nav,
+  [data-sonner-toaster],
+  [role="dialog"] {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  /*
+   * Release a table from its scroll box so it prints in full rather than being clipped at
+   * the visible window.
+   *
+   * This works for every table SHORT enough that the virtualiser bypassed itself — which
+   * is the common case. It cannot conjure rows that were never rendered: above the
+   * windowing threshold the DOM genuinely holds only the drawn slice, and no stylesheet
+   * fixes that. A printout that looks complete and is not is the §66 failure in paper
+   * form, so those screens print `.print-only` text saying so and pointing at the export
+   * instead of quietly handing over a subset.
+   */
+  .print-full {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Cards become ruled blocks; shadows and rounding are screen affordances. */
+  .rounded-lg,
+  .rounded-md {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  /* Repeat the header on every page — a table's second page is meaningless without it. */
+  thead {
+    display: table-header-group;
+  }
+
+  tr,
+  img {
+    break-inside: avoid;
+  }
+
+  th,
+  td {
+    border-bottom: 1px solid #ccc !important;
+    padding: 4px 6px !important;
+    font-size: 10pt !important;
+  }
+
+  h1 {
+    font-size: 15pt !important;
+  }
+
+  /* A URL is worth having on a printed page; the app's own links are not. */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 8pt;
+    color: #555;
+  }
+}

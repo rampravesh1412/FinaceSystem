@@ -1,0 +1,31 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+uploads/
+tmp/
+logs/
+*.log
+npm-debug.log*
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.mongo-data/
+
+# The web app is TypeScript end to end; vite does the compiling. A .js under src/ is a
+# stale build artefact — it shadows nothing while its source exists, and silently keeps
+# being served once the source is deleted.
+apps/web/src/**/*.js
+apps/web/src/**/*.js.map
+# Config files too: a compiled vite.config.js takes precedence over vite.config.ts, so a
+# stale one silently overrides every change made to the real config.
+apps/web/vite.config.js
