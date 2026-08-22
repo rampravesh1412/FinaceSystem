@@ -9,7 +9,7 @@
 # That is not a deployment convenience — apps/web/src/lib/api.ts hardcodes `/api/v1` and
 # the refresh cookie is SameSite=Strict, so a second origin would silently drop it.
 
-FROM node:20-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 ENV CI=1
 

@@ -7,8 +7,9 @@
     "packages/*",
     "apps/*"
   ],
+  "//engines": "Floor set by jsdom 30, which the web test environment needs: on Node 20 its undici fails to define webidl.util.markAsUncloneable and every web suite dies on import. Kept identical to jsdom's own range so the reason stays traceable. .nvmrc pins the major CI and the images build with.",
   "engines": {
-    "node": ">=20.11"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "db:up": "docker compose up -d && node scripts/wait-for-mongo.mjs",

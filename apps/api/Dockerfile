@@ -9,7 +9,7 @@
 # libc, and the glibc build is the one that is always published. On musl a missing prebuild
 # falls back to compiling Rust from source inside the image.
 
-FROM node:20-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 WORKDIR /app
 ENV CI=1
 

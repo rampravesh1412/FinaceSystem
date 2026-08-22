@@ -12,9 +12,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: "20"
-
 jobs:
   verify:
     name: Typecheck, test, build
@@ -24,9 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # .nvmrc is the single source of truth for the Node major, shared with local dev and
+      # the Dockerfiles. It exists because CI silently ran Node 20 while development ran
+      # 24: jsdom 30 requires ^22.22.2 || ^24.15.0, and on 20 it fails on import with
+      # `webidl.util.markAsUncloneable is not a function` — 200 lines of undici stack for
+      # what is a one-number mismatch.
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
 
       # The API suite runs against a real mongod that mongodb-memory-server downloads on
