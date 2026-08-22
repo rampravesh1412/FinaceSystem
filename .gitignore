@@ -29,3 +29,7 @@ apps/web/src/**/*.js.map
 # Config files too: a compiled vite.config.js takes precedence over vite.config.ts, so a
 # stale one silently overrides every change made to the real config.
 apps/web/vite.config.js
+
+# Server-side secrets. Written on the box by bootstrap-server.sh, excluded from the
+# deploy rsync, and never in a commit.
+deploy/api.env

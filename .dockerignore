@@ -1,0 +1,32 @@
+# Everything the image builds from is source. Anything installed, built or generated
+# locally is rebuilt inside the image, and copying it in would both bloat the context and
+# risk a host-arch native module (argon2) landing in a linux image.
+node_modules
+**/node_modules
+dist
+**/dist
+build
+coverage
+**/coverage
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+.git
+.github
+.mongo-data
+docs
+scripts
+
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
+uploads
+tmp
+logs
+*.log
+
+.DS_Store
+.idea
+.vscode

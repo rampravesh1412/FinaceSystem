@@ -3,7 +3,7 @@ import {
   ArrowLeftRight, BadgeIndianRupee, BookOpen, Building2, CalendarClock, ClipboardCheck,
   Coins, CreditCard, FileBarChart, FileSpreadsheet, Landmark, LayoutDashboard, Notebook,
   PiggyBank, Receipt, ScrollText, Scale, Settings, ShieldCheck, TrendingDown, TrendingUp,
-  Users, Wallet, Percent, Handshake, ListChecks, History, Upload, FolderTree,
+  Users, Wallet, Percent, Handshake, ListChecks, History, Upload, FolderTree, Layers,
 } from "lucide-react";
 import type { Permission } from "@amiri/shared";
 
@@ -64,7 +64,10 @@ export const NAVIGATION: NavSection[] = [
       { label: "Digital Khata", to: "/khata", icon: BadgeIndianRupee, permission: "finance.khata.view", phase: 4, keywords: ["lena", "dena", "udhaar"] },
       { label: "Credit", to: "/credit", icon: CreditCard, permission: "finance.party.view", phase: 4, keywords: ["outstanding", "overdue", "aging"] },
       { label: "Bachat Khata", to: "/savings", icon: PiggyBank, permission: "finance.savings.view", phase: 4, keywords: ["savings", "deposit"] },
+      { label: "Savings Ledger", to: "/savings-ledger", icon: BookOpen, permission: "finance.ledger.view", phase: 10, keywords: ["member statement"] },
       { label: "Party Ledger", to: "/party-ledger", icon: ScrollText, permission: "finance.ledger.view", phase: 7, keywords: ["statement"] },
+      { label: "General Ledger", to: "/ledger", icon: Layers, permission: "finance.ledger.view", phase: 10, keywords: ["chart of accounts", "any account", "suspense", "equity"] },
+      { label: "Branch Ledger", to: "/branch-ledger", icon: Building2, permission: "reports.trialBalance", phase: 10, keywords: ["per branch", "branch trial balance"] },
       { label: "Import Parties", to: "/import", icon: Upload, permission: "import.run", phase: 7, keywords: ["bulk", "csv", "excel", "upload", "migrate"] },
     ],
   },
@@ -74,6 +77,8 @@ export const NAVIGATION: NavSection[] = [
       { label: "Expenses", to: "/expenses", icon: Receipt, permission: "finance.expense.view", phase: 3, keywords: ["salary", "rent", "panel", "domain"] },
       { label: "Income", to: "/income", icon: Coins, permission: "finance.income.view", phase: 3 },
       { label: "Expense & Income Heads", to: "/heads", icon: FolderTree, permission: "finance.expense.view", phase: 10, keywords: ["category", "head", "chart of accounts", "salary", "rent"] },
+      { label: "Expense Ledger", to: "/expense-ledger", icon: Receipt, permission: "finance.ledger.view", phase: 10, keywords: ["head statement", "spend by head"] },
+      { label: "Income Ledger", to: "/income-ledger", icon: Coins, permission: "finance.ledger.view", phase: 10, keywords: ["head statement", "earned by head"] },
       { label: "Charges & Commission", to: "/charges", icon: Percent, permission: "finance.charges.view", phase: 7, keywords: ["distributor", "rate"] },
     ],
   },

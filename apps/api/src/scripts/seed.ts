@@ -265,8 +265,8 @@ async function main(): Promise<void> {
   const branches = await seedBranches();
 
   const superAdmin = await seedUser({
-    name: "Ram Pravesh",
-    email: "superadmin@amiri.co",
+    name: "Super Admin",
+    email: "superadmin@amiri.com",
     roleId: roles.get("SUPER_ADMIN")!,
     // Cosmetic for a SuperAdmin: it only pre-selects a branch in the picker. Their
     // access does not come from this list.

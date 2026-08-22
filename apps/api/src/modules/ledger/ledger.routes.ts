@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { ledgerAccountQuerySchema, ledgerEntryQuerySchema, objectId, type LedgerAccountQuery } from "@amiri/shared";
-import { asyncHandler, ok, paginated, paging } from "../../lib/http.js";
+import { asyncHandler, escapeRegex, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
 import { requireAuth, requireBranchAccess, requirePermission, scopeOf } from "../../middleware/auth.js";
 import { LedgerAccount, LedgerEntry } from "../../models/index.js";
@@ -44,6 +44,29 @@ ledgerRouter.get(
 
     if (query.kind) filter.kind = query.kind;
     if (query.activeOnly) filter.cachedEntryCount = { $gt: 0 };
+
+    /**
+     * Search, server-side.
+     *
+     * The chart of accounts grows with the business — one row per party, per drawer, per
+     * head — so a deployment with five thousand parties has five thousand accounts. A
+     * picker that fetched the first page and filtered it in the browser would silently
+     * offer 200 of them, and an operator searching for a party that exists would be told
+     * it does not.
+     *
+     * The scope clause is nested under `$and` rather than replaced: overwriting `filter.$or`
+     * here would drop branch isolation and search the whole organisation (§3).
+     */
+    if (query.q?.trim()) {
+      const rx = new RegExp(escapeRegex(query.q.trim()), "i");
+      const search = [{ name: rx }, { code: rx }];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: search }];
+        delete filter.$or;
+      } else {
+        filter.$or = search;
+      }
+    }
 
     const [items, total] = await Promise.all([
       LedgerAccount.find(filter).sort(page.sort).skip(page.skip).limit(page.limit).lean(),

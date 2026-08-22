@@ -1075,3 +1075,50 @@ was not being cleared. `button.test.tsx` covers the `asChild` construction direc
 Both were checked against the unfixed code before being kept: reverting `Slottable` makes
 them fail with the original error. A regression test that does not fail on the bug it names
 is decoration.
+
+
+---
+
+## 20. A ledger for everything
+
+§4.1 says every balance-bearing thing is a row in one `LedgerAccount` collection. The UI
+had only ever exposed three of the nine kinds, so most of the chart of accounts had no
+screen at all — no way to open an expense head, an income head, a savings account, equity,
+or suspense.
+
+Since the ledger does not distinguish between kinds, neither does the screen: `LedgerBookPage`
+was already parameterised by kind, so the additions are presets over one implementation.
+Cash Book, Bank Book, Party Ledger, Expense Ledger, Income Ledger, Savings Ledger, and a
+**General Ledger** over all nine.
+
+Suspense is the one worth being able to open directly: §62 sends every unexplained
+difference there, and somebody has to go and look at it.
+
+### 20.1 A branch is not an account
+
+Which is why the Branch Ledger is shaped differently. There is no single running balance to
+show — a branch is a GROUPING of accounts, and its ledger is all of them side by side.
+
+That makes it, precisely, a trial balance scoped to one branch, so it is built on
+`trialBalance({ branchId })` rather than a second aggregation computing the same figures a
+slightly different way.
+
+The property it exists to demonstrate: **each branch ties on its own.** Every posting
+carries a `branchId` on both sides, so debits equal credits within a branch, not merely
+across the organisation. A branch that did not balance could be masked on the org-wide
+report by another branch carrying the opposite error, and this is the only screen that
+would show it. Verified against real data — all six branches tie independently.
+
+### 20.2 Two defects found while building it
+
+**The account picker asked for 500 rows.** `MAX_PAGE_SIZE` is 200, and the server refuses
+anything larger with a 422 rather than truncating. The General Ledger would have loaded to
+a permanently empty picker. A test now asserts no request exceeds the cap.
+
+**Search was client-side over a partial page.** The chart of accounts grows with the
+business — one row per party, per drawer, per head — so a deployment with five thousand
+parties has five thousand accounts. Filtering the first 200 in the browser would report "no
+matches" for an account that exists on page two. `GET /ledger/accounts` now accepts `q` and
+searches server-side, with the scope clause nested under `$and` so the search cannot drop
+branch isolation (§3). When the list is capped, the picker says how many of how many it is
+showing rather than looking complete.

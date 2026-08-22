@@ -1,0 +1,141 @@
+# Deployment — account.amiri247.in
+
+`main` → GitHub Actions → GHCR → `16.16.129.104`.
+
+```
+ push to main
+      │
+      ├── test      .github/workflows/ci.yml   typecheck · vitest (api + web) · build
+      │
+      ├── build     two images, tagged sha-<commit>, pushed to GHCR
+      │               ghcr.io/rampravesh1412/finacesystem-api
+      │               ghcr.io/rampravesh1412/finacesystem-web
+      │
+      └── deploy    rsync deploy/ → ssh → deploy.sh
+                        docker compose pull · mongo-init · up --wait
+                        verify https://account.amiri247.in/api/v1/
+                        roll back to the previous tags on any failure
+```
+
+The server never builds. It pulls the exact images CI tested, which is what makes a
+rollback a one-line change of tag rather than a rebuild on a box with one vCPU.
+
+## What runs on the server
+
+| Container | Image | Ports | Notes |
+|---|---|---|---|
+| `amiri-mongo` | `mongo:7` | none published | single-node replica set `rs0`, keyfile auth |
+| `amiri-api` | `…-api:sha-…` | `4000` internal | Express, runs as `node`, healthchecked on `/health` |
+| `amiri-web` | `…-web:sha-…` | `80`, `443` | nginx: TLS, the Vite build, and `/api` → api |
+
+MongoDB is a **replica set even though there is one node**, for the same reason it is in
+development: every money movement posts inside a multi-document transaction and a
+standalone `mongod` refuses to open the session.
+
+`/api` is proxied on the same origin rather than given its own subdomain, because
+`apps/web/src/lib/api.ts` hardcodes `/api/v1` and the refresh cookie is `SameSite=Strict`
+— a second origin would drop it on every refresh.
+
+### Files on the box
+
+```
+/srv/amiri/
+├── deploy/                  rsynced from this directory on every deploy
+│   ├── docker-compose.prod.yml
+│   ├── scripts/
+│   ├── .env                 generated once by bootstrap · NOT in git · Mongo password
+│   └── api.env              generated once by bootstrap · NOT in git · JWT secrets
+├── secrets/mongo-keyfile    replica-set internal auth, 0400 uid 999
+├── secrets/ci_deploy_key    the key GitHub Actions authenticates with
+├── uploads/                 bind-mounted into the api container
+├── certbot-www/             ACME challenge webroot
+└── backups/                 nightly mongodump, 14 kept
+```
+
+`.env` and `api.env` are excluded from the rsync in both directions. They hold generated
+secrets that exist only on the server; overwriting them would rotate the database password
+out from under a running Mongo and log every user out.
+
+## First-time setup
+
+**1. Bootstrap the server** — installs Docker, creates the `deploy` user, generates
+secrets, opens 22/80/443 and installs the renewal and backup timers.
+
+```bash
+scp deploy/scripts/bootstrap-server.sh root@16.16.129.104:/tmp/
+ssh root@16.16.129.104 'DOMAIN=account.amiri247.in bash /tmp/bootstrap-server.sh'
+```
+
+It prints the four repository secrets to set, including the private key it generated.
+Copy them before closing the terminal.
+
+**2. DNS** — point `account.amiri247.in` at `16.16.129.104` and wait for it:
+
+```bash
+dig +short account.amiri247.in     # must print 16.16.129.104
+```
+
+**3. Repository secrets** — Settings ▸ Secrets and variables ▸ Actions:
+
+| Secret | Value |
+|---|---|
+| `SSH_HOST` | `16.16.129.104` |
+| `SSH_USER` | `deploy` |
+| `SSH_PRIVATE_KEY` | the key printed by bootstrap, `BEGIN`/`END` lines included |
+| `SSH_KNOWN_HOSTS` | the host-key line printed by bootstrap |
+
+Pinned from a secret rather than `ssh-keyscan`ed at deploy time — keyscan trusts whatever
+answers, which is no verification at all.
+
+**4. Push to main.** The first deploy brings the stack up on a self-signed placeholder
+certificate; the site works, the browser warns.
+
+**5. Issue the real certificate:**
+
+```bash
+# as root — certbot writes to /etc/letsencrypt
+ssh root@16.16.129.104 \
+  'LETSENCRYPT_EMAIL=you@example.com /srv/amiri/deploy/scripts/issue-cert.sh'
+```
+
+**6. Seed the first admin user, once:**
+
+```bash
+ssh deploy@16.16.129.104 /srv/amiri/deploy/scripts/seed.sh
+```
+
+## Day to day
+
+```bash
+# what is live
+ssh deploy@16.16.129.104 'grep IMAGE /srv/amiri/deploy/.env'
+
+# logs
+ssh deploy@16.16.129.104 \
+  'docker compose -f /srv/amiri/deploy/docker-compose.prod.yml logs -f --tail=100 api'
+
+# manual rollback to any previously built commit
+ssh deploy@16.16.129.104 '/srv/amiri/deploy/scripts/deploy.sh \
+  ghcr.io/rampravesh1412/finacesystem-api:sha-<commit> \
+  ghcr.io/rampravesh1412/finacesystem-web:sha-<commit>'
+
+# backup now
+ssh deploy@16.16.129.104 /srv/amiri/deploy/scripts/backup.sh
+```
+
+Re-running the Deploy workflow from the Actions tab with **skip_tests** checked is the
+fast path for a hotfix; it still builds and still health-gates the rollout.
+
+## Known gaps
+
+- **Backups are on the same disk as the database.** They survive a bad migration, not a
+  lost instance. Ship `/srv/amiri/backups` to S3 or another host before treating the
+  ledger as backed up.
+- **No staging environment.** `main` is production. A second box would mean a second
+  `.env`, a second domain, and an `environment:` matrix in the deploy job.
+- **One node, so downtime on deploy is real** — a few seconds while the API container is
+  replaced. Zero-downtime needs two API replicas and nginx retrying the dead one, which
+  needs the ledger's in-process state audited for it first.
+- **`npm run lint` is not wired into CI** because the repo has neither an ESLint config nor
+  the dependency; the `lint` script would fail on the first run. Add both and it belongs
+  in `ci.yml` next to `typecheck`.

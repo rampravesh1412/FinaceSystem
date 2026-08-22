@@ -1,0 +1,114 @@
+# Production stack for account.amiri247.in.
+#
+# Lives on the server at /srv/amiri/deploy/ — the deploy workflow rsyncs this directory on
+# every run, so config changes ship with the code that needs them. Values come from
+# /srv/amiri/deploy/.env (written once by bootstrap-server.sh, never committed).
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Only the web container publishes ports. Mongo and the API are reachable on the internal
+# bridge network and nowhere else — a finance database has no business being addressable
+# from the internet even behind a password.
+
+name: amiri
+
+services:
+  # -------------------------------------------------------------------------------------
+  # MongoDB — SINGLE-NODE REPLICA SET, exactly as in development.
+  #
+  # Not a preference: every money movement in this system posts inside a multi-document
+  # transaction, and a standalone mongod rejects the session outright. See the comment at
+  # the top of the repo's docker-compose.yml.
+  #
+  # --keyFile turns on both internal member authentication and client authentication. The
+  # replica set is initialised and the root user created once, by scripts/mongo-init.sh,
+  # through the localhost exception.
+  # -------------------------------------------------------------------------------------
+  mongo:
+    image: mongo:7
+    container_name: amiri-mongo
+    restart: unless-stopped
+    command:
+      - "--replSet"
+      - "rs0"
+      - "--bind_ip_all"
+      - "--port"
+      - "27017"
+      - "--keyFile"
+      - "/etc/mongo/keyfile"
+    environment:
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+      - ${DATA_DIR}/secrets/mongo-keyfile:/etc/mongo/keyfile:ro
+      - ${DATA_DIR}/backups:/backups
+    healthcheck:
+      # `$$` keeps compose from interpolating — the password is read inside the container
+      # rather than baked into the healthcheck command line. Unhealthy until mongo-init.sh
+      # has created the root user, which is the correct reading of "not ready to serve".
+      test:
+        - CMD-SHELL
+        - >
+          mongosh --quiet --norc
+          -u "$$MONGO_ROOT_USER" -p "$$MONGO_ROOT_PASSWORD" --authenticationDatabase admin
+          --eval "db.hello().isWritablePrimary" | grep -q true
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # -------------------------------------------------------------------------------------
+  # API
+  # -------------------------------------------------------------------------------------
+  api:
+    image: ${API_IMAGE}
+    container_name: amiri-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file:
+      - ${DATA_DIR}/deploy/api.env
+    environment:
+      # Assembled here so the password has exactly one source of truth (.env) and is not
+      # copied into a second file. `authSource=admin` because the root user lives there.
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/?replicaSet=rs0&authSource=admin
+    volumes:
+      - ${DATA_DIR}/uploads:/app/apps/api/uploads
+    expose:
+      - "4000"
+    logging: *logging
+
+  # -------------------------------------------------------------------------------------
+  # Web — the Vite build, TLS termination, and the reverse proxy to the API.
+  # -------------------------------------------------------------------------------------
+  web:
+    image: ${WEB_IMAGE}
+    container_name: amiri-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        # A build whose API never reports healthy must not become the live site. The
+        # deploy script rolls back to the previous tag when this condition times out.
+        condition: service_healthy
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+      API_UPSTREAM: api:4000
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only: nginx consumes certificates, certbot (on the host timer) issues them.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ${DATA_DIR}/certbot-www:/var/www/certbot:ro
+    logging: *logging
+
+volumes:
+  mongo-data:
+    name: amiri-mongo-data

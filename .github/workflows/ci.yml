@@ -1,0 +1,79 @@
+name: CI
+
+# Runs on every pull request and every branch push, and is also called by the deploy
+# workflow so that main is gated by exactly the same checks rather than a copy of them.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  verify:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # The API suite runs against a real mongod that mongodb-memory-server downloads on
+      # first use. Uncached that is a ~100 MB fetch on every run, and a flaky one — a
+      # download failure would read as a test failure.
+      - name: Cache the mongodb-memory-server binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongo-binaries-${{ runner.os }}-7
+
+      - run: npm ci
+
+      # Builds @amiri/shared first; the api and web tsconfigs resolve it through its
+      # exports map to dist/, so nothing typechecks until it is compiled.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # Dockerfile breakage should surface on the PR, not at 3am on a deploy. Skipped when
+  # this workflow is called from deploy.yml, which is about to build these images for
+  # real anyway.
+  images:
+    name: Build images
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, web]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.app }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: false
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max

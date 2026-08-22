@@ -87,6 +87,11 @@ const SCREENS: Array<{ name: string; load: () => Promise<{ default?: unknown } &
   { name: "Audit", load: () => import("@/features/governance/audit-page"), export: "AuditPage" },
   { name: "Periods", load: () => import("@/features/governance/periods-page"), export: "PeriodsPage" },
   { name: "Cash book", load: () => import("@/features/books/ledger-book-page"), export: "CashBookPage" },
+  { name: "General ledger", load: () => import("@/features/books/ledger-book-page"), export: "GeneralLedgerPage" },
+  { name: "Expense ledger", load: () => import("@/features/books/ledger-book-page"), export: "ExpenseLedgerPage" },
+  { name: "Income ledger", load: () => import("@/features/books/ledger-book-page"), export: "IncomeLedgerPage" },
+  { name: "Savings ledger", load: () => import("@/features/books/ledger-book-page"), export: "SavingsLedgerPage" },
+  { name: "Branch ledger", load: () => import("@/features/books/branch-ledger-page"), export: "BranchLedgerPage" },
 ];
 
 describe("every screen renders without throwing", () => {

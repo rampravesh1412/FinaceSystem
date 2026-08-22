@@ -1,0 +1,175 @@
+name: Deploy
+
+# main → account.amiri247.in (16.16.129.104)
+#
+#   test    the same CI workflow a PR runs, called rather than duplicated
+#   build   two images, pushed to GHCR and tagged with the commit sha
+#   deploy  ssh to the server, which pulls those exact tags and rolls forward
+#
+# The server builds nothing. It pulls immutable, already-tested images, and deploy.sh puts
+# the previous pair back if the new one does not come up healthy.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip tests (emergency rollback / hotfix only)"
+        type: boolean
+        default: false
+
+# Two deploys must never interleave on one box, and cancelling one halfway is worse than
+# queueing it — cancel-in-progress stays false deliberately.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    if: ${{ !inputs.skip_tests }}
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build and push (${{ matrix.app }})
+    needs: [test]
+    # `always()` so a skipped test job (workflow_dispatch with skip_tests) does not also
+    # skip the build, while a FAILED test job still stops it.
+    if: always() && needs.test.result != 'failure' && needs.test.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: true
+      matrix:
+        app: [api, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR rejects uppercase repository names and this one has them.
+      - name: Resolve the image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.app }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          # The sha tag is what the server is told to run — immutable, and it names the
+          # exact commit when something has to be traced back. `latest` is a convenience
+          # for humans and is never deployed from.
+          tags: |
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
+
+  deploy:
+    name: Deploy to account.amiri247.in
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://account.amiri247.in
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the required secrets are present
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          missing=()
+          [[ -n "$HOST"  ]] || missing+=(SSH_HOST)
+          [[ -n "$USER"  ]] || missing+=(SSH_USER)
+          [[ -n "$KEY"   ]] || missing+=(SSH_PRIVATE_KEY)
+          [[ -n "$KNOWN" ]] || missing+=(SSH_KNOWN_HOSTS)
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secrets: ${missing[*]}"
+            echo "deploy/scripts/bootstrap-server.sh prints all four at the end of its run."
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned from a secret rather than ssh-keyscan'd at run time: keyscan trusts
+          # whatever answers, which is no check at all against a redirected route.
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # Compose file, nginx-independent scripts and systemd unit payloads travel with the
+      # commit, so a change to how the server runs ships with the code that needs it.
+      # --delete keeps the directory a mirror; the two env files hold generated secrets
+      # that exist only on the server and are excluded from both sides of that.
+      - name: Sync the deploy directory
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+        run: |
+          chmod +x deploy/scripts/*.sh
+          rsync -az --delete \
+            --exclude='.env' --exclude='api.env' \
+            -e "ssh -o StrictHostKeyChecking=yes" \
+            deploy/ "$USER@$HOST:/srv/amiri/deploy/"
+
+      - name: Roll the server forward
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+          REGISTRY_USER: ${{ github.actor }}
+          # Scoped to this job and expires with it, so nothing long-lived is left on the
+          # box — the pull is the only thing it is ever used for.
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          api="ghcr.io/${repo}-api:sha-${GITHUB_SHA}"
+          web="ghcr.io/${repo}-web:sha-${GITHUB_SHA}"
+
+          # The token goes down the pipe, not into argv — remote-deploy.sh feeds it
+          # straight to `docker login --password-stdin`.
+          printf '%s' "$REGISTRY_TOKEN" \
+            | ssh -o StrictHostKeyChecking=yes "$USER@$HOST" \
+                "/srv/amiri/deploy/scripts/remote-deploy.sh '$REGISTRY_USER' '$api' '$web'"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy — \`${GITHUB_SHA:0:7}\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Site | <https://account.amiri247.in> |"
+            echo "| Images | \`sha-${GITHUB_SHA}\` |"
+            echo "| Result | ${{ job.status }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

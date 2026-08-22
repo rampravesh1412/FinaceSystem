@@ -59,6 +59,11 @@ const ReportsIndexPage = lazyPage(() => import("@/features/reports/reports-index
 const TrialBalancePage = lazyPage(() => import("@/features/reports/trial-balance-page"), "TrialBalancePage");
 
 const CashBookPage = lazyPage(() => import("@/features/books/ledger-book-page"), "CashBookPage");
+const GeneralLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "GeneralLedgerPage");
+const ExpenseLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "ExpenseLedgerPage");
+const IncomeLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "IncomeLedgerPage");
+const SavingsLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "SavingsLedgerPage");
+const BranchLedgerPage = lazyPage(() => import("@/features/books/branch-ledger-page"), "BranchLedgerPage");
 const BankBookPage = lazyPage(() => import("@/features/books/ledger-book-page"), "BankBookPage");
 const PartyLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "PartyLedgerPage");
 
@@ -296,6 +301,46 @@ export const router = createBrowserRouter([
         element: (
           <RequirePermission permission="reports.trialBalance">
             <TrialBalancePage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "ledger",
+        element: (
+          <RequirePermission permission="finance.ledger.view">
+            <GeneralLedgerPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "branch-ledger",
+        element: (
+          <RequirePermission permission="reports.trialBalance">
+            <BranchLedgerPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "expense-ledger",
+        element: (
+          <RequirePermission permission="finance.ledger.view">
+            <ExpenseLedgerPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "income-ledger",
+        element: (
+          <RequirePermission permission="finance.ledger.view">
+            <IncomeLedgerPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "savings-ledger",
+        element: (
+          <RequirePermission permission="finance.ledger.view">
+            <SavingsLedgerPage />
           </RequirePermission>
         ),
       },

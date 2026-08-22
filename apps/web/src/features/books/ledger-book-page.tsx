@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { BookOpen, Search, Wallet, Users } from "lucide-react";
+import { BookOpen, Coins, Layers, PiggyBank, Receipt, Search, Wallet, Users } from "lucide-react";
 import type { AccountKind } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
+import { useDebounced } from "@/hooks/use-debounced";
 import { formatDate } from "@/lib/utils";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
@@ -39,12 +40,35 @@ interface LedgerRow {
 }
 
 /**
- * The Cash Book, Bank Book and Party Ledger (§34).
+ * Every ledger book (§34, §4.1).
  *
- * All three are the same statement over a different account KIND — the ledger does not
- * distinguish between them, so neither does this screen. Three sidebar entries, one
- * implementation, because three copies would drift.
+ * The Cash Book, the Bank Book, the Party Ledger and the General Ledger are the SAME
+ * statement over a different account kind. §4.1 is what makes that true: every
+ * balance-bearing thing in the system — a bank account, a drawer, a party, an expense head,
+ * a savings account, equity, suspense — is a row in one `LedgerAccount` collection. The
+ * ledger does not distinguish between them, so neither does this screen.
+ *
+ * One implementation, several presets. Separate copies per kind would drift, and the
+ * running-balance arithmetic is the last thing that should exist in five versions.
  */
+
+/** The kinds, in the words an operator uses, for the general-ledger picker. */
+export const KIND_LABEL: Record<AccountKind, string> = {
+  BANK: "Bank accounts",
+  CASH: "Cash drawers",
+  PARTY: "Parties",
+  EXPENSE: "Expense heads",
+  INCOME: "Income heads",
+  SAVINGS: "Bachat Khata",
+  CHARGE: "Charges & commission",
+  EQUITY: "Equity",
+  SUSPENSE: "Suspense",
+};
+
+const ALL_KINDS = Object.keys(KIND_LABEL) as AccountKind[];
+
+/** The server's own page cap. Asking for more is refused with a 422, not truncated. */
+const PAGE = 200;
 export function LedgerBookPage({
   kinds,
   title,
@@ -62,6 +86,7 @@ export function LedgerBookPage({
   const to = params.get("to") ?? "";
   const page = Number(params.get("page") ?? 1);
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounced(search, 300);
 
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -72,17 +97,41 @@ export function LedgerBookPage({
   };
 
   const accounts = useQuery({
-    queryKey: ["ledger-accounts", kinds],
+    queryKey: ["ledger-accounts", kinds, debouncedSearch],
     queryFn: async () => {
+      /**
+       * Searched on the SERVER, and capped at the server's own page size.
+       *
+       * The chart of accounts has one row per party, per drawer, per head — thousands in a
+       * real deployment. Fetching a page and filtering it in the browser would offer the
+       * first 200 and report "no matches" for an account that exists.
+       *
+       * `PAGE` is `MAX_PAGE_SIZE`, not a larger number of our choosing: asking for 500 is
+       * refused outright with a 422, which would leave the picker permanently empty.
+       */
+      if (kinds.length === ALL_KINDS.length) {
+        // One request — the endpoint returns every kind when `kind` is omitted, so nine
+        // parallel round trips would reassemble what a single call already gives.
+        const all = await api.list<LedgerAccountOption>(
+          `/ledger/accounts${qs({ limit: PAGE, q: debouncedSearch })}`,
+        );
+        return { items: all.items, total: all.meta.total };
+      }
+
       const results = await Promise.all(
-        kinds.map((kind) => api.list<LedgerAccountOption>(`/ledger/accounts${qs({ kind, limit: 200 })}`)),
+        kinds.map((kind) =>
+          api.list<LedgerAccountOption>(`/ledger/accounts${qs({ kind, limit: PAGE, q: debouncedSearch })}`),
+        ),
       );
-      return results.flatMap((r) => r.items);
+      return {
+        items: results.flatMap((r) => r.items),
+        total: results.reduce((sum, r) => sum + r.meta.total, 0),
+      };
     },
   });
 
   React.useEffect(() => {
-    if (!accountId && accounts.data?.length) setParam("account", accounts.data[0]!.id);
+    if (!accountId && filtered.length) setParam("account", filtered[0]!.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.data]);
 
@@ -98,12 +147,11 @@ export function LedgerBookPage({
     | { account?: { name: string; code: string; balance: number }; openingBalance?: number }
     | undefined;
 
-  const filtered = (accounts.data ?? []).filter(
-    (a) =>
-      !search.trim() ||
-      a.name.toLowerCase().includes(search.toLowerCase()) ||
-      a.code.toLowerCase().includes(search.toLowerCase()),
-  );
+  // No local filtering: the server already applied the search. Filtering again on the
+  // partially-loaded page would hide matches that are on the server's next page.
+  const filtered = accounts.data?.items ?? [];
+  const totalAccounts = accounts.data?.total ?? 0;
+  const truncated = totalAccounts > filtered.length;
 
   return (
     <div className="space-y-5">
@@ -128,9 +176,9 @@ export function LedgerBookPage({
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter accounts…"
+              placeholder="Search accounts…"
               className="pl-9"
-              aria-label="Filter accounts"
+              aria-label="Search accounts"
             />
           </div>
 
@@ -139,13 +187,43 @@ export function LedgerBookPage({
               <SelectValue placeholder={accounts.isPending ? "Loading…" : "Choose an account"} />
             </SelectTrigger>
             <SelectContent>
-              {filtered.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  <span className="flex w-full items-center gap-2">
-                    <span className="truncate">{a.name}</span>
-                  </span>
-                </SelectItem>
-              ))}
+              {/*
+               * Grouped by kind once more than one is in play. A flat list of every account
+               * in the chart — banks, parties, expense heads, equity — is not a list anyone
+               * can navigate; the grouping is what makes the general ledger usable.
+               */}
+              {kinds.length === 1
+                ? filtered.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      <span className="truncate">{a.name}</span>
+                    </SelectItem>
+                  ))
+                : ALL_KINDS.filter((kind) => filtered.some((a) => a.kind === kind)).map((kind) => (
+                    <React.Fragment key={kind}>
+                      <div className="px-2 py-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        {KIND_LABEL[kind]}
+                      </div>
+                      {filtered
+                        .filter((a) => a.kind === kind)
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            <span className="flex w-full items-center gap-2">
+                              <span className="truncate">{a.name}</span>
+                              <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                                {a.code}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                    </React.Fragment>
+                  ))}
+
+              {truncated ? (
+                <div className="border-t border-border px-2 py-1.5 text-2xs text-muted-foreground">
+                  Showing {filtered.length} of {totalAccounts.toLocaleString("en-IN")} accounts —
+                  type to search the rest.
+                </div>
+              ) : null}
             </SelectContent>
           </Select>
 
@@ -279,6 +357,57 @@ export function PartyLedgerPage() {
       title="Party Ledger"
       description="The formal ledger view of a party account — the Digital Khata shows the same entries in Lena/Dena terms."
       icon={Users}
+    />
+  );
+}
+
+/**
+ * The General Ledger — any account in the chart of accounts.
+ *
+ * Including the ones with no book of their own: expense and income heads, savings, charges,
+ * equity and suspense. Suspense in particular is worth being able to open directly, because
+ * §62 sends every unexplained difference there and somebody has to go and look at it.
+ */
+export function GeneralLedgerPage() {
+  return (
+    <LedgerBookPage
+      kinds={ALL_KINDS}
+      title="General Ledger"
+      description="Every account in the chart of accounts, with its entries and running balance."
+      icon={Layers}
+    />
+  );
+}
+
+export function ExpenseLedgerPage() {
+  return (
+    <LedgerBookPage
+      kinds={["EXPENSE", "CHARGE"]}
+      title="Expense Ledger"
+      description="What has been posted against each expense head, and against charges and commission."
+      icon={Receipt}
+    />
+  );
+}
+
+export function IncomeLedgerPage() {
+  return (
+    <LedgerBookPage
+      kinds={["INCOME"]}
+      title="Income Ledger"
+      description="What has been earned under each income head."
+      icon={Coins}
+    />
+  );
+}
+
+export function SavingsLedgerPage() {
+  return (
+    <LedgerBookPage
+      kinds={["SAVINGS"]}
+      title="Savings Ledger"
+      description="Every member account, in ledger terms. A credit balance is money held on their behalf."
+      icon={PiggyBank}
     />
   );
 }

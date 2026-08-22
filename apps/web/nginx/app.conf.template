@@ -1,0 +1,130 @@
+# Rendered by the stock nginx entrypoint (20-envsubst-on-templates.sh) into
+# /etc/nginx/conf.d/app.conf. Only ${SERVER_NAME} and ${API_UPSTREAM} are substituted —
+# nginx's own $host / $remote_addr survive because envsubst only replaces names that exist
+# in the environment.
+
+upstream amiri_api {
+    server ${API_UPSTREAM};
+    keepalive 16;
+}
+
+# ---------------------------------------------------------------------------------------
+# :80 — ACME challenges and a redirect. Nothing else is served in the clear; the refresh
+# cookie is Secure, so a plaintext response could never complete a login anyway.
+# ---------------------------------------------------------------------------------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${SERVER_NAME};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Container-local liveness, answered without a redirect so HEALTHCHECK stays honest.
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------------------------
+# :443
+# ---------------------------------------------------------------------------------------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    # Symlinks into /etc/letsencrypt, or a self-signed placeholder when no certificate has
+    # been issued yet. See 05-resolve-certs.sh — nginx refusing to start over a missing
+    # file is the one failure mode that makes a first deploy impossible to debug remotely.
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Attachments post through the API. Express caps JSON at 1 MB itself; this is the
+    # ceiling for uploads and it must be larger than anything the app accepts, or the
+    # rejection arrives from nginx as a bare 413 with no API error body.
+    client_max_body_size 25m;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json
+               image/svg+xml application/manifest+json;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://amiri_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection        "";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+
+        # Report exports (Excel/PDF) are generated synchronously and a full-year P&L is
+        # not a 60-second job on a small box.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    180s;
+        proxy_read_timeout    180s;
+
+        # Streamed exports must not sit in a buffer waiting to be complete.
+        proxy_buffering off;
+    }
+
+    # HSTS is repeated in the two locations below on purpose. add_header does not merge
+    # with the enclosing block — a location that declares ANY add_header drops every one
+    # inherited from the server, so without this the shell and the assets would be served
+    # without it.
+
+    # Vite emits content-hashed filenames under /assets, so they are safe to pin forever.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    # The SPA shell itself must never be cached, or a deploy leaves browsers asking for
+    # asset hashes that no longer exist.
+    location = /index.html {
+        add_header Cache-Control "no-store, must-revalidate";
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
