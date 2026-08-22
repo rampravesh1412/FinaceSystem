@@ -117,12 +117,20 @@ ssh -i amiri.pem ec2-user@16.16.129.104 \
 It refuses to proceed unless the domain resolves to exactly one address and that address
 is this box — a failed challenge costs an hour of rate limit, a refusal costs nothing.
 
-**6. Seed the first admin user, once:**
+**6. Create the first super admin, once.** It prompts for a password, so run it from an
+interactive shell rather than as a one-line `ssh` command:
 
 ```bash
-ssh -i amiri.pem ec2-user@16.16.129.104 \
-  'sudo -u deploy /srv/amiri/deploy/scripts/seed.sh'
+ssh -i amiri.pem ec2-user@16.16.129.104
+sudo -u deploy /srv/amiri/deploy/scripts/bootstrap-admin.sh \
+  --email you@amiri247.in --name "Your Name"
 ```
+
+Note this is **not** `npm run seed`. [seed.ts](../apps/api/src/scripts/seed.ts) exits under
+`NODE_ENV=production` on purpose — it creates four accounts whose password is written down
+in this repository. `bootstrap-admin.sh` creates the system roles, one branch, the system
+ledger accounts and exactly one super admin with a password you type, and refuses to run
+again once an admin exists.
 
 ## Day to day
 

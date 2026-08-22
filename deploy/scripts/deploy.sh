@@ -36,9 +36,20 @@ log "target:  $NEW_API_IMAGE / $NEW_WEB_IMAGE"
 
 # `sed -i` in place rather than a rewrite, so the Mongo password and everything else in
 # this file is impossible to lose to a bug in this script.
+#
+# The export is not redundant with the sed, it is the half that actually takes effect.
+# Compose resolves ${API_IMAGE} from the SHELL ENVIRONMENT FIRST and only falls back to
+# .env for names the environment does not already define — and this script sourced .env
+# at startup, so both names are already exported with their old values. Writing the file
+# alone left compose pulling `:bootstrap`, a tag that exists in nobody's registry, and
+# reporting it as `manifest unknown`.
+#
+# The file write still matters: it records what is live for the next run's rollback, and
+# for anyone running `docker compose` by hand later.
 set_images() {
     sed -i "s|^API_IMAGE=.*|API_IMAGE=$1|" "$ENV_FILE"
     sed -i "s|^WEB_IMAGE=.*|WEB_IMAGE=$2|" "$ENV_FILE"
+    export API_IMAGE="$1" WEB_IMAGE="$2"
 }
 
 rollback() {
