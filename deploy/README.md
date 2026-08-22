@@ -56,24 +56,40 @@ standalone `mongod` refuses to open the session.
 secrets that exist only on the server; overwriting them would rotate the database password
 out from under a running Mongo and log every user out.
 
+## The server
+
+EC2 `i-06ea805fe87ab2d93` (`amiri-finace`), t3.small, **Amazon Linux**, eu-north-1,
+`16.16.129.104` (private `172.31.30.218`). Login user is `ec2-user`; root SSH is disabled.
+
+The **security group must allow 80 and 443** from `0.0.0.0/0`, and 22 from wherever you
+administer from. Without 80 the ACME challenge cannot be answered and there is no
+certificate. There is no host firewall on Amazon Linux and the bootstrap does not install
+one — the security group is the firewall, and it is the only one that would apply anyway,
+since Docker's published ports bypass a host firewall's INPUT chain.
+
 ## First-time setup
 
-**1. Bootstrap the server** — installs Docker, creates the `deploy` user, generates
-secrets, opens 22/80/443 and installs the renewal and backup timers.
+**1. DNS — exactly one A record.** `account.amiri247.in` currently resolves to two
+addresses, `16.16.129.104` and `13.207.8.236`. Delete the second at GoDaddy. Two records
+means round-robin: half of all traffic, and half of every ACME validation, lands on a
+machine that is not running this app.
 
 ```bash
-scp deploy/scripts/bootstrap-server.sh root@16.16.129.104:/tmp/
-ssh root@16.16.129.104 'DOMAIN=account.amiri247.in bash /tmp/bootstrap-server.sh'
+dig +short account.amiri247.in     # exactly one line: 16.16.129.104
+```
+
+**2. Bootstrap the server** — installs Docker and the compose plugin, adds a 2 GB
+swapfile, creates the `deploy` user, generates secrets and installs the renewal and backup
+timers. It detects Amazon Linux vs Ubuntu and adapts.
+
+```bash
+scp -i amiri.pem deploy/scripts/bootstrap-server.sh ec2-user@16.16.129.104:/tmp/
+ssh -i amiri.pem ec2-user@16.16.129.104 \
+  'sudo DOMAIN=account.amiri247.in bash /tmp/bootstrap-server.sh'
 ```
 
 It prints the four repository secrets to set, including the private key it generated.
 Copy them before closing the terminal.
-
-**2. DNS** — point `account.amiri247.in` at `16.16.129.104` and wait for it:
-
-```bash
-dig +short account.amiri247.in     # must print 16.16.129.104
-```
 
 **3. Repository secrets** — Settings ▸ Secrets and variables ▸ Actions:
 
@@ -90,18 +106,22 @@ answers, which is no verification at all.
 **4. Push to main.** The first deploy brings the stack up on a self-signed placeholder
 certificate; the site works, the browser warns.
 
-**5. Issue the real certificate:**
+**5. Issue the real certificate.** certbot runs as a container — Amazon Linux does not
+package it, and the official image behaves the same on every distribution.
 
 ```bash
-# as root — certbot writes to /etc/letsencrypt
-ssh root@16.16.129.104 \
-  'LETSENCRYPT_EMAIL=you@example.com /srv/amiri/deploy/scripts/issue-cert.sh'
+ssh -i amiri.pem ec2-user@16.16.129.104 \
+  'sudo LETSENCRYPT_EMAIL=you@example.com /srv/amiri/deploy/scripts/issue-cert.sh'
 ```
+
+It refuses to proceed unless the domain resolves to exactly one address and that address
+is this box — a failed challenge costs an hour of rate limit, a refusal costs nothing.
 
 **6. Seed the first admin user, once:**
 
 ```bash
-ssh deploy@16.16.129.104 /srv/amiri/deploy/scripts/seed.sh
+ssh -i amiri.pem ec2-user@16.16.129.104 \
+  'sudo -u deploy /srv/amiri/deploy/scripts/seed.sh'
 ```
 
 ## Day to day

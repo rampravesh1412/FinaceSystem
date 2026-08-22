@@ -36,6 +36,11 @@ services:
       - "27017"
       - "--keyFile"
       - "/etc/mongo/keyfile"
+      # t3.small is 2 GB. WiredTiger's default cache is half of (RAM - 1 GB) and it does
+      # not know it is sharing the box with node and nginx — left alone it grows until the
+      # OOM killer decides which process dies, and mongod is the biggest target.
+      - "--wiredTigerCacheSizeGB"
+      - "0.5"
     environment:
       MONGO_ROOT_USER: ${MONGO_ROOT_USER}
       MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
