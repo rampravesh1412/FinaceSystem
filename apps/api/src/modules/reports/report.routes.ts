@@ -31,23 +31,26 @@ export const tallyRouter: Router = Router();
 for (const r of [reportRouter, dashboardRouter, tallyRouter]) r.use(requireAuth);
 
 /**
- * Resolve the branch a report should cover.
+ * Resolve the branches a report should cover.
  *
- * A scoped caller is pinned to their own branch whatever they ask for; an unscoped one may
- * name a branch or omit it for the whole organisation. The narrowing happens here rather
- * than in each report so no report can forget it.
+ * A named branch must be one the caller holds. With no branch in context — the picker's
+ * "All branches" — a scoped caller is widened to their *own* assignment list, never to the
+ * organisation; only an unscoped caller gets the empty scope that means everything. The
+ * narrowing happens here rather than in each report so no report can forget it.
  */
-function resolveBranch(
+function resolveScope(
   req: Parameters<typeof scopeOf>[0],
   requested?: string,
-): string | undefined {
+): reports.BranchScope {
   const scope = req.scope!;
-  if (scope.isUnscoped) return requested;
+
   if (requested) {
-    assertBranchInScope(req, requested);
-    return requested;
+    if (!scope.isUnscoped) assertBranchInScope(req, requested);
+    return { branchId: requested };
   }
-  return scope.activeBranchId ? String(scope.activeBranchId) : String(scope.branchIds[0] ?? "");
+  if (scope.activeBranchId) return { branchId: String(scope.activeBranchId) };
+
+  return scope.isUnscoped ? {} : { branchIds: scope.branchIds };
 }
 
 /* ── Dashboards (§31, §32, §33) ──────────────────────────────────────────── */
@@ -59,11 +62,12 @@ dashboardRouter.get(
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { branchId?: string; days: number };
     const scope = req.scope!;
+    const resolved = resolveScope(req, query.branchId);
 
     return ok(
       res,
       await dashboard.buildDashboard({
-        branchId: resolveBranch(req, query.branchId) || null,
+        branchId: resolved.branchId ? String(resolved.branchId) : null,
         isUnscoped: scope.isUnscoped,
         branchIds: scope.branchIds,
         trendDays: query.days,
@@ -84,9 +88,9 @@ reportRouter.get(
     return ok(
       res,
       await reports.profitAndLoss({
+        ...resolveScope(req, query.branchId),
         from: query.from,
         to: query.to,
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),
@@ -104,8 +108,8 @@ reportRouter.get(
     return ok(
       res,
       await reports.balanceSheet({
+        ...resolveScope(req, query.branchId),
         asOf: query.asOf ?? new Date(),
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),
@@ -123,9 +127,9 @@ reportRouter.get(
     return ok(
       res,
       await reports.cashFlow({
+        ...resolveScope(req, query.branchId),
         from: query.from,
         to: query.to,
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),

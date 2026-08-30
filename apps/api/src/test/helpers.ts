@@ -58,6 +58,9 @@ export async function seedFixtures(): Promise<Fixtures> {
   // Assigned to 105 only. Branch 107 exists but must be invisible to them everywhere.
   await make("branchAdmin", "badmin@test.co", "BRANCH_ADMIN", [branches["105"]!]);
   await make("accountant", "acct@test.co", "ACCOUNTANT", [branches["105"]!]);
+  // Holds two branches, so "all branches" is a real choice for them — and 107 must still
+  // be invisible when they make it.
+  await make("multiBranch", "multi@test.co", "ACCOUNTANT", [branches["101"]!, branches["105"]!]);
   await make("viewer", "viewer@test.co", "VIEWER", [branches["105"]!]);
 
   return { roles, branches, users };

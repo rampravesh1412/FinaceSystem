@@ -54,8 +54,13 @@ export const resetPasswordSchema = z
   });
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
-/** Switch the active branch for a multi-branch user without re-authenticating. */
-export const switchBranchSchema = z.object({ branchId: objectId });
+/**
+ * Switch the active branch for a multi-branch user without re-authenticating.
+ *
+ * `null` means "all branches" — the user drops the narrowing and works across every branch
+ * they hold. It is not an escape hatch: the server still filters to the assignment list.
+ */
+export const switchBranchSchema = z.object({ branchId: objectId.nullable() });
 export type SwitchBranchInput = z.infer<typeof switchBranchSchema>;
 
 /* -------------------------------------------------------------------------- */

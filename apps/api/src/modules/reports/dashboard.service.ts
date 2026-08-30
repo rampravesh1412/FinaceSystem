@@ -49,17 +49,19 @@ export async function buildDashboard(options: {
   const branchId = options.branchId ?? undefined;
 
   /**
-   * The scope filter for every aggregation below.
+   * The scope every figure below is computed over.
    *
-   * A SuperAdmin with no branch selected sees everything. A scoped user always sees only
-   * their own branches, whatever the request asked for — the filter is built from
-   * `branchIds`, which came from their user record.
+   * A SuperAdmin with no branch selected sees everything. A scoped user on "all branches"
+   * sees exactly their own, whatever the request asked for — the list comes from
+   * `branchIds`, which came from their user record, never from the client.
    */
-  const branchMatch: Record<string, unknown> = branchId
-    ? { branchId: new Types.ObjectId(branchId) }
+  const scope: reports.BranchScope = branchId
+    ? { branchId }
     : options.isUnscoped
       ? {}
-      : { branchId: { $in: options.branchIds } };
+      : { branchIds: options.branchIds };
+
+  const branchMatch = reports.branchMatch(scope);
 
   const [
     cashBalance,
@@ -78,13 +80,13 @@ export async function buildDashboard(options: {
     transactionCountToday,
     credit,
   ] = await Promise.all([
-    reports.balanceByKind(["CASH"], branchId),
-    reports.balanceByKind(["BANK"], branchId),
-    reports.balanceByKind(["SAVINGS"], branchId),
-    reports.partyPositions(branchId),
-    reports.profitFor({ from: todayStart, to: todayEnd, branchId }),
-    reports.profitFor({ from: monthStart, to: todayEnd, branchId }),
-    reports.cashMovement({ from: todayStart, to: todayEnd, branchId }),
+    reports.balanceByKind(["CASH"], scope),
+    reports.balanceByKind(["BANK"], scope),
+    reports.balanceByKind(["SAVINGS"], scope),
+    reports.partyPositions(scope),
+    reports.profitFor({ ...scope, from: todayStart, to: todayEnd }),
+    reports.profitFor({ ...scope, from: monthStart, to: todayEnd }),
+    reports.cashMovement({ ...scope, from: todayStart, to: todayEnd }),
     buildTrend(branchMatch, trendStart, todayEnd),
     buildExpenseBreakdown(branchMatch, monthStart, todayEnd),
     buildRecent(branchMatch),
@@ -327,9 +329,9 @@ async function buildBranchPerformance(from: Date, to: Date): Promise<BranchPerfo
       const id = String(branch._id);
       const [profit, cash, bank, positions] = await Promise.all([
         reports.profitFor({ from, to, branchId: id }),
-        reports.balanceByKind(["CASH"], id),
-        reports.balanceByKind(["BANK"], id),
-        reports.partyPositions(id),
+        reports.balanceByKind(["CASH"], { branchId: id }),
+        reports.balanceByKind(["BANK"], { branchId: id }),
+        reports.partyPositions({ branchId: id }),
       ]);
 
       return {

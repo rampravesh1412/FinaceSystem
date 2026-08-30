@@ -502,3 +502,81 @@ describe("the books still tie after Phase 5", () => {
     expect(await IncomeHead.countDocuments({})).toBeGreaterThan(0);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "All branches" (§3, §57).
+ *
+ * The branch picker lets a multi-branch user drop the narrowing. That must widen the report
+ * to the branches they HOLD — not to the organisation. The test posts money into a branch
+ * they do not hold and asserts it never appears.
+ */
+describe("all branches in context", () => {
+  const day = "2026-08-25";
+  let ownBankId: string;
+  let foreignBankId: string;
+
+  beforeAll(async () => {
+    const bank = await client.post<{ data: { id: string } }>(
+      "/banks",
+      { name: "ICICI Bank", shortName: "ICICI", ifscPrefix: "ICIC" },
+      { token },
+    );
+
+    const open = async (branch: string, accountNumber: string, ifsc: string) => {
+      const res = await client.post<{ data: { id: string } }>(
+        "/bank-accounts",
+        {
+          bankId: bank.body.data.id, branchId: branch, accountName: `ICICI ${branch}`,
+          accountNumber, ifsc, openingBalance: "0", openingDate: "2026-04-01",
+        },
+        { token },
+      );
+      return res.body.data.id;
+    };
+
+    ownBankId = await open(fx.branches["101"]!, "60100000000001", "ICIC0000001");
+    foreignBankId = await open(fx.branches["107"]!, "60100000000002", "ICIC0000002");
+
+    // ₹3,00,000 into a branch the accountant holds, ₹7,00,000 into one they do not.
+    await client.post(
+      "/income",
+      {
+        date: day, branchId: fx.branches["101"], headId: commissionHeadId,
+        accountId: ownBankId, amount: "3,00,000", paymentMode: "UPI",
+      },
+      { token },
+    );
+    await client.post(
+      "/income",
+      {
+        date: day, branchId: fx.branches["107"], headId: commissionHeadId,
+        accountId: foreignBankId, amount: "7,00,000", paymentMode: "UPI",
+      },
+      { token },
+    );
+  });
+
+  it("aggregates the branches the user holds and no others", async () => {
+    const multiToken = await client.loginAs("multi@test.co");
+
+    const res = await client.get<{ data: { totalIn: number } }>(
+      `/reports/cash-flow?from=${day}&to=${day}`,
+      { token: multiToken },
+    );
+
+    expect(res.status).toBe(200);
+    // 101 only. The ₹7,00,000 in 107 is another branch's money and stays invisible.
+    expect(res.body.data.totalIn).toBe(300_000_00);
+  });
+
+  it("still gives an unscoped caller the whole organisation", async () => {
+    const res = await client.get<{ data: { totalIn: number } }>(
+      `/reports/cash-flow?from=${day}&to=${day}`,
+      { token },
+    );
+
+    expect(res.body.data.totalIn).toBe(1_000_000_00);
+  });
+});

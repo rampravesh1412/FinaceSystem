@@ -37,18 +37,39 @@ interface AccountTotal {
 }
 
 /**
+ * Which branches a report covers.
+ *
+ * `branchId` is one branch. `branchIds` is "all branches the caller holds" — what the
+ * branch picker's *All branches* option asks for. Neither set means the whole organisation,
+ * which only an unscoped caller may ask for; the routes are responsible for never handing
+ * an empty scope to a scoped caller.
+ */
+export interface BranchScope {
+  branchId?: string | Types.ObjectId;
+  branchIds?: Array<string | Types.ObjectId>;
+}
+
+/** The `branchId` fragment of a Mongo filter for a scope. Empty object = no narrowing. */
+export function branchMatch(scope: BranchScope): Record<string, unknown> {
+  if (scope.branchId) return { branchId: new Types.ObjectId(String(scope.branchId)) };
+  if (scope.branchIds?.length) {
+    return { branchId: { $in: scope.branchIds.map((id) => new Types.ObjectId(String(id))) } };
+  }
+  return {};
+}
+
+/**
  * Sum every account's debits and credits over a window.
  *
  * One aggregation for the whole report rather than a query per account — a P&L over a
  * year with fifty heads would otherwise be fifty round trips.
  */
-async function totalsByAccount(options: {
+async function totalsByAccount(options: BranchScope & {
   from?: Date;
   to?: Date;
-  branchId?: string | Types.ObjectId;
   kinds?: AccountKind[];
 }): Promise<AccountTotal[]> {
-  const match: Record<string, unknown> = {};
+  const match: Record<string, unknown> = { ...branchMatch(options) };
 
   if (options.from || options.to) {
     match.date = {
@@ -56,7 +77,6 @@ async function totalsByAccount(options: {
       ...(options.to ? { $lte: endOfDay(options.to) } : {}),
     };
   }
-  if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
 
   return LedgerEntry.aggregate<AccountTotal>([
     { $match: match },
@@ -94,15 +114,15 @@ async function totalsByAccount(options: {
  * positive figures — a "negative expense" on a report is a puzzle nobody should have to
  * solve — and the sign lives in which section the line sits in.
  */
-export async function profitAndLoss(options: {
+export async function profitAndLoss(options: BranchScope & {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<ProfitAndLoss> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
     branchId: options.branchId,
+    branchIds: options.branchIds,
     kinds: ["INCOME", "EXPENSE", "CHARGE"],
   });
 
@@ -149,12 +169,17 @@ export async function profitAndLoss(options: {
   const netProfit = totalIncome - totalExpenses;
 
   // Computed separately, reported alongside, never added in (§21).
-  const cash = await cashMovement({ from: options.from, to: options.to, branchId: options.branchId });
+  const cash = await cashMovement({
+    from: options.from,
+    to: options.to,
+    branchId: options.branchId,
+    branchIds: options.branchIds,
+  });
 
   return {
     from: options.from.toISOString(),
     to: options.to.toISOString(),
-    branchId: options.branchId ?? null,
+    branchId: options.branchId ? String(options.branchId) : null,
     income,
     totalIncome,
     expenses,
@@ -184,11 +209,14 @@ export async function profitAndLoss(options: {
  * liability (we owe them). The same account therefore appears on different sides of the
  * sheet depending on where the relationship stands, which is correct.
  */
-export async function balanceSheet(options: {
+export async function balanceSheet(options: BranchScope & {
   asOf: Date;
-  branchId?: string;
 }): Promise<BalanceSheet> {
-  const totals = await totalsByAccount({ to: options.asOf, branchId: options.branchId });
+  const totals = await totalsByAccount({
+    to: options.asOf,
+    branchId: options.branchId,
+    branchIds: options.branchIds,
+  });
 
   const assets: BalanceSheet["assets"] = [];
   const liabilities: BalanceSheet["liabilities"] = [];
@@ -252,7 +280,7 @@ export async function balanceSheet(options: {
 
   return {
     asOf: options.asOf.toISOString(),
-    branchId: options.branchId ?? null,
+    branchId: options.branchId ? String(options.branchId) : null,
     assets,
     totalAssets,
     liabilities,
@@ -273,15 +301,15 @@ export async function balanceSheet(options: {
 /* -------------------------------------------------------------------------- */
 
 /** Net movement across cash and bank over a window. Used by the P&L's context figure. */
-export async function cashMovement(options: {
+export async function cashMovement(options: BranchScope & {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<{ in: number; out: number; net: number }> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
     branchId: options.branchId,
+    branchIds: options.branchIds,
     kinds: ["BANK", "CASH"],
   });
 
@@ -303,14 +331,13 @@ export async function cashMovement(options: {
  * closing balance is genuinely the balance at the end of that day rather than the day's
  * movement mistaken for a balance.
  */
-export async function cashFlow(options: {
+export async function cashFlow(options: BranchScope & {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<CashFlowReport> {
   const cashAccounts = await LedgerAccount.find({
     kind: { $in: ["BANK", "CASH"] },
-    ...(options.branchId ? { branchId: new Types.ObjectId(options.branchId) } : {}),
+    ...branchMatch(options),
   })
     .select("_id")
     .lean();
@@ -368,7 +395,7 @@ export async function cashFlow(options: {
   return {
     from: options.from.toISOString(),
     to: options.to.toISOString(),
-    branchId: options.branchId ?? null,
+    branchId: options.branchId ? String(options.branchId) : null,
     openingBalance,
     totalIn: rows.reduce((s, r) => s + r.moneyIn, 0),
     totalOut: rows.reduce((s, r) => s + r.moneyOut, 0),
@@ -383,15 +410,15 @@ export async function cashFlow(options: {
 /* -------------------------------------------------------------------------- */
 
 /** Profit over a window. Used by the dashboards and the cash tally's context panel. */
-export async function profitFor(options: {
+export async function profitFor(options: BranchScope & {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<{ income: number; expenses: number; profit: number }> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
     branchId: options.branchId,
+    branchIds: options.branchIds,
     kinds: ["INCOME", "EXPENSE", "CHARGE"],
   });
 
@@ -408,11 +435,11 @@ export async function profitFor(options: {
 /** Current balance across a set of account kinds. */
 export async function balanceByKind(
   kinds: AccountKind[],
-  branchId?: string,
+  scope: BranchScope = {},
 ): Promise<number> {
   const accounts = await LedgerAccount.find({
     kind: { $in: kinds },
-    ...(branchId ? { branchId: new Types.ObjectId(branchId) } : {}),
+    ...branchMatch(scope),
   })
     .select("cachedBalance")
     .lean();
@@ -422,11 +449,11 @@ export async function balanceByKind(
 
 /** Receivable and payable, split from the same party balances (§10). */
 export async function partyPositions(
-  branchId?: string,
+  scope: BranchScope = {},
 ): Promise<{ receivable: number; payable: number }> {
   const accounts = await LedgerAccount.find({
     kind: "PARTY",
-    ...(branchId ? { branchId: new Types.ObjectId(branchId) } : {}),
+    ...branchMatch(scope),
   })
     .select("cachedBalance")
     .lean();
