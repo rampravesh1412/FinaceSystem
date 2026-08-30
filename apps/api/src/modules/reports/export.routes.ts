@@ -43,11 +43,6 @@ const rangeSchema = z.object({
   format: z.enum(["csv", "xlsx", "pdf"]).default("csv"),
 });
 
-/** The single branch of a scope, if it has one — `undefined` means "all branches". */
-function branchIdOf(scope: reports.BranchScope): string | undefined {
-  return scope.branchId ? String(scope.branchId) : undefined;
-}
-
 /** Resolve the branch label for the provenance block. */
 async function branchLabel(branchId?: string): Promise<string | undefined> {
   if (!branchId) return "All branches";
@@ -55,19 +50,10 @@ async function branchLabel(branchId?: string): Promise<string | undefined> {
   return branch ? `${branch.code} — ${branch.name}` : undefined;
 }
 
-/**
- * The branches an export covers.
- *
- * With no branch in context ("All branches") a scoped caller is widened to their own
- * assignment list, not to the organisation. `requireBranchAccess` has already refused any
- * branch the caller does not hold.
- */
-function resolveScope(req: Parameters<typeof scopeOf>[0], requested?: string): reports.BranchScope {
+function resolveBranch(req: Parameters<typeof scopeOf>[0], requested?: string): string | undefined {
   const scope = req.scope!;
-  const branchId = requested ?? (scope.activeBranchId ? String(scope.activeBranchId) : undefined);
-
-  if (branchId) return { branchId };
-  return scope.isUnscoped ? {} : { branchIds: scope.branchIds };
+  if (scope.isUnscoped) return requested;
+  return requested ?? (scope.activeBranchId ? String(scope.activeBranchId) : String(scope.branchIds[0] ?? ""));
 }
 
 /* ── DayBook (§19) ───────────────────────────────────────────────────────── */
@@ -115,7 +101,7 @@ exportRouter.get(
       ],
       rows: items,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(branchIdOf(resolveScope(req, query.branchId))),
+        branch: await branchLabel(resolveBranch(req, query.branchId)),
         from: query.from,
         to: query.to,
         generatedBy: req.auth!.name,
@@ -140,10 +126,9 @@ exportRouter.get(
   validate({ query: rangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof rangeSchema>;
-    const scope = resolveScope(req, query.branchId);
-    const branchId = branchIdOf(scope);
+    const branchId = resolveBranch(req, query.branchId);
 
-    const pnl = await reports.profitAndLoss({ ...scope, from: query.from, to: query.to });
+    const pnl = await reports.profitAndLoss({ from: query.from, to: query.to, branchId });
 
     // Income and expenses in one table with a section column — a spreadsheet the
     // recipient can pivot beats two tables they have to stitch together.
@@ -202,11 +187,10 @@ exportRouter.get(
   validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { asOf?: Date; branchId?: string; format: exporter.ExportFormat };
-    const scope = resolveScope(req, query.branchId);
-    const branchId = branchIdOf(scope);
+    const branchId = resolveBranch(req, query.branchId);
     const asOf = query.asOf ?? new Date();
 
-    const sheet = await reports.balanceSheet({ ...scope, asOf });
+    const sheet = await reports.balanceSheet({ asOf, branchId });
 
     const rows = [
       ...sheet.assets.map((l) => ({ ...l, section: "Asset" })),
@@ -269,15 +253,10 @@ exportRouter.get(
   validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { asOf?: Date; branchId?: string; format: exporter.ExportFormat };
-    const scope = resolveScope(req, query.branchId);
-    const branchId = branchIdOf(scope);
+    const branchId = resolveBranch(req, query.branchId);
 
     const { trialBalance } = await import("../../services/ledger.service.js");
-    const tb = await trialBalance({
-      ...(query.asOf ? { asOf: query.asOf } : {}),
-      ...(branchId ? { branchId } : {}),
-      ...(scope.branchIds ? { branchIds: scope.branchIds } : {}),
-    });
+    const tb = await trialBalance({ ...(query.asOf ? { asOf: query.asOf } : {}), ...(branchId ? { branchId } : {}) });
 
     await audit.recordSafe(audit.auditContextFrom(req), { action: "EXPORT", entity: "TrialBalance" });
 

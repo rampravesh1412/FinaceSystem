@@ -48,13 +48,10 @@ export async function buildSessionUser(
 
   const branches = await Branch.find(branchFilter).select("name code").sort({ code: 1 }).lean();
 
-  // `null` is a deliberate choice ("all branches"), so it is honoured as given; only an
-  // *omitted* argument falls back to the default branch.
   const active =
-    activeBranchId !== undefined
-      ? activeBranchId
-      : ((user.defaultBranchId ? String(user.defaultBranchId) : null) ??
-        (branches.length === 1 ? String(branches[0]!._id) : null));
+    activeBranchId ??
+    (user.defaultBranchId ? String(user.defaultBranchId) : null) ??
+    (branches.length === 1 ? String(branches[0]!._id) : null);
 
   return {
     id: String(user._id),
@@ -139,7 +136,7 @@ export async function login(
     throw new ForbiddenError("Your account has been disabled", "ACCOUNT_DISABLED");
   }
 
-  const sessionUser = await buildSessionUser(user, input.branchId);
+  const sessionUser = await buildSessionUser(user, input.branchId ?? null);
 
   // A branch named at login must be one the user actually holds.
   if (input.branchId && !sessionUser.isSuperAdmin && !sessionUser.branchIds.includes(input.branchId)) {
@@ -270,24 +267,16 @@ export async function changePassword(
   );
 }
 
-/**
- * Change the branch in context for a multi-branch user.
- *
- * `branchId === null` selects "all branches": the context is simply un-narrowed. It grants
- * nothing — every scoped query still runs against the caller's assignment list — so there
- * is no membership to re-validate.
- */
+/** Change the branch in context for a multi-branch user. */
 export async function switchBranch(
   userId: string,
-  branchId: string | null,
+  branchId: string,
   isSuperAdmin: boolean,
 ): Promise<SessionUser> {
   const user = await User.findById(userId).select(
     "name email status roleId branchIds defaultBranchId mustChangePassword lastLoginAt avatarUrl",
   );
   if (!user) throw new UnauthenticatedError("Your account no longer exists");
-
-  if (branchId === null) return buildSessionUser(user, null);
 
   if (!isSuperAdmin && !user.branchIds.some((id) => String(id) === branchId)) {
     throw new ForbiddenError("You are not assigned to that branch", "BRANCH_ACCESS_DENIED");

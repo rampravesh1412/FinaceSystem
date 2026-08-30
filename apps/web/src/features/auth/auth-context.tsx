@@ -19,8 +19,7 @@ interface AuthState {
   status: "loading" | "authenticated" | "unauthenticated";
   login: (email: string, password: string) => Promise<SessionUser>;
   logout: () => Promise<void>;
-  /** `null` selects every branch the user holds. */
-  switchBranch: (branchId: string | null) => Promise<void>;
+  switchBranch: (branchId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   /** Permission check, matching the server's `requirePermission` exactly. */
   can: (permission: Permission) => boolean;
@@ -114,7 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const switchBranch = React.useCallback(
-    async (branchId: string | null) => {
+    async (branchId: string) => {
       const updated = await api.post<SessionUser>("/auth/switch-branch", { branchId });
       setUser(updated);
       // Every cached list is branch-scoped, so all of it is stale after a switch.

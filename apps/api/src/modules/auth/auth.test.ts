@@ -294,22 +294,6 @@ describe("branch isolation", () => {
     expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
   });
 
-  it("switches to all branches without widening what the user may read", async () => {
-    const token = await client.loginAs("multi@test.co");
-
-    const res = await client.post<{ data: { activeBranchId: string | null; branchIds: string[] } }>(
-      "/auth/switch-branch",
-      { branchId: null },
-      { token },
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.body.data.activeBranchId).toBeNull();
-    // "All branches" is *their* branches. 107 is not among them and never becomes one.
-    expect(res.body.data.branchIds).toHaveLength(2);
-    expect(res.body.data.branchIds).not.toContain(fx.branches["107"]);
-  });
-
   it("refuses switching into a branch the user does not hold", async () => {
     const token = await client.loginAs("acct@test.co");
     const res = await client.post<{ error: { code: string } }>(

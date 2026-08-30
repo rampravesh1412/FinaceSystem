@@ -145,7 +145,7 @@ function BranchSwitcher() {
     );
   }
 
-  const onSelect = async (branchId: string | null) => {
+  const onSelect = async (branchId: string) => {
     if (branchId === user.activeBranchId) return;
     setSwitching(true);
     try {
@@ -170,15 +170,6 @@ function BranchSwitcher() {
 
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Branch in context</DropdownMenuLabel>
-
-        {/* Un-narrows the context: every branch the user holds, combined. */}
-        <DropdownMenuItem onSelect={() => void onSelect(null)}>
-          <span className="w-10 shrink-0 font-mono text-xs font-medium">All</span>
-          <span className="truncate">All branches</span>
-          {user.activeBranchId === null ? <Check className="ml-auto size-4 text-accent" /> : null}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-
         {user.branches.map((branch) => (
           <DropdownMenuItem key={branch.id} onSelect={() => void onSelect(branch.id)}>
             <span className="w-10 shrink-0 font-mono text-xs font-medium">{branch.code}</span>

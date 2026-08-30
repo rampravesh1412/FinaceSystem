@@ -186,19 +186,15 @@ ledgerRouter.get(
   validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { asOf?: Date; branchId?: string };
-    const scope = req.scope!;
-    const branchId = query.branchId ?? (scope.activeBranchId ? String(scope.activeBranchId) : undefined);
-
-    // No branch in context is "all branches": every branch for an unscoped caller, and the
-    // caller's own assignment list for everyone else — never the whole organisation.
-    const branchIds = branchId || scope.isUnscoped ? undefined : scope.branchIds;
+    const branchId = req.scope!.isUnscoped
+      ? query.branchId
+      : (query.branchId ?? String(req.scope!.activeBranchId ?? ""));
 
     return ok(
       res,
       await ledger.trialBalance({
         ...(query.asOf ? { asOf: query.asOf } : {}),
         ...(branchId ? { branchId } : {}),
-        ...(branchIds ? { branchIds } : {}),
       }),
     );
   }),

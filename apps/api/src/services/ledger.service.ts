@@ -698,20 +698,10 @@ export async function balancesFor(
  * Reads entries directly rather than cached balances — a trial balance whose purpose is
  * to prove the books tie must not be computed from the cache it is meant to validate.
  */
-export async function trialBalance(
-  options: {
-    asOf?: Date;
-    branchId?: Types.ObjectId | string;
-    /** Several branches at once — the picker's "All branches" for a scoped caller. */
-    branchIds?: Array<Types.ObjectId | string>;
-  } = {},
-) {
+export async function trialBalance(options: { asOf?: Date; branchId?: Types.ObjectId | string } = {}) {
   const match: Record<string, unknown> = {};
   if (options.asOf) match.date = { $lte: options.asOf };
   if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
-  else if (options.branchIds?.length) {
-    match.branchId = { $in: options.branchIds.map((id) => new Types.ObjectId(String(id))) };
-  }
 
   const rows = await LedgerEntry.aggregate<{
     _id: Types.ObjectId;
