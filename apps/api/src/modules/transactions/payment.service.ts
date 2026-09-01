@@ -86,7 +86,11 @@ export async function createPaymentIn(
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
     const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
-    const party = await accounts.resolveParty(input.partyId, input.branchId, session);
+    // A receipt or payment may involve a party whose home branch is elsewhere — see
+    // `resolveParty`. The posting branch still governs both ledger legs.
+    const party = await accounts.resolveParty(input.partyId, input.branchId, session, {
+      allowCrossBranch: true,
+    });
 
     const charge = await charges.resolveCharge(
       {
@@ -186,7 +190,11 @@ export async function createPaymentOut(
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
     const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
-    const party = await accounts.resolveParty(input.partyId, input.branchId, session);
+    // A receipt or payment may involve a party whose home branch is elsewhere — see
+    // `resolveParty`. The posting branch still governs both ledger legs.
+    const party = await accounts.resolveParty(input.partyId, input.branchId, session, {
+      allowCrossBranch: true,
+    });
 
     const charge = await charges.resolveCharge(
       {

@@ -288,18 +288,65 @@ describe("payment in (§14)", () => {
     expect(txn!.netAmount).toBe(98_250_00);
   });
 
-  it("refuses a party from another branch", async () => {
+  /**
+   * A receipt may be taken from a party whose home branch is elsewhere — a customer pays
+   * at whichever office is nearest. What must NOT bend is where the entries land: both
+   * legs belong to the branch that took the money, or that branch's till would reconcile
+   * against cash it never held.
+   */
+  it("accepts a party from another branch and books both legs in the posting branch", async () => {
     const other = await client.post<{ data: { id: string } }>(
       "/parties",
       { name: "Other Branch Party", branchId: fx.branches["107"], openingBalance: 0 },
       { token: superToken },
     );
+    const otherPartyId = other.body.data.id;
 
-    const res = await client.post<{ error: { field: string } }>(
+    const res = await client.post<{ data: { id: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: other.body.data.id,
+        date: "2026-08-19", branchId, partyId: otherPartyId,
         accountId: hdfcId, amount: "1,000", paymentMode: "CASH",
+      },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(201);
+
+    // Every entry carries the POSTING branch (105), never the party's home branch (107).
+    const entries = await LedgerEntry.find({ transactionId: res.body.data.id }).lean();
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(String(entry.branchId)).toBe(branchId);
+    }
+
+    // Double entry still holds for that branch in isolation.
+    const debits = entries.filter((e) => e.direction === "DEBIT").reduce((s, e) => s + e.amount, 0);
+    const credits = entries.filter((e) => e.direction === "CREDIT").reduce((s, e) => s + e.amount, 0);
+    expect(debits).toBe(credits);
+
+    // The party's balance is a single total on their one ledger account, so a receipt
+    // taken at another branch still reduces what they owe.
+    expect(await balanceOfParty(otherPartyId)).toBe(-1_000_00);
+  });
+
+  /**
+   * The relaxation is scoped to receipts and payments. An expense is a reconciliation
+   * instrument, and booking one against a party the branch does not own would let a cost
+   * escape the branch that incurred it.
+   */
+  it("still refuses a cross-branch party on an expense", async () => {
+    const other = await client.post<{ data: { id: string } }>(
+      "/parties",
+      { name: "Other Branch Vendor", branchId: fx.branches["107"], type: "VENDOR", openingBalance: 0 },
+      { token: superToken },
+    );
+
+    const res = await client.post<{ error: { field: string } }>(
+      "/expenses",
+      {
+        date: "2026-08-19", branchId, categoryId: panelHeadId,
+        partyId: other.body.data.id, amount: "1,000", paymentMode: "CASH", accountId: hdfcId,
       },
       { token: superToken },
     );

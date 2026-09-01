@@ -54,8 +54,14 @@ export const resetPasswordSchema = z
   });
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
-/** Switch the active branch for a multi-branch user without re-authenticating. */
-export const switchBranchSchema = z.object({ branchId: objectId });
+/**
+ * Switch the active branch for a multi-branch user without re-authenticating.
+ *
+ * `null` means "no single branch in context" — the all-branches view. Only an unscoped
+ * user may select it; the server rejects it for everyone else rather than quietly
+ * substituting their assignment list, so the client can never widen its own scope.
+ */
+export const switchBranchSchema = z.object({ branchId: objectId.nullable() });
 export type SwitchBranchInput = z.infer<typeof switchBranchSchema>;
 
 /* -------------------------------------------------------------------------- */

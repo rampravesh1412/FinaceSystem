@@ -53,6 +53,7 @@ const CreditPage = lazyPage(() => import("@/features/credit/credit-page"), "Cred
 const SavingsPage = lazyPage(() => import("@/features/savings/savings-page"), "SavingsPage");
 
 const ProfitLossPage = lazyPage(() => import("@/features/reports/pnl-page"), "ProfitLossPage");
+const MonthlyHistoryPage = lazyPage(() => import("@/features/reports/monthly-history-page"), "MonthlyHistoryPage");
 const BalanceSheetPage = lazyPage(() => import("@/features/reports/balance-sheet-page"), "BalanceSheetPage");
 const CashTallyPage = lazyPage(() => import("@/features/reports/cash-tally-page"), "CashTallyPage");
 const ReportsIndexPage = lazyPage(() => import("@/features/reports/reports-index-page"), "ReportsIndexPage");
@@ -188,6 +189,14 @@ export const router = createBrowserRouter([
         element: (
           <RequirePermission permission="reports.pnl">
             <ProfitLossPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: "reports/monthly-history",
+        element: (
+          <RequirePermission permission="reports.pnl">
+            <MonthlyHistoryPage />
           </RequirePermission>
         ),
       },

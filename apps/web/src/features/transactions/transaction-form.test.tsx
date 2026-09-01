@@ -20,6 +20,8 @@ const BRANCH_ID = "6501aa000000000000000003";
 const PARTY_ID = "6501aa000000000000000005";
 const ACCOUNT_ID = "6501aa000000000000000006";
 const HEAD_ID = "6501aa000000000000000007";
+const OTHER_BRANCH_ID = "6501aa000000000000000008";
+const OTHER_ACCOUNT_ID = "6501aa000000000000000009";
 
 vi.mock("@/features/auth/auth-context", () => ({
   useAuth: () => ({
@@ -52,13 +54,24 @@ describe("transaction form", () => {
   beforeEach(() => {
     api.list.mockImplementation((path: string) => {
       const items = String(path).startsWith("/parties")
-        ? [{ id: PARTY_ID, name: "Sharma Traders", code: "PTY-001", balance: 5000000, direction: "LENA" }]
+        ? [{
+            id: PARTY_ID, name: "Sharma Traders", code: "PTY-001",
+            branch: { id: BRANCH_ID, name: "Head Office", code: "101" },
+            balance: 5000000, direction: "LENA",
+          }]
         : String(path).startsWith("/bank-accounts")
           ? [{
               id: ACCOUNT_ID, accountName: "HDFC Current", accountNumber: "••7890",
               bank: { id: "b", name: "HDFC Bank", shortName: "HDFC" },
               branch: { id: BRANCH_ID, name: "Head Office", code: "101" },
               balance: 20000000, availableBalance: 20000000, overdraftLimit: 0,
+            }, {
+              // Another branch's account. The server would refuse it for a transaction
+              // posted here, so the form must not offer it in the first place.
+              id: OTHER_ACCOUNT_ID, accountName: "ICICI Current", accountNumber: "••1234",
+              bank: { id: "b2", name: "ICICI Bank", shortName: "ICICI" },
+              branch: { id: OTHER_BRANCH_ID, name: "Gaya Branch", code: "107" },
+              balance: 5000000, availableBalance: 5000000, overdraftLimit: 0,
             }]
           : [];
       return Promise.resolve({
@@ -103,6 +116,42 @@ describe("transaction form", () => {
 
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     expect(api.post.mock.calls[0]![0]).toBe("/payment-in");
+  });
+
+  /**
+   * The posting branch is a field on the form, so a super admin working from the
+   * all-branches view can record an entry without leaving the dialog to switch context.
+   */
+  it("carries the chosen branch through to the payload", async () => {
+    const user = await openForm("PAYMENT_IN", "Payment In");
+
+    expect(screen.getByRole("combobox", { name: /^branch/i })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^amount/i), "5000");
+    await user.click(screen.getByRole("combobox", { name: /^party/i }));
+    await user.click(await screen.findByRole("option", { name: /sharma traders/i }));
+    await user.click(screen.getByRole("combobox", { name: /received into/i }));
+    await user.click(await screen.findByRole("option", { name: /hdfc/i }));
+
+    await user.click(screen.getByRole("button", { name: /record receipt/i }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(api.post.mock.calls[0]![1]).toHaveProperty("branchId", BRANCH_ID);
+  });
+
+  /**
+   * A party may belong to any branch, but a till or bank account is the branch's own
+   * asset. Offering another branch's account would move a balance on a transaction that
+   * never appears in that branch's books.
+   */
+  it("offers only accounts belonging to the posting branch", async () => {
+    const user = await openForm("PAYMENT_IN", "Payment In");
+
+    await user.click(screen.getByRole("combobox", { name: /received into/i }));
+
+    expect(await screen.findByRole("option", { name: /hdfc/i })).toBeInTheDocument();
+    // Seeded in the mock under a different branch — it must not be selectable here.
+    expect(screen.queryByRole("option", { name: /icici/i })).not.toBeInTheDocument();
   });
 
   it("posts Income to /income with an income head, not an expense head", async () => {

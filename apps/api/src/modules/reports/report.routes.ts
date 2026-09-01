@@ -92,6 +92,33 @@ reportRouter.get(
   }),
 );
 
+/* ── Monthly history ─────────────────────────────────────────────────────── */
+
+/**
+ * Month-by-month P&L, expenses and party movement over a range.
+ *
+ * Gated on `reports.pnl` rather than the broader `reports.view`: the rows carry the profit
+ * figure, and someone who may not open the P&L should not be handed twelve of them in a
+ * table instead.
+ */
+reportRouter.get(
+  "/monthly-history",
+  requirePermission("reports.pnl"),
+  requireBranchAccess({ optional: true }),
+  validate({ query: reportRangeSchema }),
+  asyncHandler(async (req, res) => {
+    const query = req.valid.query as ReportRange;
+    return ok(
+      res,
+      await reports.monthlyHistory({
+        from: query.from,
+        to: query.to,
+        branchId: resolveBranch(req, query.branchId),
+      }),
+    );
+  }),
+);
+
 /* ── Balance Sheet (§34) ─────────────────────────────────────────────────── */
 
 reportRouter.get(

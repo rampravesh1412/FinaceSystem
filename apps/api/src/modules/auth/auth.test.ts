@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Express } from "express";
 import { createApp } from "../../app.js";
-import { AuditLog, Session, User } from "../../models/index.js";
+import { AuditLog, Role, Session, User } from "../../models/index.js";
 import { TEST_PASSWORD, TestClient, clearFixtures, seedFixtures, type Fixtures } from "../../test/helpers.js";
 
 /**
@@ -304,6 +304,70 @@ describe("branch isolation", () => {
     expect(res.status).toBe(403);
   });
 
+  it("signs a super admin in on the all-branches view by default", async () => {
+    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
+      "/auth/login",
+      { email: "super@test.co", password: TEST_PASSWORD },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.activeBranchId).toBeNull();
+  });
+
+  it("still honours a branch named explicitly at login", async () => {
+    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
+      "/auth/login",
+      { email: "super@test.co", password: TEST_PASSWORD, branchId: fx.branches["107"] },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.activeBranchId).toBe(fx.branches["107"]);
+  });
+
+  it("leaves a scoped user on their own default branch, not the all-branches view", async () => {
+    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
+      "/auth/login",
+      { email: "acct@test.co", password: TEST_PASSWORD },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.activeBranchId).not.toBeNull();
+  });
+
+  it("lets a super admin clear the branch context to see every branch at once", async () => {
+    const token = await client.loginAs("super@test.co");
+    const res = await client.post<{ data: { activeBranchId: string | null } }>(
+      "/auth/switch-branch",
+      { branchId: null },
+      { token },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.activeBranchId).toBeNull();
+  });
+
+  it("refuses the all-branches view to a scoped user", async () => {
+    const token = await client.loginAs("acct@test.co");
+    const res = await client.post<{ error: { code: string } }>(
+      "/auth/switch-branch",
+      { branchId: null },
+      { token },
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
+  });
+
+  /**
+   * The regression that makes an "All branches" option feel broken: the choice is held in
+   * the session object, not the user record, so the very next `/auth/me` must not quietly
+   * reinstate `defaultBranchId`.
+   */
+  it("keeps a super admin unscoped without falling back to their default branch", async () => {
+    const token = await client.loginAs("super@test.co");
+    await client.post("/auth/switch-branch", { branchId: null }, { token });
+
+    const listed = await client.get<{ data: unknown[] }>("/branches", { token });
+    expect(listed.status).toBe(200);
+    // Unscoped means every branch, not just the one they were defaulted into.
+    expect(listed.body.data.length).toBeGreaterThan(1);
+  });
+
   it("stops a branch admin assigning a user to a branch they do not hold", async () => {
     const token = await client.loginAs("badmin@test.co");
     const res = await client.post<{ error: { code: string } }>(
@@ -327,6 +391,71 @@ describe("branch isolation", () => {
     expect(res.status).toBe(200);
     // The super admin sits in branch 101 and must not appear in a 105 admin's directory.
     expect(res.body.data.map((u) => u.email)).not.toContain("super@test.co");
+  });
+
+  /**
+   * The "global admin" shape: unscoped reach, restricted powers.
+   *
+   * This is the combination the Roles screen exists to express, and the one most likely to
+   * be got wrong — it is tempting to assume that seeing every branch implies being able to
+   * act in every branch. The two are decided by different guards: `requireBranchAccess`
+   * reads `isUnscoped`, `requirePermission` reads the permission list. A role can hold one
+   * without the other, and this asserts that it genuinely does.
+   */
+  describe("a global admin — unscoped, but limited by permission", () => {
+    let globalToken: string;
+
+    beforeAll(async () => {
+      const role = await Role.create({
+        name: "GLOBAL_AUDITOR_TEST",
+        label: "Global Auditor",
+        // Sees everything...
+        isUnscoped: true,
+        // ...but may only look. No create, edit, approve or reverse anywhere.
+        permissions: ["branches.view", "users.view", "finance.party.view"],
+        isSystem: false,
+      });
+
+      const user = new User({
+        name: "Global Auditor",
+        email: "gaudit@test.co",
+        roleId: role._id,
+        // Deliberately empty. If unscoped access were somehow derived from this list
+        // rather than from the role, the branch assertion below would fail.
+        branchIds: [],
+        status: "ACTIVE",
+        passwordHash: "placeholder",
+      });
+      await user.setPassword(TEST_PASSWORD);
+      user.mustChangePassword = false;
+      await user.save();
+
+      globalToken = await client.loginAs("gaudit@test.co");
+    });
+
+    it("sees every branch despite holding no branch assignment", async () => {
+      const res = await client.get<{ data: Array<{ code: string }> }>("/branches", {
+        token: globalToken,
+      });
+      expect(res.status).toBe(200);
+
+      // All three fixture branches, from a user whose `branchIds` is empty.
+      const codes = res.body.data.map((b) => b.code).sort();
+      expect(codes).toEqual(["101", "105", "107"]);
+    });
+
+    it("is still refused an action its permissions do not grant", async () => {
+      const res = await client.post<{ error: { code: string } }>(
+        "/parties",
+        { name: "Should Not Exist", branchId: fx.branches["105"], openingBalance: 0 },
+        { token: globalToken },
+      );
+
+      // Unscoped reach does not imply the right to write. Seeing 105 and being able to
+      // create in 105 are separate grants.
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe("PERMISSION_DENIED");
+    });
   });
 });
 

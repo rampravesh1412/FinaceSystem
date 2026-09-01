@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx src/scripts/seed.ts",
+    "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts",
+    "create:superadmin": "tsx src/scripts/create-superadmin.ts",
+    "create:globaladmin": "tsx src/scripts/create-global-admin.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

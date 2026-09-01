@@ -82,6 +82,7 @@ const SCREENS: Array<{ name: string; load: () => Promise<{ default?: unknown } &
   { name: "Settings", load: () => import("@/features/settings/settings-page"), export: "SettingsPage" },
   { name: "Trial balance", load: () => import("@/features/reports/trial-balance-page"), export: "TrialBalancePage" },
   { name: "Reports hub", load: () => import("@/features/reports/reports-index-page"), export: "ReportsIndexPage" },
+  { name: "Monthly history", load: () => import("@/features/reports/monthly-history-page"), export: "MonthlyHistoryPage" },
   { name: "Cash tally", load: () => import("@/features/reports/cash-tally-page"), export: "CashTallyPage" },
   { name: "Approvals", load: () => import("@/features/governance/approvals-page"), export: "ApprovalsPage" },
   { name: "Audit", load: () => import("@/features/governance/audit-page"), export: "AuditPage" },

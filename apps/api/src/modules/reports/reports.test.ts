@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Express } from "express";
-import { formatINR } from "@amiri/shared";
+import { formatINR, type MonthlyHistory } from "@amiri/shared";
 import { createApp } from "../../app.js";
 import { CashAccount, ExpenseCategory, IncomeHead } from "../../models/index.js";
 import { ensureSystemAccounts, trialBalance } from "../../services/ledger.service.js";
@@ -487,6 +487,114 @@ describe("export", () => {
     expect(text).toContain("NET PROFIT");
     // §21 survives into the file: cash movement is labelled as the different question.
     expect(text).toMatch(/Cash movement.*NOT profit/i);
+  });
+});
+
+describe("monthly history", () => {
+  const RANGE = "from=2026-04-01&to=2026-08-31";
+
+  async function history() {
+    const res = await client.get<{ data: MonthlyHistory }>(
+      `/reports/monthly-history?${RANGE}&branchId=${branchId}`,
+      { token },
+    );
+    expect(res.status).toBe(200);
+    return res.body.data;
+  }
+
+  it("returns every month in the range, including ones with no trading at all", async () => {
+    const data = await history();
+
+    // April through August inclusive — five rows, in order, with no gaps.
+    expect(data.months.map((m) => m.month)).toEqual([
+      "2026-04", "2026-05", "2026-06", "2026-07", "2026-08",
+    ]);
+    expect(data.months[0]!.label).toBe("Apr 2026");
+
+    // A month nobody traded in is a row of zeros, not a missing row. The distinction is
+    // the difference between "nothing happened" and "the report is broken".
+    for (const month of data.months) {
+      if (month.entries === 0) {
+        expect(month.income).toBe(0);
+        expect(month.expenses).toBe(0);
+        expect(month.netProfit).toBe(0);
+      }
+    }
+  });
+
+  /**
+   * The figure that matters most: a month's row must say the same thing the P&L says for
+   * that identical window. Two code paths computing profit differently is precisely how a
+   * summary table drifts from the report it summarises.
+   */
+  it("agrees with the P&L run over the same window", async () => {
+    const data = await history();
+    const august = data.months.find((m) => m.month === "2026-08")!;
+
+    const pnl = await client.get<{
+      data: { totalIncome: number; totalExpenses: number; netProfit: number; totalCharges: number };
+    }>(`/reports/profit-loss?from=2026-08-01&to=2026-08-31&branchId=${branchId}`, { token });
+
+    expect(august.income).toBe(pnl.body.data.totalIncome);
+    expect(august.expenses).toBe(pnl.body.data.totalExpenses);
+    expect(august.netProfit).toBe(pnl.body.data.netProfit);
+    expect(august.charges).toBe(pnl.body.data.totalCharges);
+  });
+
+  it("totals the months rather than recomputing them", async () => {
+    const data = await history();
+
+    expect(data.totals.income).toBe(data.months.reduce((s, m) => s + m.income, 0));
+    expect(data.totals.expenses).toBe(data.months.reduce((s, m) => s + m.expenses, 0));
+    expect(data.totals.netProfit).toBe(data.totals.income - data.totals.expenses);
+  });
+
+  /**
+   * `partyClosing` is a position carried forward, not a movement. Each month must equal
+   * the previous close plus that month's net — otherwise it is just the month's activity
+   * mislabelled as a balance, which is the bug this assertion exists to catch.
+   */
+  it("carries the party balance forward month to month", async () => {
+    const data = await history();
+
+    for (let i = 1; i < data.months.length; i += 1) {
+      const previous = data.months[i - 1]!;
+      const current = data.months[i]!;
+      expect(current.partyClosing).toBe(
+        previous.partyClosing + current.partyPaid - current.partyReceived,
+      );
+    }
+
+    // The opening balance was posted on 2026-04-01, so April must already carry it.
+    expect(data.months[0]!.partyClosing).not.toBe(0);
+  });
+
+  it("ranks the best and worst months only among those that traded", async () => {
+    const data = await history();
+    const traded = data.months.filter((m) => m.entries > 0);
+
+    if (traded.length > 0) {
+      const best = data.months.find((m) => m.month === data.bestMonth)!;
+      const worst = data.months.find((m) => m.month === data.worstMonth)!;
+      expect(best.entries).toBeGreaterThan(0);
+      expect(worst.entries).toBeGreaterThan(0);
+      for (const month of traded) {
+        expect(best.netProfit).toBeGreaterThanOrEqual(month.netProfit);
+        expect(worst.netProfit).toBeLessThanOrEqual(month.netProfit);
+      }
+    }
+  });
+
+  it("refuses a caller who may see reports but not the P&L", async () => {
+    // ACCOUNTANT holds `reports.view` but not `reports.pnl`. These rows carry the profit
+    // figure, so the narrower permission is the one that governs them.
+    const acctToken = await client.loginAs("acct@test.co");
+    const res = await client.get<{ error: { code: string } }>(
+      `/reports/monthly-history?${RANGE}`,
+      { token: acctToken },
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("PERMISSION_DENIED");
   });
 });
 

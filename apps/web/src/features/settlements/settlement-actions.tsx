@@ -18,6 +18,7 @@ import {
 } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { useAuth } from "@/features/auth/auth-context";
+import { BranchRequired } from "@/components/branch-required";
 import { NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -161,6 +162,9 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
           </DialogDescription>
         </DialogHeader>
 
+        {!user?.activeBranchId ? (
+          <BranchRequired action="A settlement" />
+        ) : (
         <form
           onSubmit={form.handleSubmit((values) => {
             setFormError(null);
@@ -266,6 +270,7 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

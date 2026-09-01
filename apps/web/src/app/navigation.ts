@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  ArrowLeftRight, BadgeIndianRupee, BookOpen, Building2, CalendarClock, ClipboardCheck,
+  ArrowLeftRight, BadgeIndianRupee, BookOpen, Building2, CalendarClock, CalendarRange, ClipboardCheck,
   Coins, CreditCard, FileBarChart, FileSpreadsheet, Landmark, LayoutDashboard, Notebook,
   PiggyBank, Receipt, ScrollText, Scale, Settings, ShieldCheck, TrendingDown, TrendingUp,
   Users, Wallet, Percent, Handshake, ListChecks, History, Upload, FolderTree, Layers,
@@ -96,6 +96,7 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { label: "Financial Reports", to: "/reports", icon: FileBarChart, permission: "reports.view", phase: 5 },
       { label: "Profit & Loss", to: "/reports/profit-loss", icon: TrendingUp, permission: "reports.pnl", phase: 5, keywords: ["p&l", "pnl"] },
+      { label: "Monthly History", to: "/reports/monthly-history", icon: CalendarRange, permission: "reports.pnl", phase: 5, keywords: ["monthly", "history", "trend", "month"] },
       { label: "Balance Sheet", to: "/reports/balance-sheet", icon: Scale, permission: "reports.balanceSheet", phase: 5 },
       { label: "Trial Balance", to: "/reports/trial-balance", icon: FileSpreadsheet, permission: "reports.trialBalance", phase: 5 },
     ],

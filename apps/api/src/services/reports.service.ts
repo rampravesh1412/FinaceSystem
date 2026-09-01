@@ -6,6 +6,8 @@ import {
   type BalanceSheet,
   type CashFlowReport,
   type CashFlowRow,
+  type MonthlyHistory,
+  type MonthlyHistoryRow,
   type PnLLine,
   type ProfitAndLoss,
 } from "@amiri/shared";
@@ -294,6 +296,182 @@ export async function cashMovement(options: {
   }
 
   return { in: inflow, out: outflow, net: inflow - outflow };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Monthly history                                                            */
+/* -------------------------------------------------------------------------- */
+
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+interface MonthlyBucket {
+  _id: { year: number; month: number; kind: AccountKind };
+  debit: number;
+  credit: number;
+  entries: number;
+}
+
+/**
+ * Month-by-month trading history.
+ *
+ * ONE aggregation for the entire range, not one per month. A two-year view is 24 months ×
+ * several account kinds; querying per month would be dozens of round trips returning data
+ * the database could have grouped itself in a single pass.
+ *
+ * Months with no postings are emitted as explicit zero rows rather than omitted. A gap in a
+ * history table reads as missing data — "did the report break?" — whereas a row of zeros
+ * says plainly that nothing traded that month, which is itself a finding.
+ *
+ * `partyClosing` is a POSITION, not a movement, so it cannot be read from this range alone:
+ * it needs what parties owed before the window opened. That opening figure is fetched
+ * separately and the monthly nets are accumulated onto it.
+ */
+export async function monthlyHistory(options: {
+  from: Date;
+  to: Date;
+  branchId?: string;
+}): Promise<MonthlyHistory> {
+  const from = startOfDay(options.from);
+  const to = endOfDay(options.to);
+
+  const match: Record<string, unknown> = { date: { $gte: from, $lte: to } };
+  if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
+
+  const buckets = await LedgerEntry.aggregate<MonthlyBucket>([
+    { $match: match },
+    {
+      $lookup: {
+        from: "ledgeraccounts",
+        localField: "ledgerAccountId",
+        foreignField: "_id",
+        as: "account",
+        pipeline: [{ $project: { kind: 1 } }],
+      },
+    },
+    { $unwind: "$account" },
+    {
+      $group: {
+        // Grouped in UTC, matching how every other report in this file reads `date`.
+        _id: {
+          year: { $year: { date: "$date", timezone: "UTC" } },
+          month: { $month: { date: "$date", timezone: "UTC" } },
+          kind: "$account.kind",
+        },
+        debit: { $sum: { $cond: [{ $eq: ["$direction", "DEBIT"] }, "$amount", 0] } },
+        credit: { $sum: { $cond: [{ $eq: ["$direction", "CREDIT"] }, "$amount", 0] } },
+        entries: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const byMonth = new Map<string, MonthlyBucket[]>();
+  for (const bucket of buckets) {
+    const key = `${bucket._id.year}-${String(bucket._id.month).padStart(2, "0")}`;
+    const list = byMonth.get(key);
+    if (list) list.push(bucket);
+    else byMonth.set(key, [bucket]);
+  }
+
+  /**
+   * What parties owed at the instant before the window.
+   *
+   * Party accounts are asset-normal: a debit increases what they owe us. Without this the
+   * first month's closing figure would be that month's movement wearing the label of a
+   * balance — the same mistake `cashFlow` avoids with its opening figure.
+   */
+  const openingRows = await totalsByAccount({
+    to: new Date(from.getTime() - 1),
+    branchId: options.branchId,
+    kinds: ["PARTY"],
+  });
+  let partyRunning = openingRows.reduce((sum, r) => sum + (r.debit - r.credit), 0);
+
+  const months: MonthlyHistoryRow[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  const last = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), 1));
+
+  while (cursor <= last) {
+    const year = cursor.getUTCFullYear();
+    const monthIndex = cursor.getUTCMonth();
+    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+    const rows = byMonth.get(key) ?? [];
+
+    const of = (kind: AccountKind) => rows.find((r) => r._id.kind === kind);
+    const sum = (kinds: AccountKind[], pick: (b: MonthlyBucket) => number) =>
+      kinds.reduce((total, kind) => {
+        const bucket = of(kind);
+        return total + (bucket ? pick(bucket) : 0);
+      }, 0);
+
+    // Income is credit-normal; expense and charge are debit-normal. Both reported positive.
+    const income = sum(["INCOME"], (b) => b.credit - b.debit);
+    const charges = sum(["CHARGE"], (b) => b.debit - b.credit);
+    const expenses = sum(["EXPENSE"], (b) => b.debit - b.credit) + charges;
+
+    const cashIn = sum(["BANK", "CASH"], (b) => b.debit);
+    const cashOut = sum(["BANK", "CASH"], (b) => b.credit);
+
+    // A party debit is what they took on; a credit is what they settled.
+    const partyPaid = sum(["PARTY"], (b) => b.debit);
+    const partyReceived = sum(["PARTY"], (b) => b.credit);
+    partyRunning += partyPaid - partyReceived;
+
+    const netProfit = income - expenses;
+
+    months.push({
+      month: key,
+      label: `${MONTH_NAMES[monthIndex]} ${year}`,
+      from: new Date(Date.UTC(year, monthIndex, 1)).toISOString(),
+      // Day 0 of the next month is the last day of this one, leap years included.
+      to: endOfDay(new Date(Date.UTC(year, monthIndex + 1, 0))).toISOString(),
+      income,
+      expenses,
+      charges,
+      netProfit,
+      margin: income > 0 ? (netProfit / income) * 100 : null,
+      cashIn,
+      cashOut,
+      cashNet: cashIn - cashOut,
+      partyReceived,
+      partyPaid,
+      partyClosing: partyRunning,
+      entries: rows.reduce((total, r) => total + r.entries, 0),
+    });
+
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+
+  const totalIncome = months.reduce((s, m) => s + m.income, 0);
+  const totalExpenses = months.reduce((s, m) => s + m.expenses, 0);
+  const netProfit = totalIncome - totalExpenses;
+
+  // Only months that actually traded compete for best and worst — otherwise an untraded
+  // month of zeros would win "worst" over a month that genuinely lost money.
+  const traded = months.filter((m) => m.entries > 0);
+  const ranked = [...traded].sort((a, b) => b.netProfit - a.netProfit);
+
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    branchId: options.branchId ?? null,
+    months,
+    totals: {
+      income: totalIncome,
+      expenses: totalExpenses,
+      charges: months.reduce((s, m) => s + m.charges, 0),
+      netProfit,
+      margin: totalIncome > 0 ? (netProfit / totalIncome) * 100 : null,
+      cashNet: months.reduce((s, m) => s + m.cashNet, 0),
+      partyReceived: months.reduce((s, m) => s + m.partyReceived, 0),
+      partyPaid: months.reduce((s, m) => s + m.partyPaid, 0),
+    },
+    bestMonth: ranked.length > 0 ? ranked[0]!.month : null,
+    worstMonth: ranked.length > 0 ? ranked[ranked.length - 1]!.month : null,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /**

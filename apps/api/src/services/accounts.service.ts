@@ -95,16 +95,36 @@ export interface ResolvedParty {
   branchId: Types.ObjectId;
 }
 
+/**
+ * `allowCrossBranch` — settle with a party whose home branch is not the posting branch.
+ *
+ * Off by default, and deliberately opt-in per call site rather than removed outright. Only
+ * receipts and payments (§14) pass it: a customer may walk into whichever office is nearest
+ * and hand over cash, and refusing that forces the operator to either misfile the receipt
+ * under the wrong party or not record it at all.
+ *
+ * What it does NOT relax is double entry. Both legs of the transaction are still stamped
+ * with the posting branch, so each branch's books balance on their own; what changes is
+ * that the party's receivable is no longer confined to one branch. Their total is the sum
+ * across branches, which means a branch-scoped user now sees only the portion of that
+ * balance booked in their own branch. That is the real cost of this flag, and it is why an
+ * expense, a settlement and a khata adjustment still refuse — those are reconciliation
+ * instruments, and a partial view of a balance is precisely what they must not have.
+ */
 export async function resolveParty(
   partyId: string | Types.ObjectId,
   expectedBranchId: string | Types.ObjectId,
   session?: ClientSession,
+  options: { allowCrossBranch?: boolean } = {},
 ): Promise<ResolvedParty> {
   const party = await Party.findById(partyId).session(session ?? null);
   if (!party) throw new NotFoundError("Party", String(partyId));
   if (party.status !== "ACTIVE") throw new InactiveAccountError(party.name);
 
-  if (!party.branchId.equals(new Types.ObjectId(String(expectedBranchId)))) {
+  if (
+    !options.allowCrossBranch &&
+    !party.branchId.equals(new Types.ObjectId(String(expectedBranchId)))
+  ) {
     throw new BadRequestError(
       `${party.name} belongs to a different branch`,
       "partyId",

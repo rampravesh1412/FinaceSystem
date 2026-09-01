@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, Search, Sun, User as UserIcon } from "lucide-react";
+import { Building2, Check, ChevronsUpDown, Globe, LogOut, Menu, Moon, Search, Sun, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/features/auth/auth-context";
 import { NotificationBell } from "@/components/notification-bell";
 import { useTheme } from "@/hooks/use-theme";
@@ -145,7 +145,7 @@ function BranchSwitcher() {
     );
   }
 
-  const onSelect = async (branchId: string) => {
+  const onSelect = async (branchId: string | null) => {
     if (branchId === user.activeBranchId) return;
     setSwitching(true);
     try {
@@ -155,11 +155,19 @@ function BranchSwitcher() {
     }
   };
 
+  // Only an unscoped user can hold every branch at once. Offering this to a scoped user
+  // would produce a menu entry whose only outcome is a 403.
+  const canViewAll = user.isSuperAdmin;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="h-9 gap-2" loading={switching}>
-          <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          {active ? (
+            <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          ) : (
+            <Globe className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          )}
           <span className="truncate font-medium">{active ? active.code : "All branches"}</span>
           <span className="hidden max-w-[10rem] truncate text-muted-foreground md:inline">
             {active ? active.name : `${user.branches.length} branches`}
@@ -170,6 +178,20 @@ function BranchSwitcher() {
 
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Branch in context</DropdownMenuLabel>
+
+        {canViewAll ? (
+          <>
+            <DropdownMenuItem onSelect={() => void onSelect(null)}>
+              <Globe className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="truncate">All branches</span>
+              {user.activeBranchId === null ? (
+                <Check className="ml-auto size-4 text-accent" />
+              ) : null}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+
         {user.branches.map((branch) => (
           <DropdownMenuItem key={branch.id} onSelect={() => void onSelect(branch.id)}>
             <span className="w-10 shrink-0 font-mono text-xs font-medium">{branch.code}</span>

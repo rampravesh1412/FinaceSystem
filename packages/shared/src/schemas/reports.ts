@@ -78,6 +78,71 @@ export interface ProfitAndLoss {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Monthly history                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One month of trading, on the same terms as the P&L above.
+ *
+ * §21 still holds here and is the reason `cashNet` sits apart from `netProfit` rather than
+ * near it: a month can bank a great deal and still lose money. Reading a row left to right
+ * should make that gap visible, not hide it.
+ */
+export interface MonthlyHistoryRow {
+  /** `2026-08` — sortable, and the key the UI uses. */
+  month: string;
+  /** `Aug 2026` — for display, so the client does not re-derive it. */
+  label: string;
+  from: string;
+  to: string;
+
+  income: number;
+  expenses: number;
+  /** Included in `expenses`, broken out because §18 keeps charges traceable. */
+  charges: number;
+  netProfit: number;
+  margin: number | null;
+
+  /** Movement in BANK and CASH accounts. NOT part of profit. */
+  cashIn: number;
+  cashOut: number;
+  cashNet: number;
+
+  /** Received from parties over the month, and paid out to them. */
+  partyReceived: number;
+  partyPaid: number;
+  /**
+   * What parties owed at the close of this month — a running position, not a movement.
+   * Positive means they owe us.
+   */
+  partyClosing: number;
+
+  /** Postings in the month. A zero-entry month is real information, not a gap. */
+  entries: number;
+}
+
+export interface MonthlyHistory {
+  from: string;
+  to: string;
+  branchId: string | null;
+  months: MonthlyHistoryRow[];
+  totals: {
+    income: number;
+    expenses: number;
+    charges: number;
+    netProfit: number;
+    margin: number | null;
+    cashNet: number;
+    partyReceived: number;
+    partyPaid: number;
+  };
+  /** The best and worst months by net profit, or null when there is nothing to compare. */
+  bestMonth: string | null;
+  worstMonth: string | null;
+  generatedAt: string;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Balance Sheet (§34)                                                        */
 /* -------------------------------------------------------------------------- */
 

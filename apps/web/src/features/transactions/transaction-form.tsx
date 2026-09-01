@@ -104,13 +104,13 @@ export function TransactionFormDialog({
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = React.useState(false);
 
-  const branchId = user?.activeBranchId ?? user?.branches[0]?.id ?? "";
-
   const form = useForm<Record<string, unknown>>({
     resolver: zodResolver(config.schema as never),
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      branchId,
+      // Seeded from the branch in context, but the operator can change it below. Empty
+      // under the all-branches view, which makes the field the thing that asks.
+      branchId: user?.activeBranchId ?? "",
       amount: "",
       paymentMode: mode === "BANK_TRANSFER" ? "NEFT" : "CASH",
       attachments: [],
@@ -119,11 +119,50 @@ export function TransactionFormDialog({
     },
   });
 
-  const { options: accounts, isPending: accountsPending } = useAccounts();
+  /**
+   * The posting branch is now a field, not the ambient context.
+   *
+   * Reading it back from the form rather than from the session is what lets a super admin
+   * work from the all-branches view: they choose where this entry belongs as part of
+   * filling it in, instead of leaving the dialog to switch context and starting over.
+   */
+  const branchId = (form.watch("branchId") as string) ?? "";
+
+  const { options: allAccounts, isPending: accountsPending } = useAccounts();
+
+  /**
+   * Accounts are filtered to the posting branch, and deliberately still are.
+   *
+   * A party may be settled from anywhere — they walk into whichever office is nearest —
+   * but a till or a bank account IS the branch's own asset. Offering 107's account for a
+   * receipt booked in 105 would move 107's balance on a transaction that never appears in
+   * 107's books, which is the point at which a branch stops being able to reconcile.
+   */
+  const accounts = React.useMemo(
+    () => allAccounts.filter((a) => !branchId || a.branchId === branchId),
+    [allAccounts, branchId],
+  );
   const parties = useParties();
   const categories = useExpenseCategories();
   const incomeHeads = useIncomeHeads();
   const chargeRules = useChargeRules();
+
+  /**
+   * Changing the branch drops any account already chosen.
+   *
+   * The account fields are filtered by branch, so a selection made under the previous one
+   * would otherwise survive as an id the operator can no longer see in the list — and be
+   * submitted, and be refused by the server for a reason nothing on screen explains.
+   * Party and amount are left alone: those are still valid wherever this is posted.
+   */
+  const previousBranch = React.useRef(branchId);
+  React.useEffect(() => {
+    if (previousBranch.current === branchId) return;
+    previousBranch.current = branchId;
+    for (const field of ["accountId", "sourceAccountId", "destinationAccountId"]) {
+      if (form.getValues(field) !== undefined) form.setValue(field, "");
+    }
+  }, [branchId, form]);
 
   const amount = String(form.watch("amount") ?? "");
   const chargeRuleId = form.watch("chargeRuleId") as string | undefined;
@@ -184,6 +223,22 @@ export function TransactionFormDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4" noValidate>
+          <Field label="Branch" error={err(form, "branchId")}>
+            {({ id, describedBy }) => (
+              <SelectField
+                id={id}
+                describedBy={describedBy}
+                value={branchId}
+                onChange={(v) => form.setValue("branchId", v, { shouldValidate: true })}
+                placeholder="Choose a branch"
+                options={(user?.branches ?? []).map((b) => ({
+                  value: b.id,
+                  label: `${b.code} — ${b.name}`,
+                }))}
+              />
+            )}
+          </Field>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Date" error={err(form, "date")}>
               <Input type="date" {...form.register("date")} />
@@ -213,9 +268,19 @@ export function TransactionFormDialog({
                     value={form.watch("partyId") as string}
                     onChange={(v) => form.setValue("partyId", v, { shouldValidate: true })}
                     placeholder="Choose a party"
+                    /**
+                     * Every party, including those whose home branch is not the one being
+                     * posted into — a customer may pay at whichever office is nearest.
+                     * The branch code is appended when it differs, because "settling a
+                     * Gaya account through the Patna till" is a decision the operator
+                     * should make knowingly rather than discover in a report later.
+                     */
                     options={(parties.data?.items ?? []).map((p) => ({
                       value: p.id,
-                      label: `${p.name} (${p.code})`,
+                      label:
+                        !p.branch || p.branch.id === branchId
+                          ? `${p.name} (${p.code})`
+                          : `${p.name} (${p.code}) · ${p.branch.code}`,
                       hint: p.balance !== 0 ? formatINR(Math.abs(p.balance)) : undefined,
                     }))}
                   />

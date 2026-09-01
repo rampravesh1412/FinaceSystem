@@ -2,7 +2,7 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowRight, Banknote, FileSpreadsheet, Notebook, Scale, TrendingUp, Wallet,
+  ArrowRight, Banknote, CalendarRange, FileSpreadsheet, Notebook, Scale, TrendingUp, Wallet,
 } from "lucide-react";
 import type { Permission } from "@amiri/shared";
 import { api, qs } from "@/lib/api";
@@ -58,6 +58,15 @@ export function ReportsIndexPage() {
           title="Profit & Loss"
           description="Income earned less expenses incurred, for the period. Not the same as cash received."
           exportPath="/export/profit-loss"
+          params={{ from, to }}
+          permission="reports.pnl"
+          can={can}
+        />
+        <ReportCard
+          to="/reports/monthly-history"
+          icon={CalendarRange}
+          title="Monthly History"
+          description="Profit, expenses and party movement month by month, so this period can be read against the ones before it."
           params={{ from, to }}
           permission="reports.pnl"
           can={can}
