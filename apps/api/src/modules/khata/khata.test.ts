@@ -47,11 +47,23 @@ beforeAll(async () => {
     { name: "HDFC Bank", shortName: "HDFC", ifscPrefix: "HDFC" },
     { token },
   );
+  /**
+   * `openingDate` is explicit, and must stay that way.
+   *
+   * Without it the service dates the opening entry `new Date()` — today. Every other date
+   * in this file is a fixed day in Aug 2026, and the reconciliation below runs to
+   * 2026-08-31, so a floating opening entry falls INSIDE that window while the clock reads
+   * August 2026 and outside it from September onwards. The suite then starts failing on a
+   * date rather than on a change, which is exactly what happened here: the reconciliation
+   * assertion compared a window balance that had silently lost ₹20,00,000 against a cached
+   * balance that still had it.
+   */
   const acc = await client.post<{ data: { id: string } }>(
     "/bank-accounts",
     {
       bankId: bank.body.data.id, branchId, accountName: "HDFC Current",
       accountNumber: "50100234567890", ifsc: "HDFC0001234", openingBalance: "20,00,000",
+      openingDate: "2026-04-01",
     },
     { token },
   );
@@ -59,7 +71,7 @@ beforeAll(async () => {
 
   const cash = await client.post<{ data: { id: string } }>(
     "/cash-accounts",
-    { branchId, name: "Main Counter", openingBalance: "1,00,000" },
+    { branchId, name: "Main Counter", openingBalance: "1,00,000", openingDate: "2026-04-01" },
     { token },
   );
   cashId = cash.body.data.id;
@@ -133,7 +145,13 @@ describe("Digital Khata (§11)", () => {
     );
     await client.post(
       `/transactions/${created.body.data.id}/reverse`,
-      { reason: "Recorded against the wrong customer account entirely" },
+      {
+        reason: "Recorded against the wrong customer account entirely",
+        // Dated, for the same reason the opening balances are: an undated reversal posts
+        // today, which puts it outside the 2026-08-31 reconciliation window below and
+        // leaves that window holding a ₹5,000 receipt whose reversal it cannot see.
+        date: "2026-08-21",
+      },
       { token },
     );
 
