@@ -36,7 +36,15 @@ const schema = z
     /** Comma-separated allowlist. No wildcard in production — credentials are sent. */
     CORS_ORIGINS: z.string().default("http://localhost:5173"),
     COOKIE_DOMAIN: z.string().optional(),
-    COOKIE_SECURE: z.coerce.boolean().default(false),
+    /**
+     * `z.coerce.boolean()` would make the STRING "false" true, so `COOKIE_SECURE=false`
+     * silently meant true and the production guard below could never fire. Parsed from the
+     * word instead.
+     */
+    COOKIE_SECURE: z
+      .enum(["true", "false", "1", "0", "yes", "no", "on", "off"])
+      .default("false")
+      .transform((v) => ["true", "1", "yes", "on"].includes(v)),
 
     /** Failed logins before the account is locked, and for how long. */
     LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),

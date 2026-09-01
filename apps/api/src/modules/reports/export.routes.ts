@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   TRANSACTION_TYPE_LABEL,
+  booleanFlag,
   formatINR,
   objectId,
   type PnLLine,
@@ -367,7 +368,7 @@ exportRouter.get(
     query: rangeSchema.partial({ from: true, to: true }).extend({
       action: z.string().trim().max(40).optional(),
       entity: z.string().trim().max(60).optional(),
-      failuresOnly: z.coerce.boolean().optional(),
+      failuresOnly: booleanFlag.optional(),
       q: z.string().trim().max(120).optional(),
     }),
   }),

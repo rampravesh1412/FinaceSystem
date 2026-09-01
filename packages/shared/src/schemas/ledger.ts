@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ACCOUNT_KIND, type AccountClass, type AccountKind, type Direction } from "../enums.js";
-import { dateRange, listQuery, objectId } from "./common.js";
+import {
+  booleanFlag, dateRange, listQuery, objectId } from "./common.js";
 
 /**
  * Ledger read contracts.
@@ -15,7 +16,7 @@ export const ledgerAccountQuerySchema = listQuery.extend({
   kind: z.nativeEnum(ACCOUNT_KIND).optional(),
   branchId: objectId.optional(),
   /** Hide accounts with no entries and a zero balance — the trial balance's usual view. */
-  activeOnly: z.coerce.boolean().optional(),
+  activeOnly: booleanFlag.optional(),
 });
 export type LedgerAccountQuery = z.infer<typeof ledgerAccountQuerySchema>;
 

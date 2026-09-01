@@ -157,6 +157,25 @@ export const reason = z
   .min(10, "Give a reason of at least 10 characters — this is recorded in the audit log")
   .max(1000);
 
+/**
+ * A boolean that arrives as a query-string value.
+ *
+ * `z.coerce.boolean()` is JS truthiness: the STRING `"false"` is truthy, so
+ * `?includeInactive=false` parses as `true`. Every boolean flag in this application was
+ * wrong in the same direction — a switch turned off sent `false` and the server read it as
+ * on. Nothing failed loudly; the filter simply did not filter.
+ *
+ * This reads the words a query string actually carries. Absent stays absent, so `.optional()`
+ * and `.default()` behave as written.
+ */
+export const booleanFlag = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const v = value.trim().toLowerCase();
+  if (["false", "0", "no", "off"].includes(v)) return false;
+  if (["true", "1", "yes", "on"].includes(v)) return true;
+  return value;
+}, z.boolean());
+
 export const listQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  booleanFlag,
   chargeRuleQuerySchema,
   createBankTransferSchema,
   createChargeRuleSchema,
@@ -202,7 +203,7 @@ expenseRouter.post(
 expenseRouter.get(
   "/categories",
   requirePermission("finance.expense.view"),
-  validate({ query: z.object({ includeInactive: z.coerce.boolean().default(false) }) }),
+  validate({ query: z.object({ includeInactive: booleanFlag.default(false) }) }),
   asyncHandler(async (req, res) => {
     const { includeInactive } = req.valid.query as { includeInactive: boolean };
     return ok(res, await expenses.listHeads("EXPENSE", includeInactive));
@@ -251,7 +252,7 @@ incomeRouter.post(
 incomeRouter.get(
   "/heads",
   requirePermission("finance.income.view"),
-  validate({ query: z.object({ includeInactive: z.coerce.boolean().default(false) }) }),
+  validate({ query: z.object({ includeInactive: booleanFlag.default(false) }) }),
   asyncHandler(async (req, res) => {
     const { includeInactive } = req.valid.query as { includeInactive: boolean };
     return ok(res, await expenses.listHeads("INCOME", includeInactive));

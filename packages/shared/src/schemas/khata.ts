@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ADJUSTMENT_TYPE, PAYMENT_MODE, type AgingBucketKey, type KhataDirection } from "../enums.js";
 import {
+  booleanFlag,
   businessDate,
   dateRange,
   listQuery,
@@ -131,9 +132,9 @@ export type CreateAdjustmentInput = z.infer<typeof createAdjustmentSchema>;
 export const creditQuerySchema = listQuery.extend({
   branchId: optionalObjectId,
   /** Only parties past their limit. */
-  overLimit: z.coerce.boolean().optional(),
+  overLimit: booleanFlag.optional(),
   /** Only parties with something overdue. */
-  overdueOnly: z.coerce.boolean().optional(),
+  overdueOnly: booleanFlag.optional(),
   bucket: z.enum(["current", "b31_60", "b61_90", "b90plus"]).optional(),
 });
 export type CreditQuery = z.infer<typeof creditQuerySchema>;

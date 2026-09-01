@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { PARTY_TYPE, RECORD_STATUS, type KhataDirection } from "../enums.js";
 import {
+  booleanFlag,
   listQuery,
   money,
   note,
@@ -95,7 +96,7 @@ export const partyQuerySchema = listQuery.extend({
   /** Only parties who owe us, or only those we owe. Drives the receivable/payable views. */
   balance: z.enum(["all", "lena", "dena", "clear"]).default("all"),
   /** Only parties past their credit limit. */
-  overLimit: z.coerce.boolean().optional(),
+  overLimit: booleanFlag.optional(),
 });
 export type PartyQuery = z.infer<typeof partyQuerySchema>;
 

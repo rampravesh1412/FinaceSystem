@@ -81,9 +81,14 @@ services:
     env_file:
       - ${DATA_DIR}/deploy/api.env
     environment:
-      # Assembled here so the password has exactly one source of truth (.env) and is not
-      # copied into a second file. `authSource=admin` because the root user lives there.
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/?replicaSet=rs0&authSource=admin
+      # Defaults to the bundled mongo container, assembled here so the password has exactly
+      # one source of truth (.env) and is not copied into a second file. `authSource=admin`
+      # because the root user lives there.
+      #
+      # Set MONGODB_URI in .env to point production at an EXTERNAL cluster (Atlas) instead.
+      # It has to be overridden here rather than in api.env: compose gives `environment:`
+      # precedence over `env_file:`, so a value set there would be silently ignored.
+      MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/?replicaSet=rs0&authSource=admin}
     volumes:
       - ${DATA_DIR}/uploads:/app/apps/api/uploads
     expose:

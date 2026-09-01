@@ -23,7 +23,7 @@
     "build": "npm run build:shared && npm run build --workspace @amiri/api && npm run build --workspace @amiri/web",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
-    "test": "npm run build:shared && npm run test --workspace @amiri/api && npm run test --workspace @amiri/web",
+    "test": "npm run build:shared && npm run test --workspace @amiri/shared && npm run test --workspace @amiri/api && npm run test --workspace @amiri/web",
     "seed": "npm run seed --workspace @amiri/api",
     "test:api": "npm run build:shared && npm run test --workspace @amiri/api",
     "test:web": "npm run build:shared && npm run test --workspace @amiri/web"

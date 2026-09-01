@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { APPROVER_TIER, AUDIT_ACTION } from "../enums.js";
 import {
+  booleanFlag,
   businessDate,
   dateRange,
   listQuery,
@@ -193,7 +194,7 @@ export const auditQuerySchema = listQuery
     userId: optionalObjectId,
     branchId: optionalObjectId,
     /** Only failures — the fast path to "who has been trying to get in". */
-    failuresOnly: z.coerce.boolean().optional(),
+    failuresOnly: booleanFlag.optional(),
     minAmount: nonNegativeMoney.optional(),
   })
   .and(dateRange);
