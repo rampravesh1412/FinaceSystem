@@ -144,7 +144,6 @@ export async function submitForApproval(
           txnNo: `PENDING-${new Types.ObjectId().toHexString().slice(-10).toUpperCase()}`,
           type: input.type,
           date: input.date,
-          branchId: input.branchId,
           status: "PENDING",
           grossAmount: input.grossAmount,
           chargeAmount,
@@ -177,7 +176,7 @@ export async function submitForApproval(
     if (!txn) throw new Error("Failed to create the pending transaction");
 
     await audit.record(
-      { ...ctx, branchId: input.branchId ? String(input.branchId) : null },
+      ctx,
       {
         action: "SUBMIT",
         entity: "Transaction",
@@ -201,7 +200,6 @@ export async function submitForApproval(
     // AFTER commit. A notification failure must never roll back a submission, and the
     // recipients should only hear about something that actually happened.
     await notifications.notifyApprovalRequired({
-      branchId: input.branchId ? String(input.branchId) : null,
       transactionId: String(txn._id),
       txnNo: txn.txnNo,
       typeLabel: TRANSACTION_TYPE_LABEL[input.type] ?? input.type,
@@ -232,10 +230,9 @@ export async function approve(
   transactionId: string,
   actor: { userId: string; isSuperAdmin: boolean; roleName: string },
   comment: string | undefined,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<TransactionDoc> {
-  const pending = await Transaction.findOne({ _id: transactionId, ...scopeFilter }).lean<
+  const pending = await Transaction.findOne({ _id: transactionId }).lean<
     TransactionDoc & { pendingLines?: ledger.PostingLine[] }
   >();
 
@@ -297,7 +294,6 @@ export async function approve(
       {
         type: pending.type,
         date: pending.date,
-        branchId: pending.branchId ?? null,
         lines: pending.pendingLines!,
         grossAmount: pending.grossAmount,
         chargeAmount: pending.chargeAmount,
@@ -311,7 +307,7 @@ export async function approve(
         details,
       },
       session,
-      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
+      ctx,
     );
 
     /**
@@ -340,7 +336,7 @@ export async function approve(
     );
 
     await audit.record(
-      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
+      ctx,
       {
         action: "APPROVE",
         entity: "Transaction",
@@ -379,11 +375,10 @@ export async function reject(
   transactionId: string,
   actor: { userId: string; isSuperAdmin: boolean; roleName: string },
   reason: string,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<TransactionDoc> {
   return withTransaction(async (session) => {
-    const pending = await Transaction.findOne({ _id: transactionId, ...scopeFilter }).session(session);
+    const pending = await Transaction.findOne({ _id: transactionId }).session(session);
     if (!pending) throw new NotFoundError("Transaction", transactionId);
     if (pending.status !== "PENDING") throw new StateConflictError(pending.status, "REJECTED");
 
@@ -402,7 +397,7 @@ export async function reject(
     await pending.save({ session });
 
     await audit.record(
-      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
+      ctx,
       {
         action: "REJECT",
         entity: "Transaction",
@@ -433,18 +428,16 @@ export async function reject(
 
 /** The approval queue (§27). */
 export async function listPending(
-  scopeFilter: Record<string, unknown>,
   actor: { isSuperAdmin: boolean; roleName: string },
   page: { skip: number; limit: number },
 ): Promise<{ items: PendingApproval[]; total: number; totalValue: number }> {
-  const filter = { ...scopeFilter, status: "PENDING" };
+  const filter = { status: "PENDING" };
 
   const [docs, total, valueAgg] = await Promise.all([
     Transaction.find(filter)
       .sort({ createdAt: 1 })
       .skip(page.skip)
       .limit(page.limit)
-      .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
       .populate<{ partyId: { _id: Types.ObjectId; name: string } | null }>("partyId", "name")
       .populate<{ createdBy: { _id: Types.ObjectId; name: string } | null }>("createdBy", "name")
       .lean(),
@@ -482,7 +475,6 @@ export async function listPending(
         type: d.type,
         typeLabel: TRANSACTION_TYPE_LABEL[d.type] ?? d.type,
         date: d.date.toISOString(),
-        branch: { id: String(d.branchId._id), name: d.branchId.name, code: d.branchId.code },
         party: d.partyId ? { id: String(d.partyId._id), name: d.partyId.name } : null,
         accountLabel:
           raw.accountLabel ??

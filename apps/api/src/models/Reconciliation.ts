@@ -8,10 +8,6 @@ import { actorField, baseSchemaOptions, businessDateField, moneyField } from "./
  * Compares what the BANK says against what our LEDGER says, for one account over one
  * window, and lists every line that does not agree.
  *
- * It carries no branch: the account it reconciles is organisation-wide, and the statement
- * the bank issues covers every counter's activity at once. Reconciling only one branch's
- * share of an account would never tie against that statement.
- *
  * The `difference` field is the whole point of the module, and it is never auto-corrected.
  * §62 is explicit: if expected is ₹10,00,000 and actual is ₹9,80,000, the system reports
  * SHORT ₹20,000 and a human investigates. Quietly writing the bank's figure over ours

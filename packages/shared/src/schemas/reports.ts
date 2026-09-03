@@ -16,7 +16,7 @@ import { businessDate, money, note, objectId, optionalObjectId } from "./common.
  *                the drawer and the bank".
  *   Profit     — INCOME accounts less EXPENSE accounts. Answers "did the business earn".
  *
- * A branch can take ₹10,00,000 through the door in a day and make a loss; it can bank
+ * A business can take ₹10,00,000 through the door in a day and make a loss; it can bank
  * nothing and be profitable. Conflating the two is the single most common way a small
  * business ends up insolvent while believing it is doing well.
  */
@@ -25,14 +25,12 @@ export const reportRangeSchema = z
   .object({
     from: businessDate,
     to: businessDate,
-    branchId: optionalObjectId,
   })
   .refine((v) => v.from <= v.to, { message: "The start date must not be after the end date", path: ["from"] });
 export type ReportRange = z.infer<typeof reportRangeSchema>;
 
 export const asOfSchema = z.object({
   asOf: businessDate.optional(),
-  branchId: optionalObjectId,
 });
 export type AsOfQuery = z.infer<typeof asOfSchema>;
 
@@ -53,7 +51,6 @@ export interface PnLLine {
 export interface ProfitAndLoss {
   from: string;
   to: string;
-  branchId: string | null;
 
   income: PnLLine[];
   totalIncome: number;
@@ -124,7 +121,6 @@ export interface MonthlyHistoryRow {
 export interface MonthlyHistory {
   from: string;
   to: string;
-  branchId: string | null;
   months: MonthlyHistoryRow[];
   totals: {
     income: number;
@@ -156,7 +152,6 @@ export interface BalanceSheetLine {
 
 export interface BalanceSheet {
   asOf: string;
-  branchId: string | null;
 
   assets: BalanceSheetLine[];
   totalAssets: number;
@@ -192,7 +187,6 @@ export interface CashFlowRow {
 export interface CashFlowReport {
   from: string;
   to: string;
-  branchId: string | null;
   openingBalance: number;
   totalIn: number;
   totalOut: number;
@@ -306,35 +300,11 @@ export interface DashboardTrendPoint {
   moneyOut: number;
 }
 
-/**
- * One branch's line in the comparison table (§31).
- *
- * Accounts and parties are organisation-wide, so no branch OWNS a balance. `balance` and
- * `receivable` are therefore that branch's CONTRIBUTION — the net movement its own
- * postings put through cash/bank and party accounts. They sum across branches to the
- * organisation's position (less anything posted at organisation level, such as opening
- * balances), which is the only reading that stays arithmetically honest once the
- * underlying accounts are shared.
- */
-export interface BranchPerformance {
-  branchId: string;
-  code: string;
-  name: string;
-  balance: number;
-  income: number;
-  expenses: number;
-  profit: number;
-  receivable: number;
-}
-
 export interface DashboardResponse {
-  scope: "ORGANISATION" | "BRANCH";
-  branch: { id: string; name: string; code: string } | null;
   metrics: DashboardMetrics;
   /** Daily points for the trend charts, oldest first. */
   trend: DashboardTrendPoint[];
   expenseBreakdown: Array<{ name: string; amount: number }>;
-  branches: BranchPerformance[];
   topParties: Array<{ id: string; name: string; balance: number; direction: string }>;
   recentTransactions: Array<{
     id: string;

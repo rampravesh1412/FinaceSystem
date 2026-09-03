@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ledgerAccountQuerySchema, ledgerEntryQuerySchema, objectId, type LedgerAccountQuery } from "@amiri/shared";
 import { asyncHandler, escapeRegex, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { requireAuth, requireBranchAccess, requirePermission, scopeOf } from "../../middleware/auth.js";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { LedgerAccount, LedgerEntry } from "../../models/index.js";
 import { NotFoundError } from "../../lib/errors.js";
 import * as ledger from "../../services/ledger.service.js";
@@ -24,23 +24,12 @@ const idParam = z.object({ id: objectId });
 ledgerRouter.get(
   "/accounts",
   requirePermission("finance.ledger.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: ledgerAccountQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as LedgerAccountQuery;
     const page = paging(query, { code: 1 }, ["code", "name", "cachedBalance"]);
 
-    /**
-     * Branch scoping, with an escape for system accounts.
-     *
-     * Equity, suspense and bank charges are organisation-wide and carry `branchId: null`.
-     * A plain branch-scoped `$in` would exclude them, and a trial balance missing its
-     * equity account would never tie.
-     */
-    const scope = scopeOf(req);
-    const filter: Record<string, unknown> = req.scope!.isUnscoped
-      ? {}
-      : { $or: [scope, { branchId: null }] };
+    const filter: Record<string, unknown> = {};
 
     if (query.kind) filter.kind = query.kind;
     if (query.activeOnly) filter.cachedEntryCount = { $gt: 0 };
@@ -55,7 +44,7 @@ ledgerRouter.get(
      * it does not.
      *
      * The scope clause is nested under `$and` rather than replaced: overwriting `filter.$or`
-     * here would drop branch isolation and search the whole organisation (§3).
+     * here would replace the caller's filter rather than narrow it.
      */
     if (query.q?.trim()) {
       const rx = new RegExp(escapeRegex(query.q.trim()), "i");
@@ -81,7 +70,6 @@ ledgerRouter.get(
         name: a.name,
         kind: a.kind,
         accountClass: a.accountClass,
-        branchId: a.branchId ? String(a.branchId) : null,
         balance: a.cachedBalance,
         entryCount: a.cachedEntryCount,
         isSystem: a.isSystem,
@@ -103,7 +91,6 @@ ledgerRouter.get(
 ledgerRouter.get(
   "/accounts/:id/entries",
   requirePermission("finance.ledger.view"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam, query: ledgerEntryQuerySchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -111,12 +98,6 @@ ledgerRouter.get(
 
     const account = await LedgerAccount.findById(id).lean();
     if (!account) throw new NotFoundError("Ledger account", id);
-
-    // An account belonging to another branch is invisible, even when its id is known.
-    if (!req.scope!.isUnscoped && account.branchId) {
-      const permitted = req.scope!.branchIds.some((b) => b.equals(account.branchId!));
-      if (!permitted) throw new NotFoundError("Ledger account", id);
-    }
 
     const filter: Record<string, unknown> = { ledgerAccountId: account._id };
     if (query.from || query.to) {
@@ -182,19 +163,14 @@ ledgerRouter.get(
 ledgerRouter.get(
   "/trial-balance",
   requirePermission("reports.trialBalance"),
-  requireBranchAccess({ optional: true }),
-  validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }) }),
+  validate({ query: z.object({ asOf: z.coerce.date().optional() }) }),
   asyncHandler(async (req, res) => {
-    const query = req.valid.query as { asOf?: Date; branchId?: string };
-    const branchId = req.scope!.isUnscoped
-      ? query.branchId
-      : (query.branchId ?? String(req.scope!.activeBranchId ?? ""));
+    const query = req.valid.query as { asOf?: Date };
 
     return ok(
       res,
       await ledger.trialBalance({
         ...(query.asOf ? { asOf: query.asOf } : {}),
-        ...(branchId ? { branchId } : {}),
       }),
     );
   }),

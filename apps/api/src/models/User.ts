@@ -24,8 +24,6 @@ export interface UserDoc extends Document<Types.ObjectId> {
   phone?: string;
   passwordHash: string;
   roleId: Types.ObjectId;
-  branchIds: Types.ObjectId[];
-  defaultBranchId?: Types.ObjectId | null;
   designation?: string;
   avatarUrl?: string;
   status: RecordStatus;
@@ -77,16 +75,6 @@ const userSchema = new Schema<UserDoc, UserModel>(
     passwordHash: { type: String, required: true, select: false },
 
     roleId: { type: Schema.Types.ObjectId, ref: "Role", required: true, index: true },
-
-    /**
-     * The branches this user can see.
-     *
-     * The authorization layer turns this directly into `{ branchId: { $in: branchIds } }`.
-     * An empty array for a scoped user means they see nothing — fail closed, which is the
-     * correct default for a freshly created account awaiting assignment.
-     */
-    branchIds: [{ type: Schema.Types.ObjectId, ref: "Branch", index: true }],
-    defaultBranchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null },
 
     designation: { type: String, trim: true, maxlength: 80 },
     avatarUrl: { type: String, trim: true },

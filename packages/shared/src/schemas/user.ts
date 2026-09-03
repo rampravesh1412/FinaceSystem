@@ -12,25 +12,10 @@ export const createUserSchema = z
     password,
     roleId: objectId,
 
-    /**
-     * Branch assignment.
-     *
-     * A user may hold several branches (a regional manager over 105 and 107). The
-     * authorization layer turns this into `{ branchId: { $in: branchIds } }` on every
-     * query. A non-SuperAdmin with an empty list can see nothing at all, which is the
-     * correct fail-closed default.
-     */
-    branchIds: z.array(objectId).default([]),
-    defaultBranchId: objectId.optional(),
-
     designation: z.string().trim().max(80).optional(),
     status: z.nativeEnum(RECORD_STATUS).default("ACTIVE"),
     mustChangePassword: z.boolean().default(true),
-  })
-  .refine(
-    (v) => !v.defaultBranchId || v.branchIds.includes(v.defaultBranchId),
-    { message: "The default branch must be one of the assigned branches", path: ["defaultBranchId"] },
-  );
+  });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 /**
@@ -43,8 +28,6 @@ export const updateUserSchema = z.object({
   email: email.optional(),
   phone: optionalIndianMobile,
   roleId: objectId.optional(),
-  branchIds: z.array(objectId).optional(),
-  defaultBranchId: objectId.nullable().optional(),
   designation: z.string().trim().max(80).optional(),
   status: z.nativeEnum(RECORD_STATUS).optional(),
 });
@@ -52,7 +35,6 @@ export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 export const userQuerySchema = listQuery.extend({
   roleId: objectId.optional(),
-  branchId: objectId.optional(),
   status: z.nativeEnum(RECORD_STATUS).optional(),
 });
 export type UserQuery = z.infer<typeof userQuerySchema>;
@@ -64,7 +46,6 @@ export interface UserSummary {
   phone?: string;
   designation?: string;
   role: { id: string; name: string; label: string };
-  branches: Array<{ id: string; name: string; code: string }>;
   status: string;
   lastLoginAt: string | null;
   createdAt: string;
@@ -88,10 +69,10 @@ export const createRoleSchema = z.object({
   description: z.string().trim().max(300).optional(),
   permissions: z.array(permissionEnum).default([]),
   /**
-   * Unscoped roles see every branch. Reserved for SuperAdmin-equivalents and gated so
-   * only an existing unscoped user can grant it — see the role service.
+   * Marks a role as a super admin: it may act on any approval tier and administer roles
+   * and users. Gated so only an existing super admin can grant it — see the role service.
    */
-  isUnscoped: z.boolean().default(false),
+  isSuperAdmin: z.boolean().default(false),
 });
 export type CreateRoleInput = z.infer<typeof createRoleSchema>;
 
@@ -104,7 +85,7 @@ export interface RoleSummary {
   label: string;
   description?: string;
   permissions: string[];
-  isUnscoped: boolean;
+  isSuperAdmin: boolean;
   /** System roles cannot be deleted or renamed; their permissions remain editable. */
   isSystem: boolean;
   userCount: number;

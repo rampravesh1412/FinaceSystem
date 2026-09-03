@@ -64,7 +64,6 @@ const CHARGE_RULES = [
 ];
 
 export async function seedTransactions(
-  branches: Map<string, string>,
   ctx: AuditContext,
 ): Promise<void> {
   /* ── Charge rules ──────────────────────────────────────────────────────── */
@@ -90,9 +89,6 @@ export async function seedTransactions(
 
   const dayBookDate = new Date(Date.UTC(2026, 7, 19));
 
-  const branchId = branches.get("105");
-  if (!branchId) return;
-
   const [hdfc, icici] = await Promise.all([
     BankAccount.findOne({ accountNumber: "50100234567890" }).lean(),
     BankAccount.findOne({ accountNumber: "002105001234" }).lean(),
@@ -117,7 +113,7 @@ export async function seedTransactions(
   const salaryHead = await ExpenseCategory.findOne({ name: "Salary" }).lean();
   const commissionHead = await IncomeHead.findOne({ name: "Commission" }).lean();
 
-  const base = { date: dayBookDate, branchId, attachments: [] as never[] };
+  const base = { date: dayBookDate, attachments: [] as never[] };
 
   /**
    * PER-TRANSACTION idempotence, keyed on a stable reference.
@@ -132,7 +128,7 @@ export async function seedTransactions(
    * failure and only the missing entries are posted.
    */
   const post = async (ref: string, fn: () => Promise<unknown>): Promise<void> => {
-    if (await Transaction.exists({ branchId, referenceNo: ref })) return;
+    if (await Transaction.exists({ referenceNo: ref })) return;
     await fn();
     posted += 1;
   };
@@ -272,7 +268,7 @@ export async function seedTransactions(
 
   logger.info({ posted }, "sample transactions ready for 19/08/2026");
 
-  await seedSavings(branchId, ctx);
+  await seedSavings(ctx);
 }
 
 /**
@@ -281,7 +277,7 @@ export async function seedTransactions(
  * Opened through the real service so each account's opening balance is a genuine
  * double-entry posting — and, being a LIABILITY, is credited rather than debited.
  */
-async function seedSavings(branchId: string, ctx: AuditContext): Promise<void> {
+async function seedSavings(ctx: AuditContext): Promise<void> {
   const { SavingsAccount } = await import("../models/index.js");
   const savings = await import("../modules/savings/savings.service.js");
 
@@ -293,11 +289,10 @@ async function seedSavings(branchId: string, ctx: AuditContext): Promise<void> {
 
   let opened = 0;
   for (const member of members) {
-    if (await SavingsAccount.exists({ branchId, memberName: member.memberName })) continue;
+    if (await SavingsAccount.exists({ memberName: member.memberName })) continue;
     await savings.createAccount(
       {
         memberName: member.memberName,
-        branchId,
         mobile: member.mobile,
         interestRateBps: member.interestRateBps,
         openingBalance: parseAmount(member.opening),

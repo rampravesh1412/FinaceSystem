@@ -10,10 +10,10 @@ import {
 } from "@amiri/shared";
 import { asyncHandler, escapeRegex, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { requireAuth, requireBranchAccess, requirePermission, scopeOf } from "../../middleware/auth.js";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { exportLimiter } from "../../middleware/security.js";
 import { BadRequestError } from "../../lib/errors.js";
-import { AuditLog, Branch, LedgerAccount, LedgerEntry } from "../../models/index.js";
+import { AuditLog, LedgerAccount, LedgerEntry } from "../../models/index.js";
 import * as audit from "../../services/audit.service.js";
 import * as exporter from "../../services/export.service.js";
 import * as reports from "../../services/reports.service.js";
@@ -40,36 +40,21 @@ const formatSchema = z.object({ format: z.enum(["csv", "xlsx", "pdf"]).default("
 const rangeSchema = z.object({
   from: z.coerce.date(),
   to: z.coerce.date(),
-  branchId: objectId.optional(),
   format: z.enum(["csv", "xlsx", "pdf"]).default("csv"),
 });
-
-/** Resolve the branch label for the provenance block. */
-async function branchLabel(branchId?: string): Promise<string | undefined> {
-  if (!branchId) return "All branches";
-  const branch = await Branch.findById(branchId).select("name code").lean();
-  return branch ? `${branch.code} — ${branch.name}` : undefined;
-}
-
-function resolveBranch(req: Parameters<typeof scopeOf>[0], requested?: string): string | undefined {
-  const scope = req.scope!;
-  if (scope.isUnscoped) return requested;
-  return requested ?? (scope.activeBranchId ? String(scope.activeBranchId) : String(scope.branchIds[0] ?? ""));
-}
 
 /* ── DayBook (§19) ───────────────────────────────────────────────────────── */
 
 exportRouter.get(
   "/daybook",
   requirePermission("reports.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ query: rangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof rangeSchema>;
 
     const { items, totals, total } = await listing.list(
-      { from: query.from, to: query.to, scopeFilter: scopeOf(req) },
+      { from: query.from, to: query.to },
       { ...paging({ limit: MAX_ROWS }, { date: -1, _id: -1 }), limit: MAX_ROWS },
     );
 
@@ -102,7 +87,6 @@ exportRouter.get(
       ],
       rows: items,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(resolveBranch(req, query.branchId)),
         from: query.from,
         to: query.to,
         generatedBy: req.auth!.name,
@@ -122,14 +106,12 @@ exportRouter.get(
 exportRouter.get(
   "/profit-loss",
   requirePermission("reports.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ query: rangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof rangeSchema>;
-    const branchId = resolveBranch(req, query.branchId);
 
-    const pnl = await reports.profitAndLoss({ from: query.from, to: query.to, branchId });
+    const pnl = await reports.profitAndLoss({ from: query.from, to: query.to });
 
     // Income and expenses in one table with a section column — a spreadsheet the
     // recipient can pivot beats two tables they have to stitch together.
@@ -157,7 +139,6 @@ exportRouter.get(
       ],
       rows,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(branchId),
         from: query.from,
         to: query.to,
         generatedBy: req.auth!.name,
@@ -183,15 +164,13 @@ exportRouter.get(
 exportRouter.get(
   "/balance-sheet",
   requirePermission("reports.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
-  validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }).merge(formatSchema) }),
+  validate({ query: z.object({ asOf: z.coerce.date().optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
-    const query = req.valid.query as { asOf?: Date; branchId?: string; format: exporter.ExportFormat };
-    const branchId = resolveBranch(req, query.branchId);
+    const query = req.valid.query as { asOf?: Date; format: exporter.ExportFormat };
     const asOf = query.asOf ?? new Date();
 
-    const sheet = await reports.balanceSheet({ asOf, branchId });
+    const sheet = await reports.balanceSheet({ asOf });
 
     const rows = [
       ...sheet.assets.map((l) => ({ ...l, section: "Asset" })),
@@ -224,7 +203,6 @@ exportRouter.get(
       ],
       rows,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(branchId),
         asOf,
         generatedBy: req.auth!.name,
       }),
@@ -249,15 +227,13 @@ exportRouter.get(
 exportRouter.get(
   "/trial-balance",
   requirePermission("reports.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
-  validate({ query: z.object({ asOf: z.coerce.date().optional(), branchId: objectId.optional() }).merge(formatSchema) }),
+  validate({ query: z.object({ asOf: z.coerce.date().optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
-    const query = req.valid.query as { asOf?: Date; branchId?: string; format: exporter.ExportFormat };
-    const branchId = resolveBranch(req, query.branchId);
+    const query = req.valid.query as { asOf?: Date; format: exporter.ExportFormat };
 
     const { trialBalance } = await import("../../services/ledger.service.js");
-    const tb = await trialBalance({ ...(query.asOf ? { asOf: query.asOf } : {}), ...(branchId ? { branchId } : {}) });
+    const tb = await trialBalance({ ...(query.asOf ? { asOf: query.asOf } : {}) });
 
     await audit.recordSafe(audit.auditContextFrom(req), { action: "EXPORT", entity: "TrialBalance" });
 
@@ -273,7 +249,6 @@ exportRouter.get(
       ],
       rows: tb.rows,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(branchId),
         asOf: query.asOf ?? new Date(),
         generatedBy: req.auth!.name,
       }),
@@ -293,7 +268,6 @@ exportRouter.get(
 exportRouter.get(
   "/ledger/:accountId",
   requirePermission("reports.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ params: z.object({ accountId: objectId }), query: rangeSchema.partial({ from: true, to: true }) }),
   asyncHandler(async (req, res) => {
@@ -302,12 +276,6 @@ exportRouter.get(
 
     const account = await LedgerAccount.findById(accountId).lean();
     if (!account) throw new BadRequestError("That ledger account does not exist");
-
-    // A scoped user cannot export another branch's ledger, even knowing its id.
-    if (!req.scope!.isUnscoped && account.branchId) {
-      const permitted = req.scope!.branchIds.some((b) => b.equals(account.branchId!));
-      if (!permitted) throw new BadRequestError("That account belongs to a branch you cannot see");
-    }
 
     const filter: Record<string, unknown> = { ledgerAccountId: account._id };
     if (query.from || query.to) {
@@ -340,7 +308,6 @@ exportRouter.get(
       ],
       rows: entries,
       meta: await exporter.exportMeta({
-        branch: await branchLabel(account.branchId ? String(account.branchId) : undefined),
         from: query.from,
         to: query.to,
         generatedBy: req.auth!.name,
@@ -355,7 +322,6 @@ exportRouter.get(
 exportRouter.get(
   "/audit",
   requirePermission("audit.export"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   /**
    * The screen's filters are accepted here as well, and they mean the same thing.
@@ -384,13 +350,7 @@ exportRouter.get(
     };
 
     const filter: Record<string, unknown> = {};
-    if (!req.scope!.isUnscoped) {
-      filter.$or = [
-        { branchId: { $in: req.scope!.branchIds } },
-        { branchId: { $exists: false } },
-        { branchId: null },
-      ];
-    }
+
     if (query.from || query.to) {
       filter.createdAt = {
         ...(query.from ? { $gte: query.from } : {}),
@@ -402,9 +362,7 @@ exportRouter.get(
     if (query.failuresOnly) filter.success = false;
 
     if (query.q) {
-      // Same fields the list screen searches, so the two agree on what a hit is. The scope
-      // clause moves under $and rather than being overwritten — losing it here would export
-      // every branch's trail to a branch-scoped user.
+      // Same fields the list screen searches, so the two agree on what a hit is.
       const rx = new RegExp(escapeRegex(query.q), "i");
       const search = [{ userName: rx }, { entityLabel: rx }, { reason: rx }, { entity: rx }];
       filter.$and = filter.$or ? [{ $or: filter.$or }, { $or: search }] : [{ $or: search }];

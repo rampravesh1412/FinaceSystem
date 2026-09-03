@@ -87,15 +87,6 @@ export const actorField = (required = false): SchemaDefinitionProperty =>
     index: true,
   }) as SchemaDefinitionProperty;
 
-/** The branch ownership field. Every branch-scoped model carries exactly this. */
-export const branchField = (required = true): SchemaDefinitionProperty =>
-  ({
-    type: Schema.Types.ObjectId,
-    ref: "Branch",
-    required,
-    index: true,
-  }) as SchemaDefinitionProperty;
-
 export const attachmentSchema = new Schema(
   {
     filename: { type: String, required: true, trim: true, maxlength: 255 },

@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import type { LoginResponse, SessionUser } from "@amiri/shared";
-import { Branch, Role, User, type UserDoc } from "../../models/index.js";
+import { Role, User, type UserDoc } from "../../models/index.js";
 import {
   AccountLockedError,
   ForbiddenError,
@@ -33,43 +33,9 @@ export interface RequestContext {
 /** Build the client-facing session object. Never includes a hash, a token, or a lock counter. */
 export async function buildSessionUser(
   user: UserDoc | (UserDoc & { _id: Types.ObjectId }),
-  activeBranchId?: string | null,
 ): Promise<SessionUser> {
-  const role = await Role.findById(user.roleId).select("name label permissions isUnscoped").lean();
+  const role = await Role.findById(user.roleId).select("name label permissions isSuperAdmin").lean();
   if (!role) throw new ForbiddenError("Your role no longer exists — contact an administrator");
-
-  const isSuperAdmin = role.isUnscoped === true;
-
-  // A SuperAdmin is unscoped, so their branch picker lists every active branch rather
-  // than an assignment list they do not have.
-  const branchFilter = isSuperAdmin
-    ? { status: "ACTIVE" }
-    : { _id: { $in: user.branchIds ?? [] } };
-
-  const branches = await Branch.find(branchFilter).select("name code").sort({ code: 1 }).lean();
-
-  /**
-   * `undefined` and `null` mean different things here, and the distinction matters.
-   *
-   * `undefined` is "the caller did not say" — a fresh sign-in or a `/auth/me`. `null` is an
-   * explicit choice of the all-branches view, and must survive: collapsing it into the
-   * default with `??` would bounce a SuperAdmin straight back to a single branch on the
-   * next request, which is exactly the bug that makes an "All branches" option feel broken.
-   *
-   * With nothing specified, a SuperAdmin lands on the all-branches view. Their authority is
-   * unscoped, so opening on one branch understates what they are looking at — a total that
-   * reads as "the business" when it is one office. The exception is a single-branch install,
-   * where "all" and "101" describe the same books: there the picker collapses to a static
-   * label with nothing to switch to, so defaulting to null would leave every write form
-   * asking for a branch that cannot be chosen.
-   */
-  const active =
-    activeBranchId !== undefined
-      ? activeBranchId
-      : isSuperAdmin && branches.length > 1
-        ? null
-        : (user.defaultBranchId ? String(user.defaultBranchId) : null) ??
-          (branches.length === 1 ? String(branches[0]!._id) : null);
 
   return {
     id: String(user._id),
@@ -77,10 +43,7 @@ export async function buildSessionUser(
     email: user.email,
     role: { id: String(role._id), name: role.name, label: role.label },
     permissions: role.permissions,
-    branchIds: (user.branchIds ?? []).map(String),
-    branches: branches.map((b) => ({ id: String(b._id), name: b.name, code: b.code })),
-    activeBranchId: active,
-    isSuperAdmin,
+    isSuperAdmin: role.isSuperAdmin === true,
     mustChangePassword: user.mustChangePassword,
     lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
     ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
@@ -92,12 +55,12 @@ export interface LoginResult extends LoginResponse {
 }
 
 export async function login(
-  input: { email: string; password: string; branchId?: string },
+  input: { email: string; password: string },
   ctx: RequestContext,
 ): Promise<LoginResult> {
   // `+passwordHash` because the field is `select: false` on the schema.
   const user = await User.findOne({ email: input.email.toLowerCase() }).select(
-    "+passwordHash name email status roleId branchIds defaultBranchId mustChangePassword lastLoginAt avatarUrl failedLoginAttempts lockedUntil",
+    "+passwordHash name email status roleId mustChangePassword lastLoginAt avatarUrl failedLoginAttempts lockedUntil",
   );
 
   const failureContext = {
@@ -154,14 +117,7 @@ export async function login(
     throw new ForbiddenError("Your account has been disabled", "ACCOUNT_DISABLED");
   }
 
-  // `undefined`, not `null`: a login that names no branch wants the user's saved default,
-  // not the all-branches view.
-  const sessionUser = await buildSessionUser(user, input.branchId ?? undefined);
-
-  // A branch named at login must be one the user actually holds.
-  if (input.branchId && !sessionUser.isSuperAdmin && !sessionUser.branchIds.includes(input.branchId)) {
-    throw new ForbiddenError("You are not assigned to that branch", "BRANCH_ACCESS_DENIED");
-  }
+  const sessionUser = await buildSessionUser(user);
 
   const tokens = await issueTokens(user, sessionUser.isSuperAdmin, {
     ip: ctx.ip,
@@ -176,7 +132,6 @@ export async function login(
       userName: user.name,
       userEmail: user.email,
       roleName: sessionUser.role.name,
-      branchId: sessionUser.activeBranchId,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
       requestId: ctx.requestId,
@@ -202,7 +157,7 @@ export async function refresh(token: string, ctx: RequestContext): Promise<Login
   const rotation = await rotateRefreshToken(token);
 
   const user = await User.findById(rotation.userId).select(
-    "name email status roleId branchIds defaultBranchId mustChangePassword lastLoginAt avatarUrl",
+    "name email status roleId mustChangePassword lastLoginAt avatarUrl",
   );
   if (!user) throw new UnauthenticatedError("Your account no longer exists");
   if (user.status !== "ACTIVE") {
@@ -287,43 +242,3 @@ export async function changePassword(
   );
 }
 
-/** Change the branch in context for a multi-branch user. */
-export async function switchBranch(
-  userId: string,
-  branchId: string | null,
-  isSuperAdmin: boolean,
-): Promise<SessionUser> {
-  const user = await User.findById(userId).select(
-    "name email status roleId branchIds defaultBranchId mustChangePassword lastLoginAt avatarUrl",
-  );
-  if (!user) throw new UnauthenticatedError("Your account no longer exists");
-
-  /**
-   * The all-branches view.
-   *
-   * Refused for a scoped user rather than downgraded to their assignment list. Their
-   * queries are already filtered to `{ branchId: { $in: assigned } }` by
-   * `requireBranchAccess`, so clearing the context would not actually leak anything — but
-   * a request to leave scope should fail loudly, not appear to succeed with a quietly
-   * different meaning than the caller asked for.
-   */
-  if (branchId === null) {
-    if (!isSuperAdmin) {
-      throw new ForbiddenError(
-        "Only an unscoped role may view all branches at once",
-        "BRANCH_ACCESS_DENIED",
-      );
-    }
-    return buildSessionUser(user, null);
-  }
-
-  if (!isSuperAdmin && !user.branchIds.some((id) => String(id) === branchId)) {
-    throw new ForbiddenError("You are not assigned to that branch", "BRANCH_ACCESS_DENIED");
-  }
-
-  const branch = await Branch.findById(branchId).select("status").lean();
-  if (!branch) throw new NotFoundError("Branch", branchId);
-  if (branch.status !== "ACTIVE") throw new ForbiddenError("That branch is not active");
-
-  return buildSessionUser(user, branchId);
-}

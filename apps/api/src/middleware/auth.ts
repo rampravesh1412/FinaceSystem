@@ -1,8 +1,6 @@
-import { Types } from "mongoose";
-import type { NextFunction, Request, RequestHandler, Response } from "express";
+import type { Request, RequestHandler } from "express";
 import { hasPermission, type Permission } from "@amiri/shared";
 import {
-  BranchAccessDeniedError,
   ForbiddenError,
   PermissionDeniedError,
   UnauthenticatedError,
@@ -13,16 +11,19 @@ import { User } from "../models/User.js";
 import { Role } from "../models/Role.js";
 
 /**
- * The four authorization guards (§57).
+ * The authorization guards (§57).
  *
- *   requireAuth          — establishes who is calling
- *   requirePermission    — establishes what they may do
- *   requireBranchAccess  — establishes what they may see
- *   requireRole          — coarse role check, used sparingly
+ *   requireAuth        — establishes who is calling
+ *   requirePermission  — establishes what they may do
+ *   requireRole        — coarse role check, used sparingly
  *
- * They compose left to right on a route. `requirePermission` and `requireBranchAccess`
- * both assume `requireAuth` ran first and throw a programmer-facing error if it did not,
- * so a misordered route fails loudly in development rather than silently allowing traffic.
+ * They compose left to right on a route. `requirePermission` assumes `requireAuth` ran
+ * first and throws a programmer-facing error if it did not, so a misordered route fails
+ * loudly in development rather than silently allowing traffic.
+ *
+ * There is no branch guard. The business is one set of books: every account, party and
+ * report belongs to the organisation, and what a user may do is decided entirely by the
+ * permissions on their role.
  */
 
 /**
@@ -30,7 +31,7 @@ import { Role } from "../models/Role.js";
  *
  * The token is verified by signature first (cheap, no I/O), then the user and role are
  * loaded from the database on every request. That second step is deliberate and worth its
- * cost: permissions, branch assignments and account status must take effect immediately.
+ * cost: a permission or role change, or a disabled account, must take effect immediately.
  * A user whose access is revoked at 10:00 should not keep working until their token
  * expires at 10:14 — in a financial system that window is unacceptable.
  */
@@ -50,16 +51,14 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
       throw new UnauthenticatedError("Your session is no longer valid");
     }
 
-    const user = await User.findById(claims.sub)
-      .select("name email status roleId branchIds defaultBranchId")
-      .lean();
+    const user = await User.findById(claims.sub).select("name email status roleId").lean();
 
     if (!user) throw new UnauthenticatedError("Your account no longer exists");
     if (user.status !== "ACTIVE") {
       throw new ForbiddenError("Your account has been disabled", "ACCOUNT_DISABLED");
     }
 
-    const role = await Role.findById(user.roleId).select("name permissions isUnscoped").lean();
+    const role = await Role.findById(user.roleId).select("name permissions isSuperAdmin").lean();
     if (!role) throw new ForbiddenError("Your role no longer exists — contact an administrator");
 
     req.auth = {
@@ -70,8 +69,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
       roleId: String(role._id),
       roleName: role.name,
       permissions: role.permissions,
-      branchIds: (user.branchIds ?? []).map(String),
-      isSuperAdmin: role.isUnscoped === true,
+      isSuperAdmin: role.isSuperAdmin === true,
       sessionId: claims.sid,
     };
 
@@ -130,7 +128,7 @@ export function requireAnyPermission(...permissions: Permission[]): RequestHandl
  * Coarse role check.
  *
  * Used only where the concept genuinely is the role rather than a capability — for
- * instance "only an unscoped user may grant the unscoped flag". Everything else should
+ * instance "only a super admin may grant the super-admin flag". Everything else should
  * use `requirePermission`, so that permissions stay configurable.
  */
 export function requireRole(...roleNames: string[]): RequestHandler {
@@ -157,106 +155,3 @@ export const requireSuperAdmin: RequestHandler = (req, _res, next) => {
   }
 };
 
-/**
- * Build `req.scope` — the branch filter every scoped query must carry.
- *
- * THIS IS THE BRANCH ISOLATION BOUNDARY (§3, §57).
- *
- * A SuperAdmin gets `{}` and sees everything. Everyone else gets
- * `{ branchId: { $in: assignedBranches } }`, derived from the database record, not from
- * anything the client sent. If the request names a branch (`?branchId=`), it may only
- * NARROW the scope — a branch the user does not hold is refused with 403 rather than
- * silently ignored, because silently ignoring it would let a probing client distinguish
- * "no data" from "not allowed" and map the branch structure.
- */
-export function requireBranchAccess(options: { optional?: boolean } = {}): RequestHandler {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    try {
-      const auth = assertAuth(req);
-
-      const requested =
-        (req.query.branchId as string | undefined) ??
-        (req.body as { branchId?: string } | undefined)?.branchId;
-
-      const requestedId =
-        requested && requested !== "all" && Types.ObjectId.isValid(requested)
-          ? new Types.ObjectId(requested)
-          : null;
-
-      if (auth.isSuperAdmin) {
-        req.scope = {
-          filter: requestedId ? { branchId: requestedId } : {},
-          branchIds: [],
-          isUnscoped: true,
-          activeBranchId: requestedId,
-        };
-        next();
-        return;
-      }
-
-      const allowed = auth.branchIds.map((id) => new Types.ObjectId(id));
-
-      if (allowed.length === 0 && !options.optional) {
-        throw new ForbiddenError(
-          "You are not assigned to any branch yet — ask an administrator to assign one",
-          "BRANCH_ACCESS_DENIED",
-        );
-      }
-
-      if (requestedId) {
-        const permitted = allowed.some((id) => id.equals(requestedId));
-        if (!permitted) throw new BranchAccessDeniedError();
-
-        req.scope = {
-          filter: { branchId: requestedId },
-          branchIds: allowed,
-          isUnscoped: false,
-          activeBranchId: requestedId,
-        };
-        next();
-        return;
-      }
-
-      req.scope = {
-        filter: { branchId: { $in: allowed } },
-        branchIds: allowed,
-        isUnscoped: false,
-        activeBranchId: allowed.length === 1 ? allowed[0]! : null,
-      };
-      next();
-    } catch (err) {
-      next(err);
-    }
-  };
-}
-
-/**
- * Assert that a specific branch id is within the caller's scope.
- *
- * For write paths, where the branch arrives in the body and the record is about to be
- * created under it. `requireBranchAccess` covers reads; this covers "you may not create a
- * payment in branch 107 when you are assigned to 105".
- */
-export function assertBranchInScope(req: Request, branchId: Types.ObjectId | string): void {
-  const scope = req.scope;
-  if (!scope) {
-    throw new Error("Route misconfiguration: requireBranchAccess must run before this check.");
-  }
-  if (scope.isUnscoped) return;
-
-  const target = typeof branchId === "string" ? new Types.ObjectId(branchId) : branchId;
-  if (!scope.branchIds.some((id) => id.equals(target))) {
-    throw new BranchAccessDeniedError();
-  }
-}
-
-/** The scope filter, or a hard failure if the route forgot to establish one. */
-export function scopeOf(req: Request): Record<string, unknown> {
-  if (!req.scope) {
-    throw new Error(
-      "Route misconfiguration: a branch-scoped query ran without requireBranchAccess. " +
-        "Every query over branch-owned data must carry req.scope.filter.",
-    );
-  }
-  return req.scope.filter;
-}

@@ -28,8 +28,6 @@ export interface LedgerAccountDoc extends Document<Types.ObjectId> {
   kind: AccountKind;
   accountClass: AccountClass;
 
-  /** Null for organisation-wide accounts (equity, suspense). */
-  branchId?: Types.ObjectId | null;
   refKind?: string;
   refId?: Types.ObjectId;
 
@@ -75,7 +73,6 @@ const ledgerAccountSchema = new Schema<LedgerAccountDoc>(
     kind: { type: String, enum: Object.values(ACCOUNT_KIND), required: true, index: true },
     accountClass: { type: String, enum: Object.values(ACCOUNT_CLASS), required: true, index: true },
 
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null, index: true },
     refKind: { type: String, trim: true },
     refId: { type: Schema.Types.ObjectId, index: true },
 
@@ -110,7 +107,7 @@ ledgerAccountSchema.index(
   { unique: true, partialFilterExpression: { refId: { $exists: true } } },
 );
 
-ledgerAccountSchema.index({ branchId: 1, kind: 1, status: 1 });
+ledgerAccountSchema.index({ kind: 1, status: 1 });
 ledgerAccountSchema.index({ name: "text", code: "text" }, { name: "ledger_account_search" });
 
 export const LedgerAccount = model<LedgerAccountDoc>("LedgerAccount", ledgerAccountSchema);

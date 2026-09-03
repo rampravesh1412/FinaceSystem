@@ -25,9 +25,11 @@
     "lint": "eslint .",
     "test": "npm run build:shared && npm run test --workspace @amiri/shared && npm run test --workspace @amiri/api && npm run test --workspace @amiri/web",
     "seed": "npm run seed --workspace @amiri/api",
-    "migrate:global-masters": "npm run migrate:global-masters --workspace @amiri/api",
+    "//migrate:global-masters": "The trailing `--` is load-bearing: without it npm appends the caller's arguments to its OWN command line, where `--apply` and friends are consumed as npm flags and never reach the script.",
+    "migrate:global-masters": "npm run migrate:global-masters --workspace @amiri/api --",
     "test:api": "npm run build:shared && npm run test --workspace @amiri/api",
-    "test:web": "npm run build:shared && npm run test --workspace @amiri/web"
+    "test:web": "npm run build:shared && npm run test --workspace @amiri/web",
+    "migrate:remove-branches": "npm run migrate:remove-branches --workspace @amiri/api --"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

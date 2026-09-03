@@ -16,16 +16,7 @@ import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import * as service from "./party.service.js";
 
-/**
- * The party master is ORGANISATION-WIDE, so these routes carry no branch guard.
- *
- * `requireBranchAccess` / `scopeOf` are deliberately absent rather than forgotten: there
- * is no `branchId` on a party to filter by, and a filter that silently matched nothing
- * would be worse than none. Access is governed by the `finance.party.*` permissions
- * alone. Branch isolation still applies everywhere it means something — postings, the
- * DayBook, approvals and every branch report — because those read the branch recorded on
- * each transaction.
- */
+/** Access here is governed by the `finance.party.*` permissions. */
 export const partyRouter: Router = Router();
 
 partyRouter.use(requireAuth);

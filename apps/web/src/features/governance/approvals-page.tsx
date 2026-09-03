@@ -116,7 +116,6 @@ export function ApprovalsPage() {
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">{item.typeLabel}</span>
-                        <Badge variant="outline" className="font-mono">{item.branch.code}</Badge>
                         <Badge variant={item.requiredTier === "SUPER_ADMIN" ? "warning" : "default"}>
                           {item.requiredTier.replace("_", " ").toLowerCase()} approval
                         </Badge>

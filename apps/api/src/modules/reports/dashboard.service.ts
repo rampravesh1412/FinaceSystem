@@ -4,12 +4,10 @@ import {
   endOfDay,
   khataDirection,
   startOfDay,
-  type BranchPerformance,
   type DashboardResponse,
   type DashboardTrendPoint,
 } from "@amiri/shared";
 import {
-  Branch,
   LedgerAccount,
   LedgerEntry,
   Party,
@@ -20,29 +18,18 @@ import * as reports from "../../services/reports.service.js";
 import * as khata from "../khata/khata.service.js";
 
 /**
- * Dashboards (§31 SuperAdmin, §32 Branch, §33 Accountant).
+ * The dashboard (§31, §33).
  *
- * One builder, scoped by what the caller can see. A SuperAdmin gets the organisation and a
- * branch comparison; a scoped user gets their own branch and no comparison at all, because
- * showing them how other branches are performing is exactly the leak §3 forbids.
+ * One builder over one set of books. Every figure describes the whole business, because
+ * there is no longer any dimension to slice it by.
  *
  * §21 is visible in the shape of the response: `todayIn`/`todayOut` are CASH FLOW, while
  * `todayIncome`/`todayExpenses`/`todayProfit` are PROFIT. They sit in separate groups and
  * the UI labels them separately, because a day with ₹10,00,000 through the door can still
  * be a loss.
- *
- * What the branch selection scopes, now that accounts and parties are organisation-wide:
- * MOVEMENT, not POSITION. Today's in/out, income, expenses, the trend, recent
- * transactions and the approval queue are all read from the branch stamped on each
- * posting and remain per-branch. Balances and party positions belong to shared accounts,
- * so `balanceByKind` and `partyPositions` report that branch's CONTRIBUTION to them
- * rather than pretending a branch owns a slice of the company's bank account.
  */
 
 export async function buildDashboard(options: {
-  branchId?: string | null;
-  isUnscoped: boolean;
-  branchIds: Types.ObjectId[];
   /** Days of history for the trend charts. */
   trendDays?: number;
 }): Promise<DashboardResponse> {
@@ -52,21 +39,6 @@ export async function buildDashboard(options: {
   const todayEnd = endOfDay(now);
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const trendStart = new Date(todayStart.getTime() - (trendDays - 1) * 86_400_000);
-
-  const branchId = options.branchId ?? undefined;
-
-  /**
-   * The scope filter for every aggregation below.
-   *
-   * A SuperAdmin with no branch selected sees everything. A scoped user always sees only
-   * their own branches, whatever the request asked for — the filter is built from
-   * `branchIds`, which came from their user record.
-   */
-  const branchMatch: Record<string, unknown> = branchId
-    ? { branchId: new Types.ObjectId(branchId) }
-    : options.isUnscoped
-      ? {}
-      : { branchId: { $in: options.branchIds } };
 
   const [
     cashBalance,
@@ -85,35 +57,24 @@ export async function buildDashboard(options: {
     transactionCountToday,
     credit,
   ] = await Promise.all([
-    reports.balanceByKind(["CASH"], branchId),
-    reports.balanceByKind(["BANK"], branchId),
-    reports.balanceByKind(["SAVINGS"], branchId),
-    reports.partyPositions(branchId),
-    reports.profitFor({ from: todayStart, to: todayEnd, branchId }),
-    reports.profitFor({ from: monthStart, to: todayEnd, branchId }),
-    reports.cashMovement({ from: todayStart, to: todayEnd, branchId }),
-    buildTrend(branchMatch, trendStart, todayEnd),
-    buildExpenseBreakdown(branchMatch, monthStart, todayEnd),
-    buildRecent(branchMatch),
+    reports.balanceByKind(["CASH"]),
+    reports.balanceByKind(["BANK"]),
+    reports.balanceByKind(["SAVINGS"]),
+    reports.partyPositions(),
+    reports.profitFor({ from: todayStart, to: todayEnd }),
+    reports.profitFor({ from: monthStart, to: todayEnd }),
+    reports.cashMovement({ from: todayStart, to: todayEnd }),
+    buildTrend(trendStart, todayEnd),
+    buildExpenseBreakdown(monthStart, todayEnd),
+    buildRecent(),
     buildTopParties(),
-    Transaction.countDocuments({ ...branchMatch, status: "PENDING" }),
-    // Reconciliations are organisation-wide now that bank accounts are — there is no
-    // branch's share of a bank statement to count.
+    Transaction.countDocuments({ status: "PENDING" }),
     Reconciliation.countDocuments({ status: "IN_PROGRESS" }),
-    Transaction.countDocuments({ ...branchMatch, date: { $gte: todayStart, $lte: todayEnd } }),
+    Transaction.countDocuments({ date: { $gte: todayStart, $lte: todayEnd } }),
     khata.creditReport({ limit: 1 }),
   ]);
 
-  // Branch comparison is for unscoped users only (§32: never show another branch's data).
-  const branches = options.isUnscoped ? await buildBranchPerformance(monthStart, todayEnd) : [];
-
-  const branch = branchId
-    ? await Branch.findById(branchId).select("name code").lean()
-    : null;
-
   return {
-    scope: branchId ? "BRANCH" : "ORGANISATION",
-    branch: branch ? { id: String(branch._id), name: branch.name, code: branch.code } : null,
     metrics: {
       cashBalance,
       bankBalance,
@@ -145,7 +106,6 @@ export async function buildDashboard(options: {
     },
     trend,
     expenseBreakdown,
-    branches,
     topParties,
     recentTransactions,
     agingBuckets: credit.summary.buckets,
@@ -159,11 +119,7 @@ export async function buildDashboard(options: {
  * Days with no activity are filled in with zeros so the chart has an even x-axis — a line
  * chart that silently skips quiet days compresses time and misrepresents a trend.
  */
-async function buildTrend(
-  branchMatch: Record<string, unknown>,
-  from: Date,
-  to: Date,
-): Promise<DashboardTrendPoint[]> {
+async function buildTrend(from: Date, to: Date): Promise<DashboardTrendPoint[]> {
   const rows = await LedgerEntry.aggregate<{
     _id: string;
     income: number;
@@ -171,7 +127,7 @@ async function buildTrend(
     moneyIn: number;
     moneyOut: number;
   }>([
-    { $match: { ...branchMatch, date: { $gte: from, $lte: to } } },
+    { $match: { date: { $gte: from, $lte: to } } },
     {
       $lookup: {
         from: "ledgeraccounts",
@@ -250,12 +206,11 @@ async function buildTrend(
 }
 
 async function buildExpenseBreakdown(
-  branchMatch: Record<string, unknown>,
   from: Date,
   to: Date,
 ): Promise<Array<{ name: string; amount: number }>> {
   const rows = await LedgerEntry.aggregate<{ _id: Types.ObjectId; name: string; amount: number }>([
-    { $match: { ...branchMatch, date: { $gte: from, $lte: to }, direction: "DEBIT" } },
+    { $match: { date: { $gte: from, $lte: to }, direction: "DEBIT" } },
     {
       $lookup: {
         from: "ledgeraccounts",
@@ -275,8 +230,8 @@ async function buildExpenseBreakdown(
   return rows.map((r) => ({ name: r.name, amount: r.amount }));
 }
 
-async function buildRecent(branchMatch: Record<string, unknown>) {
-  const txns = await Transaction.find(branchMatch)
+async function buildRecent() {
+  const txns = await Transaction.find({})
     .sort({ date: -1, _id: -1 })
     .limit(8)
     .populate<{ partyId: { name: string } | null }>("partyId", "name")
@@ -299,14 +254,7 @@ async function buildRecent(branchMatch: Record<string, unknown>) {
   });
 }
 
-/**
- * The parties with the largest positions.
- *
- * Not filtered by branch: a party is organisation-wide and has ONE balance. Showing a
- * branch its own share of that balance would rank the wrong parties and understate every
- * figure, so this panel is the same for everyone — which is what "the biggest debtor" has
- * to mean once the master is shared.
- */
+/** The parties with the largest positions, by magnitude. */
 async function buildTopParties() {
   const parties = await Party.find({ status: "ACTIVE" }).select("name ledgerAccountId").lean();
   const balances = await LedgerAccount.find({ _id: { $in: parties.map((p) => p.ledgerAccountId) } })
@@ -325,32 +273,4 @@ async function buildTopParties() {
     .filter((p) => p.balance !== 0)
     .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
     .slice(0, 6);
-}
-
-/** Branch comparison (§31). Unscoped callers only. */
-async function buildBranchPerformance(from: Date, to: Date): Promise<BranchPerformance[]> {
-  const branches = await Branch.find({ status: "ACTIVE" }).select("name code").sort({ code: 1 }).lean();
-
-  return Promise.all(
-    branches.map(async (branch) => {
-      const id = String(branch._id);
-      const [profit, cash, bank, positions] = await Promise.all([
-        reports.profitFor({ from, to, branchId: id }),
-        reports.balanceByKind(["CASH"], id),
-        reports.balanceByKind(["BANK"], id),
-        reports.partyPositions(id),
-      ]);
-
-      return {
-        branchId: id,
-        code: branch.code,
-        name: branch.name,
-        balance: cash + bank,
-        income: profit.income,
-        expenses: profit.expenses,
-        profit: profit.profit,
-        receivable: positions.receivable,
-      };
-    }),
-  );
 }

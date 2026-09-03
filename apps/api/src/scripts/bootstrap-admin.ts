@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { DEFAULT_ROLE_PERMISSIONS, SYSTEM_ROLES, password as passwordPolicy } from "@amiri/shared";
 import { logger } from "../config/logger.js";
 import { connectDatabase, disconnectDatabase } from "../config/db.js";
-import { Branch, Role, User } from "../models/index.js";
+import { Role, User } from "../models/index.js";
 import { ensureSystemAccounts } from "../services/ledger.service.js";
 
 /**
@@ -15,7 +15,6 @@ import { ensureSystemAccounts } from "../services/ledger.service.js";
  *
  * What it creates:
  *   • the four system roles, with their default permissions
- *   • ONE branch (default 101 / Head Office), if none exists
  *   • the system ledger accounts (EQUITY-OPENING and friends)
  *   • ONE super admin, with a password YOU supply and this process never stores
  *
@@ -30,7 +29,7 @@ import { ensureSystemAccounts } from "../services/ledger.service.js";
  */
 
 const ROLE_META: Record<string, { label: string; description: string }> = {
-  SUPER_ADMIN: { label: "Super Admin", description: "Full access across every branch." },
+  SUPER_ADMIN: { label: "Super Admin", description: "Full access to everything." },
   BRANCH_ADMIN: { label: "Branch Admin", description: "Full control of their assigned branches." },
   ACCOUNTANT: { label: "Accountant", description: "Day-to-day finance operations, without approval rights." },
   VIEWER: { label: "Viewer", description: "Read-only access for auditors and owners." },
@@ -89,7 +88,7 @@ async function ensureRoles(): Promise<Map<string, string>> {
           label: meta.label,
           description: meta.description,
           permissions,
-          isUnscoped: name === SYSTEM_ROLES.SUPER_ADMIN,
+          isSuperAdmin: name === SYSTEM_ROLES.SUPER_ADMIN,
           isSystem: true,
         },
       },
@@ -101,33 +100,9 @@ async function ensureRoles(): Promise<Map<string, string>> {
   return roles;
 }
 
-/**
- * One branch, and only if the install has none.
- *
- * A super admin's access is unscoped, so strictly they need no branch — but every posting
- * is branch-scoped, and an install with zero branches gives the UI nothing to select.
- * An existing branch is always preferred: re-running this must never quietly add a
- * duplicate Head Office alongside the real one.
- */
-async function ensureBranch(code: string, name: string): Promise<{ id: string; created: boolean }> {
-  const existing = await Branch.findOne({ status: "ACTIVE" }).sort({ createdAt: 1 }).lean();
-  if (existing) return { id: String(existing._id), created: false };
-
-  const branch = await Branch.create({
-    code,
-    name,
-    status: "ACTIVE",
-    // April, because the fiscal year in this system runs April–March.
-    booksFromDate: new Date(Date.UTC(new Date().getUTCFullYear(), 3, 1)),
-  });
-  return { id: String(branch._id), created: true };
-}
-
 async function main(): Promise<void> {
   const email = (arg("email") ?? process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
   const name = arg("name") ?? process.env.ADMIN_NAME ?? "Super Admin";
-  const branchCode = arg("branch-code") ?? "101";
-  const branchName = arg("branch-name") ?? "Head Office";
 
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     logger.fatal("Pass a valid address: --email you@example.com");
@@ -171,16 +146,12 @@ async function main(): Promise<void> {
     await disconnectDatabase();
     process.exit(1);
   }
-
-  const branch = await ensureBranch(branchCode, branchName);
   await ensureSystemAccounts();
 
   const user = new User({
     name,
     email,
     roleId: superAdminRoleId,
-    branchIds: [branch.id],
-    defaultBranchId: branch.id,
     designation: "Proprietor",
     status: "ACTIVE",
     // False on purpose: they chose this password a moment ago at this prompt. Forcing an
@@ -195,7 +166,6 @@ async function main(): Promise<void> {
   logger.info(
     {
       roles: roles.size,
-      branch: branch.created ? `${branchCode} ${branchName} (created)` : "existing branch reused",
       admin: email,
     },
     "bootstrap complete",

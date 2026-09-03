@@ -89,7 +89,6 @@ export async function createSettlement(
         {
           settlementNo,
           date: input.date,
-          branchId: input.branchId,
           kind: input.kind,
           partyId,
           sourceAccountId: input.sourceAccountId ?? null,
@@ -120,7 +119,7 @@ export async function createSettlement(
     if (!settlement) throw new Error("Settlement creation returned no document");
 
     await audit.record(
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
       {
         action: "CREATE",
         entity: "Settlement",
@@ -147,10 +146,9 @@ export async function createSettlement(
 export async function executeSettlement(
   settlementId: string,
   input: { amount: number; accountId: string; paymentMode: string; date: Date; referenceNo?: string },
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<SettlementDoc> {
-  const settlement = await Settlement.findOne({ _id: settlementId, ...scopeFilter });
+  const settlement = await Settlement.findOne({ _id: settlementId });
   if (!settlement) throw new NotFoundError("Settlement", settlementId);
   if (settlement.status === "COMPLETED") {
     throw new BadRequestError("This settlement is already complete");
@@ -181,7 +179,6 @@ export async function executeSettlement(
       ? await payments.createPaymentOut(
           {
             date: input.date,
-            branchId: String(settlement.branchId),
             partyId: String(settlement.partyId!),
             accountId: input.accountId,
             amount: input.amount,
@@ -192,13 +189,12 @@ export async function executeSettlement(
           } as never,
           ctx,
         )
-      : // BANK and BRANCH settlements move money between our own accounts, which is
+      : // A BANK settlement moves money between our own accounts, which is
         // exactly a bank transfer — the destination is fixed by the settlement, the source
         // by whoever is executing it.
         await payments.createBankTransfer(
           {
             date: input.date,
-            branchId: String(settlement.branchId),
             sourceAccountId: input.accountId,
             destinationAccountId: String(settlement.destinationAccountId!),
             amount: input.amount,
@@ -234,7 +230,7 @@ export async function executeSettlement(
   await settlement.save();
 
   await audit.recordSafe(
-    { ...ctx, branchId: String(settlement.branchId) },
+    ctx,
     {
       action: "UPDATE",
       entity: "Settlement",
@@ -253,11 +249,10 @@ export async function executeSettlement(
 }
 
 export async function listSettlements(
-  scopeFilter: Record<string, unknown>,
   filters: { status?: string; kind?: string },
   page: Paging,
 ): Promise<{ items: SettlementRow[]; total: number; pending: number }> {
-  const filter: FilterQuery<SettlementDoc> = { ...scopeFilter };
+  const filter: FilterQuery<SettlementDoc> = {};
   if (filters.status) filter.status = filters.status;
   if (filters.kind) filter.kind = filters.kind;
 
@@ -272,7 +267,7 @@ export async function listSettlements(
       .lean(),
     Settlement.countDocuments(filter),
     Settlement.aggregate<{ total: number }>([
-      { $match: { ...scopeFilter, status: { $in: ["PENDING", "PARTIAL"] } } },
+      { $match: { status: { $in: ["PENDING", "PARTIAL"] } } },
       { $group: { _id: null, total: { $sum: { $subtract: ["$netAmount", "$settledAmount"] } } } },
     ]),
   ]);

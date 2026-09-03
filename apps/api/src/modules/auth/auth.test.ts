@@ -3,12 +3,13 @@ import type { Express } from "express";
 import { createApp } from "../../app.js";
 import { AuditLog, Role, Session, User } from "../../models/index.js";
 import { TEST_PASSWORD, TestClient, clearFixtures, seedFixtures, type Fixtures } from "../../test/helpers.js";
+import { ensureSystemAccounts } from "../../services/ledger.service.js";
 
 /**
- * Phase 1 acceptance: authentication, RBAC and branch isolation.
+ * Phase 1 acceptance: authentication and RBAC.
  *
- * These are the tests §59 lists as mandatory for the identity layer. The branch-isolation
- * cases matter most — they assert that the SERVER refuses cross-branch data, which is the
+ * These are the tests §59 lists as mandatory for the identity layer. The permission cases
+ * matter most — they assert that the SERVER refuses what a role does not grant, which is the
  * guarantee §3 says can never be delegated to frontend filtering.
  */
 
@@ -19,6 +20,8 @@ let fx: Fixtures;
 beforeAll(async () => {
   await clearFixtures();
   fx = await seedFixtures();
+  // A party's opening balance posts against equity, so the system accounts must exist.
+  await ensureSystemAccounts();
   app = createApp();
   client = new TestClient();
   await client.start(app);
@@ -75,7 +78,7 @@ describe("authentication", () => {
   });
 
   it("rejects a request with no token", async () => {
-    const res = await client.get<{ error: { code: string } }>("/branches", { token: null });
+    const res = await client.get<{ error: { code: string } }>("/parties", { token: null });
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe("UNAUTHENTICATED");
   });
@@ -83,7 +86,7 @@ describe("authentication", () => {
   it("rejects a tampered token", async () => {
     const token = await client.loginAs("acct@test.co");
     const tampered = token.slice(0, -4) + "AAAA";
-    const res = await client.get<{ error: { code: string } }>("/branches", { token: tampered });
+    const res = await client.get<{ error: { code: string } }>("/parties", { token: tampered });
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe("TOKEN_INVALID");
   });
@@ -94,7 +97,6 @@ describe("authentication", () => {
       name: "Lock Me",
       email,
       roleId: fx.roles.ACCOUNTANT!,
-      branchIds: [fx.branches["105"]!],
       status: "ACTIVE",
       passwordHash: "placeholder",
     });
@@ -149,6 +151,69 @@ describe("authentication", () => {
     expect(live).toBe(0);
 
     await fresh.stop();
+  });
+
+  /**
+   * Several devices at once.
+   *
+   * A counter clerk signs in on the till and again on a phone; neither sign-in may end the
+   * other. This is the case that would break silently if login ever started revoking the
+   * user's existing sessions — the second person to sign in wins and the first loses
+   * whatever they were half way through entering.
+   */
+  it("lets one user hold several sessions at once, each usable", async () => {
+    const first = new TestClient();
+    const second = new TestClient();
+    await first.start(app);
+    await second.start(app);
+
+    const a = await first.post<{ data: { accessToken: string } }>("/auth/login", {
+      email: "acct@test.co",
+      password: TEST_PASSWORD,
+    });
+    const b = await second.post<{ data: { accessToken: string } }>("/auth/login", {
+      email: "acct@test.co",
+      password: TEST_PASSWORD,
+    });
+
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    // Two independent sessions, not one reissued.
+    expect(a.body.data.accessToken).not.toBe(b.body.data.accessToken);
+
+    // BOTH still work — the newer login did not evict the older one.
+    expect((await first.get("/auth/me", { token: a.body.data.accessToken })).status).toBe(200);
+    expect((await second.get("/auth/me", { token: b.body.data.accessToken })).status).toBe(200);
+
+    const live = await Session.countDocuments({ userId: fx.users.accountant!.id, revokedAt: null });
+    expect(live).toBeGreaterThanOrEqual(2);
+
+    await first.stop();
+    await second.stop();
+  });
+
+  /** A session lasts six hours, not the seven days it used to. */
+  it("expires a session six hours after it was issued", async () => {
+    const client2 = new TestClient();
+    await client2.start(app);
+    const before = Date.now();
+
+    const res = await client2.post<{ data: { accessToken: string } }>("/auth/login", {
+      email: "viewer@test.co",
+      password: TEST_PASSWORD,
+    });
+    expect(res.status).toBe(200);
+
+    const session = await Session.findOne({ userId: fx.users.viewer!.id, revokedAt: null })
+      .sort({ createdAt: -1 })
+      .lean();
+    expect(session).toBeTruthy();
+
+    const lifetimeHours = (session!.expiresAt.getTime() - before) / 3_600_000;
+    expect(lifetimeHours).toBeGreaterThan(5.9);
+    expect(lifetimeHours).toBeLessThanOrEqual(6.1);
+
+    await client2.stop();
   });
 
   it("signs the user out of every device when they change their password", async () => {
@@ -210,17 +275,17 @@ describe("permission engine", () => {
 
   it("refuses a read-only role any write", async () => {
     const token = await client.loginAs("viewer@test.co");
-    const res = await client.post("/branches", { name: "Nope", code: "999" }, { token });
+    const res = await client.post("/parties", { name: "Nope Traders", openingBalance: 0 }, { token });
     expect(res.status).toBe(403);
   });
 
-  it("stops a branch admin from minting a super admin", async () => {
+  it("stops a lesser admin from minting a super admin", async () => {
     const token = await client.loginAs("badmin@test.co");
 
-    // Creating an unscoped role — the direct escalation path.
+    // Creating a super-admin role — the direct escalation path.
     const role = await client.post<{ error: { code: string } }>(
       "/roles",
-      { name: "SNEAKY_ADMIN", label: "Sneaky", permissions: [], isUnscoped: true },
+      { name: "SNEAKY_ADMIN", label: "Sneaky", permissions: [], isSuperAdmin: true },
       { token },
     );
     expect(role.status).toBe(403);
@@ -233,7 +298,6 @@ describe("permission engine", () => {
         email: "puppet@test.co",
         password: "Puppet@Pass01",
         roleId: fx.roles.SUPER_ADMIN,
-        branchIds: [fx.branches["105"]],
       },
       { token },
     );
@@ -252,210 +316,53 @@ describe("permission engine", () => {
   });
 });
 
-describe("branch isolation", () => {
-  it("shows a super admin every branch", async () => {
-    const token = await client.loginAs("super@test.co");
-    const res = await client.get<{ data: unknown[]; meta: { total: number } }>("/branches", {
-      token,
+/**
+ * A role with no assignment of its own.
+ *
+ * What this proves: reach and capability are separate grants. A read-everything role
+ * does not thereby get to write anything.
+ */
+describe("permission reach", () => {
+  let globalToken: string;
+
+  beforeAll(async () => {
+    const readOnly = await Role.create({
+      name: "GLOBAL_AUDITOR",
+      label: "Global Auditor",
+      permissions: ["finance.party.view", "reports.view"],
+      isSuperAdmin: false,
+      isSystem: false,
     });
-    expect(res.status).toBe(200);
-    expect(res.body.meta.total).toBe(3);
-  });
 
-  it("shows a scoped user only their assigned branches", async () => {
-    const token = await client.loginAs("acct@test.co");
-    const res = await client.get<{ data: Array<{ code: string }>; meta: { total: number } }>(
-      "/branches",
-      { token },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.meta.total).toBe(1);
-    expect(res.body.data.map((b) => b.code)).toEqual(["105"]);
-    // Branch 107 exists in the database and is simply not reachable for this user.
-    expect(res.body.data.map((b) => b.code)).not.toContain("107");
-  });
-
-  it("refuses a direct fetch of another branch by id", async () => {
-    const token = await client.loginAs("acct@test.co");
-    const res = await client.get<{ error: { code: string } }>(`/branches/${fx.branches["107"]}`, {
-      token,
+    const user = new User({
+      name: "Global Auditor",
+      email: "gaudit@test.co",
+      roleId: readOnly._id,
+      status: "ACTIVE",
+      passwordHash: "placeholder",
     });
-    // Knowing the id is not authorisation. This is the case a frontend-only filter misses.
-    expect(res.status).toBe(404);
+    await user.setPassword(TEST_PASSWORD);
+    user.mustChangePassword = false;
+    await user.save();
+
+    globalToken = await client.loginAs("gaudit@test.co");
   });
 
-  it("refuses a query parameter naming an out-of-scope branch", async () => {
-    const token = await client.loginAs("acct@test.co");
-    const res = await client.get<{ error: { code: string } }>(
-      `/branches?branchId=${fx.branches["107"]}`,
-      { token },
-    );
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
+  it("reads what its permissions grant", async () => {
+    const res = await client.get("/parties", { token: globalToken });
+    expect(res.status).toBe(200);
   });
 
-  it("refuses switching into a branch the user does not hold", async () => {
-    const token = await client.loginAs("acct@test.co");
+  it("is still refused an action its permissions do not grant", async () => {
     const res = await client.post<{ error: { code: string } }>(
-      "/auth/switch-branch",
-      { branchId: fx.branches["107"] },
-      { token },
+      "/parties",
+      { name: "Should Not Exist", openingBalance: 0 },
+      { token: globalToken },
     );
+
+    // Being able to SEE the party master does not imply the right to add to it.
     expect(res.status).toBe(403);
-  });
-
-  it("signs a super admin in on the all-branches view by default", async () => {
-    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
-      "/auth/login",
-      { email: "super@test.co", password: TEST_PASSWORD },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.data.user.activeBranchId).toBeNull();
-  });
-
-  it("still honours a branch named explicitly at login", async () => {
-    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
-      "/auth/login",
-      { email: "super@test.co", password: TEST_PASSWORD, branchId: fx.branches["107"] },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.data.user.activeBranchId).toBe(fx.branches["107"]);
-  });
-
-  it("leaves a scoped user on their own default branch, not the all-branches view", async () => {
-    const res = await client.post<{ data: { user: { activeBranchId: string | null } } }>(
-      "/auth/login",
-      { email: "acct@test.co", password: TEST_PASSWORD },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.data.user.activeBranchId).not.toBeNull();
-  });
-
-  it("lets a super admin clear the branch context to see every branch at once", async () => {
-    const token = await client.loginAs("super@test.co");
-    const res = await client.post<{ data: { activeBranchId: string | null } }>(
-      "/auth/switch-branch",
-      { branchId: null },
-      { token },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.data.activeBranchId).toBeNull();
-  });
-
-  it("refuses the all-branches view to a scoped user", async () => {
-    const token = await client.loginAs("acct@test.co");
-    const res = await client.post<{ error: { code: string } }>(
-      "/auth/switch-branch",
-      { branchId: null },
-      { token },
-    );
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
-  });
-
-  /**
-   * The regression that makes an "All branches" option feel broken: the choice is held in
-   * the session object, not the user record, so the very next `/auth/me` must not quietly
-   * reinstate `defaultBranchId`.
-   */
-  it("keeps a super admin unscoped without falling back to their default branch", async () => {
-    const token = await client.loginAs("super@test.co");
-    await client.post("/auth/switch-branch", { branchId: null }, { token });
-
-    const listed = await client.get<{ data: unknown[] }>("/branches", { token });
-    expect(listed.status).toBe(200);
-    // Unscoped means every branch, not just the one they were defaulted into.
-    expect(listed.body.data.length).toBeGreaterThan(1);
-  });
-
-  it("stops a branch admin assigning a user to a branch they do not hold", async () => {
-    const token = await client.loginAs("badmin@test.co");
-    const res = await client.post<{ error: { code: string } }>(
-      "/users",
-      {
-        name: "Cross Branch",
-        email: "cross@test.co",
-        password: "Cross@Pass01",
-        roleId: fx.roles.ACCOUNTANT,
-        branchIds: [fx.branches["107"]],
-      },
-      { token },
-    );
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
-  });
-
-  it("keeps the user directory scoped to shared branches", async () => {
-    const token = await client.loginAs("badmin@test.co");
-    const res = await client.get<{ data: Array<{ email: string }> }>("/users", { token });
-    expect(res.status).toBe(200);
-    // The super admin sits in branch 101 and must not appear in a 105 admin's directory.
-    expect(res.body.data.map((u) => u.email)).not.toContain("super@test.co");
-  });
-
-  /**
-   * The "global admin" shape: unscoped reach, restricted powers.
-   *
-   * This is the combination the Roles screen exists to express, and the one most likely to
-   * be got wrong — it is tempting to assume that seeing every branch implies being able to
-   * act in every branch. The two are decided by different guards: `requireBranchAccess`
-   * reads `isUnscoped`, `requirePermission` reads the permission list. A role can hold one
-   * without the other, and this asserts that it genuinely does.
-   */
-  describe("a global admin — unscoped, but limited by permission", () => {
-    let globalToken: string;
-
-    beforeAll(async () => {
-      const role = await Role.create({
-        name: "GLOBAL_AUDITOR_TEST",
-        label: "Global Auditor",
-        // Sees everything...
-        isUnscoped: true,
-        // ...but may only look. No create, edit, approve or reverse anywhere.
-        permissions: ["branches.view", "users.view", "finance.party.view"],
-        isSystem: false,
-      });
-
-      const user = new User({
-        name: "Global Auditor",
-        email: "gaudit@test.co",
-        roleId: role._id,
-        // Deliberately empty. If unscoped access were somehow derived from this list
-        // rather than from the role, the branch assertion below would fail.
-        branchIds: [],
-        status: "ACTIVE",
-        passwordHash: "placeholder",
-      });
-      await user.setPassword(TEST_PASSWORD);
-      user.mustChangePassword = false;
-      await user.save();
-
-      globalToken = await client.loginAs("gaudit@test.co");
-    });
-
-    it("sees every branch despite holding no branch assignment", async () => {
-      const res = await client.get<{ data: Array<{ code: string }> }>("/branches", {
-        token: globalToken,
-      });
-      expect(res.status).toBe(200);
-
-      // All three fixture branches, from a user whose `branchIds` is empty.
-      const codes = res.body.data.map((b) => b.code).sort();
-      expect(codes).toEqual(["101", "105", "107"]);
-    });
-
-    it("is still refused an action its permissions do not grant", async () => {
-      const res = await client.post<{ error: { code: string } }>(
-        "/parties",
-        { name: "Should Not Exist", branchId: fx.branches["105"], openingBalance: 0 },
-        { token: globalToken },
-      );
-
-      // Unscoped reach does not imply the right to write. Seeing 105 and being able to
-      // create in 105 are separate grants.
-      expect(res.status).toBe(403);
-      expect(res.body.error.code).toBe("PERMISSION_DENIED");
-    });
+    expect(res.body.error.code).toBe("PERMISSION_DENIED");
   });
 });
 
@@ -474,7 +381,7 @@ describe("input handling", () => {
     const token = await client.loginAs("super@test.co");
     const res = await client.post<{
       error: { code: string; field: string; details: Array<{ field: string; message: string }> };
-    }>("/branches", { name: "X", code: "!!" }, { token });
+    }>("/parties", { name: "X", pincode: "12" }, { token });
 
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe("VALIDATION_ERROR");
@@ -484,31 +391,31 @@ describe("input handling", () => {
   it("requires a substantive reason for a dangerous action", async () => {
     const token = await client.loginAs("super@test.co");
     const res = await client.post<{ error: { code: string } }>(
-      `/branches/${fx.branches["107"]}/status`,
-      { status: "INACTIVE", reason: "no" },
+      "/adjustments",
+      { date: "2026-08-19", adjustmentType: "BALANCE_CORRECTION", amount: 100, reason: "no" },
       { token },
     );
     expect(res.status).toBe(422);
   });
 
   it("echoes a request id on every error so a user can quote it", async () => {
-    const res = await client.get<{ error: { requestId: string } }>("/branches", { token: null });
+    const res = await client.get<{ error: { requestId: string } }>("/parties", { token: null });
     expect(res.body.error.requestId).toBeTruthy();
     expect(res.headers.get("x-request-id")).toBe(res.body.error.requestId);
   });
 });
 
 describe("audit trail", () => {
-  it("records a branch creation with the actor and the resulting values", async () => {
+  it("records a party creation with the actor and the resulting values", async () => {
     const token = await client.loginAs("super@test.co");
-    const res = await client.post<{ data: { id: string; code: string } }>(
-      "/branches",
-      { name: "Audit Test Branch", code: "AUD1", openingCash: "50,000.00" },
+    const res = await client.post<{ data: { id: string } }>(
+      "/parties",
+      { name: "Audit Test Party", openingBalance: "50,000.00" },
       { token },
     );
     expect(res.status).toBe(201);
 
-    const entry = await AuditLog.findOne({ entity: "Branch", entityId: res.body.data.id }).lean();
+    const entry = await AuditLog.findOne({ entity: "Party", entityId: res.body.data.id }).lean();
     expect(entry).toBeTruthy();
     expect(entry!.action).toBe("CREATE");
     expect(entry!.userEmail).toBe("super@test.co");
@@ -516,8 +423,8 @@ describe("audit trail", () => {
 
     // The opening balance was submitted as a formatted string and must have been parsed
     // to integer paise, not stored as text or a float.
-    const recorded = entry!.newValue as { requestedOpeningCash: number };
-    expect(recorded.requestedOpeningCash).toBe(5_000_000);
+    const recorded = entry!.newValue as { openingBalance: number };
+    expect(recorded.openingBalance).toBe(5_000_000);
   });
 
   it("refuses to update an audit record", async () => {
@@ -539,7 +446,7 @@ describe("audit trail", () => {
  *
  * Every one of these endpoints existed and none was reachable from the UI until phase 10.
  * The shape assertion is here because the create route once returned the raw Mongoose
- * document: `_id` instead of `id`, no populated role or branches. A client that created a
+ * document: `_id` instead of `id`, no populated role. A client that created a
  * user and then tried to edit them had no id to address, and every follow-up call 422'd
  * on the id parameter.
  */
@@ -558,7 +465,6 @@ describe("user lifecycle", () => {
       data: {
         id: string;
         role: { label: string } | null;
-        branches: Array<{ code: string }>;
         _id?: string;
       };
     }>(
@@ -568,7 +474,6 @@ describe("user lifecycle", () => {
         email,
         password: firstPassword,
         roleId: fx.roles.ACCOUNTANT,
-        branchIds: [fx.branches["105"]],
       },
       { token },
     );
@@ -577,7 +482,6 @@ describe("user lifecycle", () => {
     expect(res.body.data.id).toBeTruthy();
     expect(res.body.data._id).toBeUndefined();
     expect(res.body.data.role?.label).toBeTruthy();
-    expect(res.body.data.branches.map((b) => b.code)).toContain("105");
 
     userId = res.body.data.id;
   });

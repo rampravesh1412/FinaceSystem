@@ -19,8 +19,6 @@ export const password = z
 export const loginSchema = z.object({
   email,
   password: z.string().min(1, "Password is required"),
-  /** Optional: pre-select a branch at login when the user is assigned to several. */
-  branchId: objectId.optional(),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
@@ -54,16 +52,6 @@ export const resetPasswordSchema = z
   });
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
-/**
- * Switch the active branch for a multi-branch user without re-authenticating.
- *
- * `null` means "no single branch in context" — the all-branches view. Only an unscoped
- * user may select it; the server rejects it for everyone else rather than quietly
- * substituting their assignment list, so the client can never widen its own scope.
- */
-export const switchBranchSchema = z.object({ branchId: objectId.nullable() });
-export type SwitchBranchInput = z.infer<typeof switchBranchSchema>;
-
 /* -------------------------------------------------------------------------- */
 /* Session payloads                                                           */
 /* -------------------------------------------------------------------------- */
@@ -75,11 +63,6 @@ export interface SessionUser {
   email: string;
   role: { id: string; name: string; label: string };
   permissions: string[];
-  /** Branches this user may read. Empty for a SuperAdmin, who is unscoped. */
-  branchIds: string[];
-  branches: Array<{ id: string; name: string; code: string }>;
-  /** The branch currently in context; drives default filters across the UI. */
-  activeBranchId: string | null;
   isSuperAdmin: boolean;
   mustChangePassword: boolean;
   lastLoginAt: string | null;
@@ -97,7 +80,6 @@ export interface LoginResponse {
 export interface AccessTokenClaims {
   sub: string;
   role: string;
-  branchIds: string[];
   isSuperAdmin: boolean;
   /** Session id, so a single session can be revoked without invalidating the user. */
   sid: string;

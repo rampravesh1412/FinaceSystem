@@ -12,11 +12,8 @@ import {
 import { asyncHandler, ok } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
 import {
-  assertBranchInScope,
   requireAuth,
-  requireBranchAccess,
   requirePermission,
-  scopeOf,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
@@ -30,42 +27,17 @@ export const tallyRouter: Router = Router();
 
 for (const r of [reportRouter, dashboardRouter, tallyRouter]) r.use(requireAuth);
 
-/**
- * Resolve the branch a report should cover.
- *
- * A scoped caller is pinned to their own branch whatever they ask for; an unscoped one may
- * name a branch or omit it for the whole organisation. The narrowing happens here rather
- * than in each report so no report can forget it.
- */
-function resolveBranch(
-  req: Parameters<typeof scopeOf>[0],
-  requested?: string,
-): string | undefined {
-  const scope = req.scope!;
-  if (scope.isUnscoped) return requested;
-  if (requested) {
-    assertBranchInScope(req, requested);
-    return requested;
-  }
-  return scope.activeBranchId ? String(scope.activeBranchId) : String(scope.branchIds[0] ?? "");
-}
-
 /* ── Dashboards (§31, §32, §33) ──────────────────────────────────────────── */
 
 dashboardRouter.get(
   "/",
-  requireBranchAccess({ optional: true }),
-  validate({ query: z.object({ branchId: objectId.optional(), days: z.coerce.number().min(7).max(90).default(30) }) }),
+  validate({ query: z.object({ days: z.coerce.number().min(7).max(90).default(30) }) }),
   asyncHandler(async (req, res) => {
-    const query = req.valid.query as { branchId?: string; days: number };
-    const scope = req.scope!;
+    const query = req.valid.query as { days: number };
 
     return ok(
       res,
       await dashboard.buildDashboard({
-        branchId: resolveBranch(req, query.branchId) || null,
-        isUnscoped: scope.isUnscoped,
-        branchIds: scope.branchIds,
         trendDays: query.days,
       }),
     );
@@ -77,7 +49,6 @@ dashboardRouter.get(
 reportRouter.get(
   "/profit-loss",
   requirePermission("reports.pnl"),
-  requireBranchAccess({ optional: true }),
   validate({ query: reportRangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ReportRange;
@@ -86,7 +57,6 @@ reportRouter.get(
       await reports.profitAndLoss({
         from: query.from,
         to: query.to,
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),
@@ -104,7 +74,6 @@ reportRouter.get(
 reportRouter.get(
   "/monthly-history",
   requirePermission("reports.pnl"),
-  requireBranchAccess({ optional: true }),
   validate({ query: reportRangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ReportRange;
@@ -113,7 +82,6 @@ reportRouter.get(
       await reports.monthlyHistory({
         from: query.from,
         to: query.to,
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),
@@ -124,7 +92,6 @@ reportRouter.get(
 reportRouter.get(
   "/balance-sheet",
   requirePermission("reports.balanceSheet"),
-  requireBranchAccess({ optional: true }),
   validate({ query: asOfSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as AsOfQuery;
@@ -132,7 +99,6 @@ reportRouter.get(
       res,
       await reports.balanceSheet({
         asOf: query.asOf ?? new Date(),
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),
@@ -143,7 +109,6 @@ reportRouter.get(
 reportRouter.get(
   "/cash-flow",
   requirePermission("reports.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: reportRangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ReportRange;
@@ -152,7 +117,6 @@ reportRouter.get(
       await reports.cashFlow({
         from: query.from,
         to: query.to,
-        branchId: resolveBranch(req, query.branchId),
       }),
     );
   }),

@@ -23,11 +23,8 @@ import {
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
 import {
-  assertBranchInScope,
   requireAuth,
-  requireBranchAccess,
   requirePermission,
-  scopeOf,
 } from "../../middleware/auth.js";
 import { exportLimiter, mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
@@ -70,12 +67,10 @@ khataRouter.get(
 adjustmentRouter.post(
   "/",
   requirePermission("finance.adjustment.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createAdjustmentSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateAdjustmentInput;
-    assertBranchInScope(req, input.branchId);
     const txn = await khata.createAdjustment(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
   }),
@@ -105,13 +100,11 @@ creditRouter.get(
 savingsRouter.get(
   "/",
   requirePermission("finance.savings.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
     const page = paging(query, { memberName: 1 }, ["memberName", "accountNo", "openedAt"]);
     const { items, total, summary } = await savings.listAccounts(
-      scopeOf(req),
       { q: query.q },
       page,
     );
@@ -122,12 +115,10 @@ savingsRouter.get(
 savingsRouter.post(
   "/",
   requirePermission("finance.savings.manage"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createSavingsAccountSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateSavingsAccountInput;
-    assertBranchInScope(req, input.branchId);
     const account = await savings.createAccount(input, auditContextFrom(req));
     // The list's shape, so the caller gets the posted opening balance back.
     return created(
@@ -141,18 +132,16 @@ savingsRouter.post(
 savingsRouter.get(
   "/:id/passbook",
   requirePermission("finance.savings.view"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    return ok(res, await savings.getPassbook(id, scopeOf(req)));
+    return ok(res, await savings.getPassbook(id));
   }),
 );
 
 savingsRouter.post(
   "/transactions",
   requirePermission("finance.savings.transact"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: savingsTransactionSchema }),
   asyncHandler(async (req, res) => {
@@ -176,13 +165,7 @@ reconciliationRouter.post(
   }),
 );
 
-/**
- * Every reconciliation.
- *
- * No branch guard: the bank accounts these reconcile are organisation-wide, so there is
- * no per-branch share of a bank statement to isolate. `finance.bank.reconcile` is the
- * control.
- */
+/** Every reconciliation. `finance.bank.reconcile` is the control. */
 reconciliationRouter.get(
   "/",
   requirePermission("finance.bank.reconcile"),
@@ -279,13 +262,11 @@ reconciliationRouter.post(
 settlementRouter.get(
   "/",
   requirePermission("finance.settlement.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: listQuery.extend({ status: z.string().optional(), kind: z.string().optional() }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { page: number; limit: number; status?: string; kind?: string };
     const page = paging(query, { date: -1 }, ["date", "amount", "createdAt"]);
     const { items, total, pending } = await settlements.listSettlements(
-      scopeOf(req),
       { status: query.status, kind: query.kind },
       page,
     );
@@ -296,12 +277,10 @@ settlementRouter.get(
 settlementRouter.post(
   "/",
   requirePermission("finance.settlement.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createSettlementSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateSettlementInput;
-    assertBranchInScope(req, input.branchId);
     const settlement = await settlements.createSettlement(input, auditContextFrom(req));
     return created(res, settlement, `${settlement.settlementNo} created`);
   }),
@@ -310,7 +289,6 @@ settlementRouter.post(
 settlementRouter.post(
   "/:id/execute",
   requirePermission("finance.settlement.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({
     params: idParam,
@@ -335,7 +313,6 @@ settlementRouter.post(
     const settlement = await settlements.executeSettlement(
       id,
       { ...body, amount: parseAmount(body.amount) },
-      scopeOf(req),
       auditContextFrom(req),
     );
     return ok(res, settlement, `${settlement.settlementNo} is now ${settlement.status.toLowerCase()}`);

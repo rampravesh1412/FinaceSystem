@@ -1,5 +1,9 @@
 import { Types, type ClientSession } from "mongoose";
-import type { CreateExpenseInput, CreateIncomeInput } from "@amiri/shared";
+import type {
+  CreateExpenseInput,
+  CreateIncomeInput,
+  UpdateAccountHeadInput,
+} from "@amiri/shared";
 import {
   ExpenseCategory,
   IncomeHead,
@@ -105,9 +109,6 @@ export async function createHead(
           code: `${prefix}-HEAD-${code}`,
           name: input.name,
           kind: kind === "EXPENSE" ? "EXPENSE" : "INCOME",
-          // Heads are organisation-wide: "Salary" means the same thing in every branch,
-          // and the P&L needs to group across branches without merging duplicates.
-          branchId: null,
           refKind: kind === "EXPENSE" ? "ExpenseCategory" : "IncomeHead",
           enforceBalance: false,
           createdBy: ctx.userId,
@@ -176,6 +177,89 @@ export async function createHead(
  * claim it needs an INPUT_TAX asset account, which is a deliberate future change and not
  * something to guess at now.
  */
+/**
+ * Rename, re-parent or RETIRE a head.
+ *
+ * A head with history cannot be deleted — every posting made under it would lose the
+ * account it was booked to, and the P&L would stop tying. Retiring it (`status: INACTIVE`)
+ * takes it out of the pickers for new entries and leaves every past entry exactly where it
+ * is, which is what "delete" almost always means when somebody asks for it here.
+ *
+ * Reactivating is the same operation in reverse, and is why this is a status rather than a
+ * one-way tombstone: a head retired by mistake is put back with one click, and nothing
+ * about the ledger had to change either time.
+ */
+export async function updateHead(
+  kind: "EXPENSE" | "INCOME",
+  id: string,
+  input: UpdateAccountHeadInput,
+  ctx: audit.AuditContext,
+): Promise<AccountHeadDoc> {
+  const Model = kind === "EXPENSE" ? ExpenseCategory : IncomeHead;
+
+  return withTransaction(async (session) => {
+    const head = await Model.findById(id).session(session);
+    if (!head) throw new NotFoundError(kind === "EXPENSE" ? "Expense head" : "Income head", id);
+
+    const before = {
+      name: head.name,
+      description: head.description,
+      parentId: head.parentId ? String(head.parentId) : null,
+      status: head.status,
+    };
+
+    // A head cannot be its own parent, and one level of nesting is all the model allows.
+    if (input.parentId && input.parentId === id) {
+      throw new BadRequestError("A head cannot be its own parent", "parentId");
+    }
+
+    if (input.name !== undefined) head.name = input.name;
+    if (input.description !== undefined) head.description = input.description;
+    if (input.parentId !== undefined) head.parentId = (input.parentId || null) as never;
+    if (input.status !== undefined) head.status = input.status;
+
+    await head.save({ session });
+
+    /**
+     * The ledger account carries the head's name, so a rename has to reach it or the P&L
+     * and the trial balance keep printing the old one forever.
+     *
+     * The STATUS is deliberately not mirrored. A ledger account with `status: INACTIVE` is
+     * refused by `postTransaction` outright — which is right for a closed bank account, and
+     * wrong here: a retired head must still accept the reversal of something posted under
+     * it while it was live. Retiring the head hides it from the pickers; it does not seal
+     * the account against correcting history.
+     */
+    if (input.name !== undefined && input.name !== before.name) {
+      await LedgerAccount.updateOne(
+        { _id: head.ledgerAccountId },
+        { $set: { name: head.name } },
+        { session },
+      );
+    }
+
+    await audit.record(
+      ctx,
+      {
+        action: "UPDATE",
+        entity: kind === "EXPENSE" ? "ExpenseCategory" : "IncomeHead",
+        entityId: id,
+        entityLabel: `${head.code} — ${head.name}`,
+        oldValue: before,
+        newValue: {
+          name: head.name,
+          description: head.description,
+          parentId: head.parentId ? String(head.parentId) : null,
+          status: head.status,
+        },
+      },
+      session,
+    );
+
+    return head;
+  }, { label: "head.update" });
+}
+
 export async function createExpense(
   input: CreateExpenseInput,
   ctx: audit.AuditContext,
@@ -218,7 +302,6 @@ export async function createExpense(
       {
         type: "EXPENSE",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: total,
         paymentMode: input.paymentMode,
@@ -241,7 +324,7 @@ export async function createExpense(
         },
       },
       session,
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
     );
 
     return txn;
@@ -287,7 +370,6 @@ export async function createIncome(
       {
         type: "INCOME",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: input.amount,
         paymentMode: input.paymentMode,
@@ -306,7 +388,7 @@ export async function createIncome(
         },
       },
       session,
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
     );
 
     return txn;

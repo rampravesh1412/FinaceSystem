@@ -29,7 +29,6 @@ import {
 
 const baseTransactionFields = {
   date: businessDate,
-  branchId: objectId,
   referenceNo: z.string().trim().max(80).optional(),
   narration: z.string().trim().max(1000).optional(),
   attachments: z.array(attachmentInput).max(10).default([]),
@@ -45,7 +44,12 @@ export const createPaymentInSchema = z.object({
   /** BankAccount or CashAccount receiving the money. */
   accountId: objectId,
   amount: positiveMoney,
-  paymentMode: z.nativeEnum(PAYMENT_MODE),
+  /**
+   * Optional. The account already says how the money moved — a receipt into the cash
+   * drawer was cash, one into a bank account came by transfer — so the mode is recorded
+   * when it is known and left off when it adds nothing.
+   */
+  paymentMode: z.nativeEnum(PAYMENT_MODE).optional(),
   /** Optional charge rule; the charge is computed server-side, never sent by the client. */
   chargeRuleId: optionalObjectId,
   /** Manual charge override, used when no rule fits. Requires a narration. */
@@ -64,7 +68,8 @@ export const createPaymentOutSchema = z.object({
   /** BankAccount or CashAccount the money leaves from. */
   accountId: objectId,
   amount: positiveMoney,
-  paymentMode: z.nativeEnum(PAYMENT_MODE),
+  /** Optional — see `createPaymentInSchema`. */
+  paymentMode: z.nativeEnum(PAYMENT_MODE).optional(),
   chargeRuleId: optionalObjectId,
   manualCharge: nonNegativeMoney.optional(),
   notes: note(1000),
@@ -208,6 +213,88 @@ export const reverseTransactionSchema = z.object({
 export type ReverseTransactionInput = z.infer<typeof reverseTransactionSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Editing a posted payment                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Change a Payment In or Payment Out that has already posted.
+ *
+ * Every field is editable, but they are not all editable the same way, and the split is
+ * the whole design:
+ *
+ *   MONEY FIELDS — date, amount, party, account, charge
+ *     Cannot be rewritten. Saving one reverses the original and posts a corrected
+ *     replacement, atomically and linked both ways. The original stays on the books,
+ *     struck through, next to the reversal that cancels it and the version that replaced
+ *     it. That is the only way to change an amount and still be able to answer "why is
+ *     this balance what it is" from the entries alone.
+ *
+ *   LABEL FIELDS — reference no, narration, payment mode, notes
+ *     Carry no money and move no balance, so they are updated in place. Reversing a
+ *     transaction to fix a typo in a reference number would be noise in the ledger.
+ *
+ * `reason` is mandatory either way. An unexplained change to a posted transaction is
+ * exactly what §25 and §62 exist to prevent, and it is what the audit row quotes.
+ */
+export const updatePaymentSchema = z.object({
+  // Money fields — any of these triggers reverse-and-repost.
+  date: businessDate.optional(),
+  amount: positiveMoney.optional(),
+  partyId: optionalObjectId,
+  accountId: optionalObjectId,
+  chargeRuleId: optionalObjectId,
+  manualCharge: nonNegativeMoney.optional(),
+
+  // Label fields — updated in place.
+  paymentMode: z.nativeEnum(PAYMENT_MODE).optional(),
+  referenceNo: z.string().trim().max(80).optional(),
+  narration: z.string().trim().max(1000).optional(),
+  notes: note(1000),
+
+  reason: reasonSchema,
+});
+export type UpdatePaymentInput = z.infer<typeof updatePaymentSchema>;
+
+/** Which fields, if changed, force a reverse-and-repost rather than an in-place update. */
+export const PAYMENT_MONEY_FIELDS = [
+  "date",
+  "amount",
+  "partyId",
+  "accountId",
+  "chargeRuleId",
+  "manualCharge",
+] as const;
+
+/** What the server did with an edit, so the UI can say so plainly. */
+export interface PaymentEditResult {
+  /** `REPOSTED` when the money changed; `UPDATED` when only labels did. */
+  outcome: "REPOSTED" | "UPDATED";
+  transaction: { id: string; txnNo: string };
+  /** Present on a repost: the original, now reversed, and the reversal that cancels it. */
+  replaced?: { id: string; txnNo: string };
+  reversal?: { id: string; txnNo: string };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account heads                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Rename, re-parent or RETIRE an expense or income head.
+ *
+ * Retiring is what `status` is for: a head with history cannot be deleted, because every
+ * posting made under it would lose the account it was booked to. Setting it INACTIVE takes
+ * it out of the pickers for new entries and leaves every past entry exactly where it is.
+ */
+export const updateAccountHeadSchema = z.object({
+  name: z.string().trim().min(2, "Name is required").max(80).optional(),
+  description: z.string().trim().max(300).optional(),
+  parentId: optionalObjectId,
+  status: z.nativeEnum(RECORD_STATUS).optional(),
+});
+export type UpdateAccountHeadInput = z.infer<typeof updateAccountHeadSchema>;
+
+/* -------------------------------------------------------------------------- */
 /* Listing                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -215,7 +302,6 @@ export const transactionQuerySchema = listQuery
   .extend({
     type: z.nativeEnum(TRANSACTION_TYPE).optional(),
     status: z.nativeEnum(TRANSACTION_STATUS).optional(),
-    branchId: optionalObjectId,
     partyId: optionalObjectId,
     accountId: optionalObjectId,
     paymentMode: z.nativeEnum(PAYMENT_MODE).optional(),
@@ -232,12 +318,6 @@ export interface TransactionRow {
   type: string;
   typeLabel: string;
   date: string;
-  /**
-   * The branch that transacted. Null on an organisation-level posting — the opening
-   * balance of a party or an account, which belongs to the business rather than to any
-   * one office.
-   */
-  branch: { id: string; name: string; code: string } | null;
   party: { id: string; name: string; code: string } | null;
   /** Human name of the counter account: "HDFC ••7890", "Cash — Main Counter". */
   accountLabel: string;
@@ -257,6 +337,14 @@ export interface TransactionRow {
   reversedBy: string | null;
   reversalOf: string | null;
 
+  /**
+   * The edit chain. `supersededBy` is set on a transaction that was corrected;
+   * `supersedes` on the correction. A row carrying either is part of an edit rather than a
+   * plain reversal, and the UI says so — the two look identical without this.
+   */
+  supersededBy: string | null;
+  supersedes: string | null;
+
   createdBy: { id: string; name: string } | null;
   createdAt: string;
 }
@@ -274,13 +362,25 @@ export interface TransactionDetail extends TransactionRow {
   }>;
   attachments: Array<{ filename: string; url: string; mimeType: string; size: number }>;
   notes: Array<{ text: string; createdBy: string; createdAt: string }>;
+  /**
+   * Who did what to this transaction, oldest first, straight from the audit log.
+   *
+   * `changedFields` and the before/after snapshots come through so an edit reads as
+   * "Anita changed amount and party, because …" rather than an unexplained "UPDATE".
+   */
   timeline: Array<{
     action: string;
     at: string;
     by: string;
     role?: string;
     reason?: string;
+    changedFields?: string[];
+    oldValue?: unknown;
+    newValue?: unknown;
   }>;
+  /** The corrected version of this transaction, and the one it corrected. */
+  supersededByTxn: { id: string; txnNo: string } | null;
+  supersedesTxn: { id: string; txnNo: string } | null;
   items?: ExpenseItemInput[];
   chargeRule?: { id: string; name: string; basis: string } | null;
   approvedBy: { id: string; name: string } | null;

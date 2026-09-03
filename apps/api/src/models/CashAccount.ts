@@ -9,11 +9,8 @@ import { actorField, baseSchemaOptions } from "./fields.js";
  * pay out cash that is not in the drawer. That is the one hard difference from a bank
  * account, which may have a sanctioned overdraft facility.
  *
- * NOT branch-scoped, for the same reason as a bank account: a drawer is a named thing
- * counted on its own, and its tally is per drawer per day. Several are supported for a
- * business running separate counters that tally independently — they are told apart by
- * name, not by which office they sit in. The branch that transacted is recorded on each
- * posting, so a branch's cash movement is still reportable.
+ * Several are supported for a business running separate counters that tally
+ * independently; they are told apart by name, and each is counted on its own.
  */
 export interface CashAccountDoc extends Document<Types.ObjectId> {
   ledgerAccountId: Types.ObjectId;

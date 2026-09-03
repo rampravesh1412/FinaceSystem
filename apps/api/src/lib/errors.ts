@@ -88,16 +88,6 @@ export class PermissionDeniedError extends AppError {
   }
 }
 
-export class BranchAccessDeniedError extends AppError {
-  constructor() {
-    super(
-      403,
-      "BRANCH_ACCESS_DENIED",
-      "This record belongs to a branch you are not assigned to",
-    );
-  }
-}
-
 export class NotFoundError extends AppError {
   constructor(entity = "Record", id?: string) {
     super(404, "NOT_FOUND", id ? `${entity} ${id} was not found` : `${entity} was not found`);
@@ -264,7 +254,7 @@ function isMongoDuplicate(err: unknown): err is MongoDuplicateKeyError {
 /**
  * Turn a driver-level duplicate-key error into a user-facing one.
  *
- * Unique indexes are the only race-safe way to enforce "this branch code is taken", so
+ * Unique indexes are the only race-safe way to enforce "this code is taken", so
  * services attempt the write and translate the failure rather than doing a check-then-write
  * that two concurrent requests can both pass.
  */

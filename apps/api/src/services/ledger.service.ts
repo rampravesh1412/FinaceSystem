@@ -60,15 +60,6 @@ export interface PostingLine {
 export interface PostTransactionInput {
   type: TransactionType;
   date: Date;
-  /**
-   * The branch that transacted. Stamped on the header AND on every entry, which is what
-   * makes each branch's books balance on their own.
-   *
-   * Null for an organisation-level posting — the opening balance of a shared account or
-   * party. Both legs carry null together, so a branch-filtered trial balance excludes the
-   * pair and still ties.
-   */
-  branchId: Types.ObjectId | string | null;
   lines: PostingLine[];
 
   grossAmount: number;
@@ -249,7 +240,6 @@ export interface CreateLedgerAccountInput {
   code: string;
   name: string;
   kind: AccountKind;
-  branchId?: Types.ObjectId | string | null;
   refKind?: string;
   refId?: Types.ObjectId | string;
   overdraftLimit?: number;
@@ -275,7 +265,6 @@ export async function createLedgerAccount(
         name: input.name,
         kind: input.kind,
         accountClass: ACCOUNT_KIND_CLASS[input.kind],
-        branchId: input.branchId ?? null,
         refKind: input.refKind,
         refId: input.refId,
         overdraftLimit: input.overdraftLimit ?? 0,
@@ -311,7 +300,6 @@ export async function ensureSystemAccounts(session?: ClientSession): Promise<Map
           name: spec.name,
           kind: spec.kind,
           accountClass: spec.accountClass,
-          branchId: null,
           isSystem: true,
           enforceBalance: false,
           cachedBalance: 0,
@@ -458,15 +446,12 @@ export async function postTransaction(
     : await reserveTxnNo(input.type, input.date, session);
 
   // ── 4. Header ───────────────────────────────────────────────────────────
-  const branchId = input.branchId ? new Types.ObjectId(String(input.branchId)) : null;
-
   const [transaction] = await Transaction.create(
     [
       {
         txnNo: numbering.txnNo,
         type: input.type,
         date: input.date,
-        branchId,
         // Posting is what COMPLETED means. There is no state in which entries exist and
         // the header claims to be a draft.
         status: "COMPLETED",
@@ -513,7 +498,6 @@ export async function postTransaction(
       txnNo: transaction.txnNo,
       transactionType: input.type,
       ledgerAccountId: new Types.ObjectId(id),
-      branchId,
       date: input.date,
       direction: line.direction,
       amount: line.amount,
@@ -645,8 +629,6 @@ export async function assertPeriodOpen(
 export async function postOpeningBalance(
   input: {
     ledgerAccountId: Types.ObjectId | string;
-    /** Null for an organisation-wide account or party, which is now every master. */
-    branchId: Types.ObjectId | string | null;
     amount: number;
     date: Date;
     label: string;
@@ -682,7 +664,6 @@ export async function postOpeningBalance(
     {
       type: "OPENING_BALANCE",
       date: input.date,
-      branchId: input.branchId,
       lines,
       grossAmount: magnitude,
       narration: `Opening balance — ${input.label}`,
@@ -719,10 +700,9 @@ export async function balancesFor(
  * Reads entries directly rather than cached balances — a trial balance whose purpose is
  * to prove the books tie must not be computed from the cache it is meant to validate.
  */
-export async function trialBalance(options: { asOf?: Date; branchId?: Types.ObjectId | string } = {}) {
+export async function trialBalance(options: { asOf?: Date } = {}) {
   const match: Record<string, unknown> = {};
   if (options.asOf) match.date = { $lte: options.asOf };
-  if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
 
   const rows = await LedgerEntry.aggregate<{
     _id: Types.ObjectId;
@@ -782,6 +762,5 @@ export async function trialBalance(options: { asOf?: Date; branchId?: Types.Obje
     // Always zero in a sound ledger. Surfaced rather than hidden, so a bug is visible.
     difference: totalDebit - totalCredit,
     asOf: (options.asOf ?? new Date()).toISOString(),
-    branchId: options.branchId ? String(options.branchId) : null,
   };
 }

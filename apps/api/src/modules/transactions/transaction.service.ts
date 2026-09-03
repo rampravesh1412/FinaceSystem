@@ -30,12 +30,10 @@ export interface TransactionListFilters {
   to?: Date;
   minAmount?: number;
   maxAmount?: number;
-  scopeFilter: Record<string, unknown>;
 }
 
 function buildFilter(filters: TransactionListFilters): FilterQuery<TransactionDoc> {
-  // The branch scope goes in FIRST and nothing from the request can widen it.
-  const filter: FilterQuery<TransactionDoc> = { ...filters.scopeFilter };
+  const filter: FilterQuery<TransactionDoc> = {};
 
   if (filters.type) filter.type = filters.type;
   if (filters.status) filter.status = filters.status;
@@ -101,10 +99,7 @@ function moneyDirection(txn: TransactionDoc): { moneyIn: number; moneyOut: numbe
   }
 }
 
-type PopulatedTxn = Omit<TransactionDoc, "branchId" | "partyId"> & {
-  // Null on an organisation-level posting — the opening balance of a shared account or
-  // party, which no branch transacted.
-  branchId: { _id: Types.ObjectId; name: string; code: string } | null;
+type PopulatedTxn = Omit<TransactionDoc, "partyId"> & {
   partyId: { _id: Types.ObjectId; name: string; code: string } | null;
   createdBy: { _id: Types.ObjectId; name: string } | null;
   accountLabel?: string;
@@ -121,9 +116,6 @@ function toRow(txn: PopulatedTxn): TransactionRow {
     type: txn.type,
     typeLabel: TRANSACTION_TYPE_LABEL[txn.type] ?? txn.type,
     date: txn.date.toISOString(),
-    branch: txn.branchId
-      ? { id: String(txn.branchId._id), name: txn.branchId.name, code: txn.branchId.code }
-      : null,
     party: txn.partyId
       ? { id: String(txn.partyId._id), name: txn.partyId.name, code: txn.partyId.code }
       : null,
@@ -144,6 +136,8 @@ function toRow(txn: PopulatedTxn): TransactionRow {
     isReversal: Boolean(txn.reversalOf),
     reversedBy: txn.reversedBy ? String(txn.reversedBy) : null,
     reversalOf: txn.reversalOf ? String(txn.reversalOf) : null,
+    supersededBy: txn.supersededBy ? String(txn.supersededBy) : null,
+    supersedes: txn.supersedes ? String(txn.supersedes) : null,
     createdBy: txn.createdBy ? { id: String(txn.createdBy._id), name: txn.createdBy.name } : null,
     createdAt: txn.createdAt.toISOString(),
   };
@@ -157,7 +151,6 @@ export async function list(filters: TransactionListFilters, page: Paging) {
       .sort(page.sort)
       .skip(page.skip)
       .limit(page.limit)
-      .populate("branchId", "name code")
       .populate("partyId", "name code")
       .populate("createdBy", "name")
       .lean<PopulatedTxn[]>(),
@@ -195,10 +188,8 @@ export async function list(filters: TransactionListFilters, page: Paging) {
  */
 export async function getDetail(
   id: string,
-  scopeFilter: Record<string, unknown>,
 ): Promise<TransactionDetail> {
-  const txn = await Transaction.findOne({ _id: id, ...scopeFilter })
-    .populate("branchId", "name code")
+  const txn = await Transaction.findOne({ _id: id })
     .populate("partyId", "name code")
     .populate("createdBy", "name")
     .populate("approvedBy", "name")
@@ -213,7 +204,7 @@ export async function getDetail(
 
   if (!txn) throw new NotFoundError("Transaction", id);
 
-  const [entries, trail, reversalPair] = await Promise.all([
+  const [entries, trail, reversalPair, supersededByTxn, supersedesTxn] = await Promise.all([
     LedgerEntry.find({ transactionId: txn._id })
       .populate<{ ledgerAccountId: { _id: Types.ObjectId; name: string; code: string } }>(
         "ledgerAccountId",
@@ -227,6 +218,8 @@ export async function getDetail(
     txn.reversedBy || txn.reversalOf
       ? Transaction.findById(txn.reversedBy ?? txn.reversalOf).select("txnNo status date").lean()
       : null,
+    txn.supersededBy ? Transaction.findById(txn.supersededBy).select("txnNo").lean() : null,
+    txn.supersedes ? Transaction.findById(txn.supersedes).select("txnNo").lean() : null,
   ]);
 
   const row = toRow(txn);
@@ -259,7 +252,16 @@ export async function getDetail(
       by: t.userName,
       role: t.roleName,
       reason: t.reason,
+      changedFields: t.changedFields,
+      oldValue: t.oldValue,
+      newValue: t.newValue,
     })),
+    supersededByTxn: supersededByTxn
+      ? { id: String(supersededByTxn._id), txnNo: supersededByTxn.txnNo }
+      : null,
+    supersedesTxn: supersedesTxn
+      ? { id: String(supersedesTxn._id), txnNo: supersedesTxn.txnNo }
+      : null,
     items: txn.items,
     chargeRule: txn.chargeBasis
       ? { id: txn.chargeRuleId ? String(txn.chargeRuleId) : "", name: "", basis: txn.chargeBasis }

@@ -4,11 +4,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
-  Ban, Check, Copy, KeyRound, MoreHorizontal, Pencil, ShieldAlert, TriangleAlert, UserCheck,
+  Ban, Check, Copy, KeyRound, MoreHorizontal, Pencil, TriangleAlert, UserCheck,
 } from "lucide-react";
 import {
   updateUserSchema,
-  type BranchSummary,
   type RoleSummary,
   type UpdateUserInput,
   type UserSummary,
@@ -22,7 +21,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -123,16 +121,10 @@ export function UserRowActions({ user }: { user: UserSummary }) {
 function EditUserDialog({ user, onClose }: { user: UserSummary; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [formError, setFormError] = React.useState<string | null>(null);
-  const [branchIds, setBranchIds] = React.useState<string[]>(user.branches.map((b) => b.id));
 
   const roles = useQuery({
     queryKey: ["roles", "for-user-edit"],
     queryFn: () => api.list<RoleSummary>(`/roles${qs({ limit: 50 })}`),
-  });
-
-  const branches = useQuery({
-    queryKey: ["branches", "for-user-edit"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
   });
 
   const form = useForm<UpdateUserInput>({
@@ -142,7 +134,6 @@ function EditUserDialog({ user, onClose }: { user: UserSummary; onClose: () => v
       email: user.email,
       phone: user.phone ?? "",
       roleId: user.role.id,
-      branchIds: user.branches.map((b) => b.id),
       designation: user.designation ?? "",
     } as never,
   });
@@ -160,23 +151,13 @@ function EditUserDialog({ user, onClose }: { user: UserSummary; onClose: () => v
     },
   });
 
-  const toggleBranch = (id: string) => {
-    const next = branchIds.includes(id) ? branchIds.filter((b) => b !== id) : [...branchIds, id];
-    setBranchIds(next);
-    form.setValue("branchIds", next, { shouldValidate: true, shouldDirty: true });
-  };
-
-  const selectedRole = roles.data?.items.find((r) => r.id === form.watch("roleId"));
-  const roleIsUnscoped = Boolean(selectedRole?.isUnscoped);
-  const losingBranches = user.branches.filter((b) => !branchIds.includes(b.id));
-
   return (
     <Dialog open onOpenChange={(v) => (v ? undefined : onClose())}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Edit {user.name}</DialogTitle>
           <DialogDescription>
-            Role and branch changes take effect on their next request — they do not need to
+            Role changes take effect on their next request — they do not need to
             sign in again.
           </DialogDescription>
         </DialogHeader>
@@ -184,7 +165,7 @@ function EditUserDialog({ user, onClose }: { user: UserSummary; onClose: () => v
         <form
           onSubmit={form.handleSubmit((values) => {
             setFormError(null);
-            mutation.mutate({ ...values, branchIds });
+            mutation.mutate(values);
           })}
           className="space-y-4"
           noValidate
@@ -210,66 +191,6 @@ function EditUserDialog({ user, onClose }: { user: UserSummary; onClose: () => v
             }))}
           />
 
-          <Separator />
-
-          <div className="space-y-2">
-            <Label>Branches</Label>
-
-            {roleIsUnscoped ? (
-              <p className="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-xs">
-                <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-info" aria-hidden />
-                <span>
-                  <span className="font-medium">{selectedRole?.label}</span> is unscoped — this
-                  user sees every branch regardless of what is ticked here.
-                </span>
-              </p>
-            ) : (
-              <>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {(branches.data?.items ?? []).map((branch) => (
-                    <label
-                      key={branch.id}
-                      className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border p-2.5 text-sm hover:bg-surface-muted"
-                    >
-                      <Checkbox
-                        checked={branchIds.includes(branch.id)}
-                        onCheckedChange={() => toggleBranch(branch.id)}
-                        className="mt-0.5"
-                      />
-                      <span>
-                        <span className="block font-medium">
-                          {branch.code} — {branch.name}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-
-                {/* Removing a branch removes access to its data — including transactions
-                    this user posted. Worth saying out loud before it happens. */}
-                {losingBranches.length > 0 ? (
-                  <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
-                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-                    <span>
-                      They will lose access to{" "}
-                      <span className="font-medium">
-                        {losingBranches.map((b) => b.code).join(", ")}
-                      </span>
-                      , including entries they posted there. The entries stay on the books and
-                      keep their name; only their visibility changes.
-                    </span>
-                  </p>
-                ) : null}
-
-                {branchIds.length === 0 ? (
-                  <p className="flex items-start gap-2 text-xs text-warning-foreground">
-                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-                    With no branch assigned they can sign in but will see no data at all.
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
 
           {formError ? <InlineError message={formError} /> : null}
 
@@ -492,9 +413,6 @@ function StatusDialog({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{user.role.label}</Badge>
           <Badge variant="outline">
-            {user.branches.length === 0
-              ? "Unscoped"
-              : user.branches.map((b) => b.code).join(", ")}
           </Badge>
         </div>
 

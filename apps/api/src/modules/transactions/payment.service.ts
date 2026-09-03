@@ -1,13 +1,24 @@
-import type { ClientSession } from "mongoose";
+import { Types, type ClientSession } from "mongoose";
 import {
+  PAYMENT_MONEY_FIELDS,
+  TRANSACTION_TYPE_LABEL,
   chargeEffect,
   settlementNet,
   type CreateBankTransferInput,
   type CreatePaymentInInput,
   type CreatePaymentOutInput,
+  type PaymentEditResult,
+  type UpdatePaymentInput,
 } from "@amiri/shared";
-import { LedgerAccount, type TransactionDoc } from "../../models/index.js";
-import { CreditLimitExceededError, SelfTransferError } from "../../lib/errors.js";
+import { LedgerAccount, Transaction, type TransactionDoc } from "../../models/index.js";
+import {
+  BadRequestError,
+  CreditLimitExceededError,
+  NotFoundError,
+  SelfTransferError,
+  StateConflictError,
+} from "../../lib/errors.js";
+import * as reversal_ from "./reversal.service.js";
 import { withTransaction } from "../../lib/unitOfWork.js";
 import * as ledger from "../../services/ledger.service.js";
 import * as charges from "../../services/charges.service.js";
@@ -44,7 +55,7 @@ async function postOrSubmit(
   const tier = await approvals.requiredTier(input.grossAmount, input.type);
 
   if (!tier) {
-    return ledger.postTransaction(input, session, { ...ctx, branchId: input.branchId ? String(input.branchId) : null });
+    return ledger.postTransaction(input, session, ctx);
   }
 
   // Held: the lines are stored and NOTHING touches a balance until somebody approves.
@@ -81,15 +92,30 @@ export async function createPaymentIn(
   input: CreatePaymentInInput,
   ctx: audit.AuditContext,
 ): Promise<TransactionDoc> {
-  return withTransaction(async (session) => {
+  return withTransaction(
+    (session) => postPaymentIn(input, ctx, session),
+    { label: "paymentIn.create" },
+  );
+}
+
+/**
+ * The Payment In posting, against a session the caller owns.
+ *
+ * Split out so `editPayment` can reverse the original and post the corrected replacement
+ * inside ONE transaction — see `reverseWithin` for why that matters.
+ */
+export async function postPaymentIn(
+  input: CreatePaymentInInput,
+  ctx: audit.AuditContext,
+  session: ClientSession,
+): Promise<TransactionDoc> {
+  {
     // SEQUENTIAL, NOT Promise.all. A MongoDB ClientSession carries exactly one
     // in-flight operation: issuing two at once against the same session makes the driver
     // advance the transaction number under itself, and the second lands as
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
     const account = await accounts.resolveAccount(input.accountId, session);
-    // Parties are organisation-wide, so there is no home branch to cross. Both ledger
-    // legs are still stamped with the posting branch.
     const party = await accounts.resolveParty(input.partyId, session);
 
     const charge = await charges.resolveCharge(
@@ -138,7 +164,6 @@ export async function createPaymentIn(
       {
         type: "PAYMENT_IN",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
@@ -171,7 +196,7 @@ export async function createPaymentIn(
     );
 
     return txn;
-  }, { label: "paymentIn.create" });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -191,15 +216,25 @@ export async function createPaymentOut(
   input: CreatePaymentOutInput,
   ctx: audit.AuditContext,
 ): Promise<TransactionDoc> {
-  return withTransaction(async (session) => {
+  return withTransaction(
+    (session) => postPaymentOut(input, ctx, session),
+    { label: "paymentOut.create" },
+  );
+}
+
+/** The Payment Out posting, against a session the caller owns. See `postPaymentIn`. */
+export async function postPaymentOut(
+  input: CreatePaymentOutInput,
+  ctx: audit.AuditContext,
+  session: ClientSession,
+): Promise<TransactionDoc> {
+  {
     // SEQUENTIAL, NOT Promise.all. A MongoDB ClientSession carries exactly one
     // in-flight operation: issuing two at once against the same session makes the driver
     // advance the transaction number under itself, and the second lands as
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
     const account = await accounts.resolveAccount(input.accountId, session);
-    // Parties are organisation-wide, so there is no home branch to cross. Both ledger
-    // legs are still stamped with the posting branch.
     const party = await accounts.resolveParty(input.partyId, session);
 
     const charge = await charges.resolveCharge(
@@ -265,7 +300,6 @@ export async function createPaymentOut(
       {
         type: "PAYMENT_OUT",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
@@ -301,7 +335,7 @@ export async function createPaymentOut(
     );
 
     return txn;
-  }, { label: "paymentOut.create" });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -363,7 +397,6 @@ export async function createBankTransfer(
       {
         type: "BANK_TRANSFER",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
@@ -406,3 +439,246 @@ export async function createBankTransfer(
  * `strict: false` is required: the update runs against the base `Transaction` model, whose
  * schema does not declare the discriminator's fields.
  */
+
+/* -------------------------------------------------------------------------- */
+/* Editing a posted payment (§25, §28)                                        */
+/* -------------------------------------------------------------------------- */
+
+/** A posted payment, with the discriminator fields the edit needs to read back. */
+type PostedPayment = TransactionDoc & {
+  accountId?: Types.ObjectId;
+  chargeRuleId?: Types.ObjectId | null;
+};
+
+/**
+ * Change a posted Payment In or Payment Out.
+ *
+ * THE RULE, and the reason this function is shaped the way it is: a posted transaction is
+ * never rewritten. What "edit" means depends on what was edited.
+ *
+ *   A LABEL changed — reference, narration, payment mode, a note. No balance moves, so the
+ *     header is updated in place and the audit row records who changed what.
+ *
+ *   MONEY changed — date, amount, party, account, charge. The original is REVERSED and a
+ *     corrected transaction is posted in its place, both inside one database transaction.
+ *     Three documents end up on the books, all visible, all linked:
+ *
+ *         PAY-IN-000012   the original, now REVERSED, supersededBy the replacement
+ *         REV-000003      the mirror that cancels it
+ *         PAY-IN-000014   the replacement, which supersedes the original
+ *
+ * Why not simply update the amount? Because the balance is the sum of the entries. Editing
+ * ₹50,000 to ₹45,000 in place would move a balance by ₹5,000 with nothing in the ledger to
+ * explain it, and "explain this balance" — the one question this whole system exists to
+ * answer — would have no answer. §62 is explicit that a correction is a posting, not an
+ * overwrite.
+ */
+export async function editPayment(
+  transactionId: string,
+  input: UpdatePaymentInput,
+  ctx: audit.AuditContext,
+): Promise<PaymentEditResult> {
+  return withTransaction(async (session) => {
+    const original = (await Transaction.findById(transactionId).session(
+      session,
+    )) as PostedPayment | null;
+
+    if (!original) throw new NotFoundError("Transaction", transactionId);
+
+    if (original.type !== "PAYMENT_IN" && original.type !== "PAYMENT_OUT") {
+      throw new BadRequestError(
+        `${original.txnNo} is a ${TRANSACTION_TYPE_LABEL[original.type] ?? original.type}. ` +
+          "Only a Payment In or Payment Out can be edited here.",
+      );
+    }
+
+    /**
+     * What may be edited.
+     *
+     * A reversed or superseded transaction is history — editing it would fork the chain
+     * and leave two "current" versions of the same payment. A PENDING one has no entries
+     * yet, so it is not an edit at all; that path is approve-or-reject.
+     */
+    if (original.status === "REVERSED") {
+      throw new StateConflictError(original.status, "EDITED");
+    }
+    if (original.status !== "COMPLETED") {
+      throw new BadRequestError(
+        `${original.txnNo} is ${original.status.toLowerCase()} and has no posted entries to correct.`,
+      );
+    }
+    if (original.reversalOf) {
+      throw new BadRequestError(
+        `${original.txnNo} is a reversal. Edit the transaction it cancels, not the mirror.`,
+      );
+    }
+
+    /* ── What actually changed ────────────────────────────────────────────── */
+
+    const current = {
+      date: original.date,
+      amount: original.grossAmount,
+      partyId: original.partyId ? String(original.partyId) : undefined,
+      accountId: original.accountId ? String(original.accountId) : undefined,
+      chargeRuleId: original.chargeRuleId ? String(original.chargeRuleId) : undefined,
+      /**
+       * A manual charge is not stored as such — only the resulting amount is. So it is
+       * reconstructed: a charge with no rule behind it was entered by hand. Without this
+       * an edit that touched only the reference number would silently drop the charge.
+       */
+      manualCharge:
+        !original.chargeRuleId && original.chargeAmount > 0 ? original.chargeAmount : undefined,
+    };
+
+    const next = {
+      date: input.date ?? current.date,
+      amount: input.amount ?? current.amount,
+      partyId: input.partyId ?? current.partyId,
+      accountId: input.accountId ?? current.accountId,
+      chargeRuleId: input.chargeRuleId ?? current.chargeRuleId,
+      manualCharge: input.manualCharge ?? current.manualCharge,
+    };
+
+    const moneyChanged = PAYMENT_MONEY_FIELDS.some((field) => {
+      const before = current[field];
+      const after = next[field];
+      if (before instanceof Date || after instanceof Date) {
+        return new Date(before as Date).getTime() !== new Date(after as Date).getTime();
+      }
+      return before !== after;
+    });
+
+    /* ── Labels only: update in place ─────────────────────────────────────── */
+
+    if (!moneyChanged) {
+      const before = {
+        paymentMode: original.paymentMode,
+        referenceNo: original.referenceNo,
+        narration: original.narration,
+      };
+
+      if (input.paymentMode !== undefined) original.paymentMode = input.paymentMode;
+      if (input.referenceNo !== undefined) original.referenceNo = input.referenceNo;
+      if (input.narration !== undefined) original.narration = input.narration;
+      if (input.notes) {
+        original.notes.push({
+          text: input.notes,
+          createdBy: new Types.ObjectId(ctx.userId!),
+          createdAt: new Date(),
+        } as never);
+      }
+      original.updatedBy = ctx.userId ? new Types.ObjectId(ctx.userId) : undefined;
+      await original.save({ session });
+
+      await audit.record(
+        ctx,
+        {
+          action: "UPDATE",
+          entity: "Transaction",
+          entityId: String(original._id),
+          entityLabel: original.txnNo,
+          reason: input.reason,
+          oldValue: before,
+          newValue: {
+            paymentMode: original.paymentMode,
+            referenceNo: original.referenceNo,
+            narration: original.narration,
+          },
+        },
+        session,
+      );
+
+      return {
+        outcome: "UPDATED" as const,
+        transaction: { id: String(original._id), txnNo: original.txnNo },
+      };
+    }
+
+    /* ── Money changed: reverse, then repost ──────────────────────────────── */
+
+    if (!next.partyId || !next.accountId) {
+      throw new BadRequestError("A payment needs both a party and an account", "partyId");
+    }
+
+    const { reversal } = await reversal_.reverseWithin(
+      transactionId,
+      { reason: `Edited — ${input.reason}`, date: input.date ?? original.date },
+      ctx,
+      session,
+    );
+
+    const replacementInput = {
+      date: next.date,
+      partyId: next.partyId,
+      accountId: next.accountId,
+      amount: next.amount,
+      paymentMode: input.paymentMode ?? original.paymentMode,
+      referenceNo: input.referenceNo ?? original.referenceNo,
+      narration: input.narration ?? original.narration,
+      chargeRuleId: next.chargeRuleId,
+      manualCharge: next.manualCharge,
+      attachments: [],
+      notes: input.notes,
+    };
+
+    const replacement =
+      original.type === "PAYMENT_IN"
+        ? await postPaymentIn(replacementInput as never, ctx, session)
+        : await postPaymentOut(replacementInput as never, ctx, session);
+
+    // Link the chain both ways, so either document leads to the other.
+    await Transaction.updateOne(
+      { _id: original._id },
+      { $set: { supersededBy: replacement._id, editReason: input.reason } },
+      { session },
+    );
+    await Transaction.updateOne(
+      { _id: replacement._id },
+      { $set: { supersedes: original._id, editReason: input.reason } },
+      { session },
+    );
+
+    /**
+     * A second audit row, distinct from the REVERSE and POST rows the engine already
+     * wrote. Those record the mechanics; this records the intent — that a human corrected
+     * a posted payment, which fields they changed, and why. That is the question an
+     * auditor actually asks, and reconstructing it from three mechanical rows is exactly
+     * the work an audit trail should have already done.
+     */
+    await audit.record(
+      ctx,
+      {
+        action: "BALANCE_ADJUSTED",
+        entity: "Transaction",
+        entityId: String(replacement._id),
+        entityLabel: `${replacement.txnNo} corrects ${original.txnNo}`,
+        amount: next.amount,
+        reason: input.reason,
+        oldValue: {
+          txnNo: original.txnNo,
+          date: current.date,
+          amount: current.amount,
+          partyId: current.partyId,
+          accountId: current.accountId,
+          chargeAmount: original.chargeAmount,
+        },
+        newValue: {
+          txnNo: replacement.txnNo,
+          date: next.date,
+          amount: next.amount,
+          partyId: next.partyId,
+          accountId: next.accountId,
+          chargeAmount: replacement.chargeAmount,
+        },
+      },
+      session,
+    );
+
+    return {
+      outcome: "REPOSTED" as const,
+      transaction: { id: String(replacement._id), txnNo: replacement.txnNo },
+      replaced: { id: String(original._id), txnNo: original.txnNo },
+      reversal: { id: String(reversal._id), txnNo: reversal.txnNo },
+    };
+  }, { label: "payment.edit" });
+}

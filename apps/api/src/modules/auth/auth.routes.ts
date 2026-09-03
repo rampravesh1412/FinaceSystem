@@ -2,10 +2,8 @@ import { Router, type Request } from "express";
 import {
   changePasswordSchema,
   loginSchema,
-  switchBranchSchema,
   type ChangePasswordInput,
   type LoginInput,
-  type SwitchBranchInput,
 } from "@amiri/shared";
 import { asyncHandler, clientIp, ok } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
@@ -103,7 +101,7 @@ authRouter.get(
   asyncHandler(async (req, res) => {
     const { User } = await import("../../models/index.js");
     const user = await User.findById(req.auth!.userId).select(
-      "name email status roleId branchIds defaultBranchId mustChangePassword lastLoginAt avatarUrl",
+      "name email status roleId mustChangePassword lastLoginAt avatarUrl",
     );
     if (!user) throw new UnauthenticatedError("Your account no longer exists");
     return ok(res, await service.buildSessionUser(user));
@@ -126,13 +124,3 @@ authRouter.post(
   }),
 );
 
-authRouter.post(
-  "/switch-branch",
-  requireAuth,
-  validate({ body: switchBranchSchema }),
-  asyncHandler(async (req, res) => {
-    const { branchId } = req.valid.body as SwitchBranchInput;
-    const user = await service.switchBranch(req.auth!.userId, branchId, req.auth!.isSuperAdmin);
-    return ok(res, user);
-  }),
-);

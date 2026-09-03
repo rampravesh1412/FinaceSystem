@@ -10,18 +10,18 @@ import { connectDatabase, disconnectDatabase } from "../config/db.js";
 import { Role, User } from "../models/index.js";
 
 /**
- * A global admin: sees every branch, but only does what you granted.
+ * An administrator whose reach is the whole business but whose capability is only what
+ * you granted.
  *
- * Two things that are easy to conflate are kept apart here, because the whole point of the
- * role is that they are separate:
+ * Two things that are easy to conflate are kept apart here:
  *
- *   • `isUnscoped` decides WHAT THEY SEE. It hands `requireBranchAccess` an empty filter,
- *     so every query spans all branches — including branches created next year.
- *   • the permission list decides WHAT THEY MAY DO. Each one is still checked by
- *     `requirePermission` on the route.
+ *   • `isSuperAdmin` marks the role as a super admin — it may act on any approval tier and
+ *     administer roles and users.
+ *   • the permission list decides WHAT THEY MAY DO day to day. Each one is still checked
+ *     by `requirePermission` on the route.
  *
- * So "an auditor for the whole business" is unscoped + the `.view` permissions, and is a
- * very different account from a SuperAdmin even though both see everything.
+ * So "an auditor for the whole business" is the `.view` permissions and nothing more,
+ * which is a very different account from a SuperAdmin.
  *
  *   npx tsx src/scripts/create-global-admin.ts --email them@example.com --name "Their Name"
  *
@@ -133,9 +133,9 @@ async function main(): Promise<void> {
     {
       $set: {
         label: roleLabel,
-        description: `Sees every branch. ${permissions.length} of ${ALL_PERMISSIONS.length} permissions.`,
+        description: `${permissions.length} of ${ALL_PERMISSIONS.length} permissions.`,
         permissions,
-        isUnscoped: true,
+        isSuperAdmin: true,
         isSystem: false,
       },
     },
@@ -186,10 +186,8 @@ async function main(): Promise<void> {
   const user = existing ?? new User({ email, passwordHash: "placeholder" });
   user.name = name;
   user.roleId = String(role._id) as never;
-  // Deliberately empty. An unscoped role ignores the branch list entirely, and leaving
+  // Deliberately empty. Reach is not granted per-record here, and leaving
   // stale assignments on the record would misrepresent where this user's access comes from.
-  user.branchIds = [] as never;
-  user.defaultBranchId = null;
   user.designation = arg("designation") ?? roleLabel;
   user.status = "ACTIVE";
 
@@ -203,7 +201,7 @@ async function main(): Promise<void> {
   );
 
   await disconnectDatabase();
-  process.stdout.write(`\n  Sign in as ${email} — sees every branch, ${permissions.length} permissions.\n\n`);
+  process.stdout.write(`\n  Sign in as ${email} — ${permissions.length} permissions.\n\n`);
 }
 
 main().catch(async (err: unknown) => {

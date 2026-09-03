@@ -64,7 +64,6 @@ describe("every create route answers in its list's shape", () => {
   const cases: Case[] = [];
 
   beforeAll(async () => {
-    const branchId = fx.branches["105"]!;
 
     const bank = await client.post<{ data: { id: string } }>(
       "/banks",
@@ -83,7 +82,6 @@ describe("every create route answers in its list's shape", () => {
             "/parties",
             {
               name: "Contract Test Party",
-              branchId,
               type: "CUSTOMER",
               openingBalance: "1,25,101",
               openingDate: "2026-04-01",
@@ -99,7 +97,6 @@ describe("every create route answers in its list's shape", () => {
             "/bank-accounts",
             {
               bankId,
-              branchId,
               accountName: "Contract Test Current",
               accountNumber: "50100000000001",
               ifsc: "CTBK0001234",
@@ -114,13 +111,13 @@ describe("every create route answers in its list's shape", () => {
         create: () =>
           client.post(
             "/cash-accounts",
-            { branchId, name: "Contract Test Drawer", openingBalance: "10,000" },
+            { name: "Contract Test Drawer", openingBalance: "10,000" },
             { token },
           ) as never,
       },
       {
         name: "POST /users",
-        require: ["id", "name", "email", "role", "branches", "status"],
+        require: ["id", "name", "email", "role", "status"],
         create: () =>
           client.post(
             "/users",
@@ -129,18 +126,17 @@ describe("every create route answers in its list's shape", () => {
               email: "contract@test.co",
               password: "Contract@2026",
               roleId: fx.roles.ACCOUNTANT,
-              branchIds: [branchId],
             },
             { token },
           ) as never,
       },
       {
         name: "POST /savings",
-        require: ["id", "accountNo", "memberName", "balance", "branch", "ledgerAccountId"],
+        require: ["id", "accountNo", "memberName", "balance", "ledgerAccountId"],
         create: () =>
           client.post(
             "/savings",
-            { memberName: "Contract Test Member", branchId, openingBalance: "5,000" },
+            { memberName: "Contract Test Member", openingBalance: "5,000" },
             { token },
           ) as never,
       },

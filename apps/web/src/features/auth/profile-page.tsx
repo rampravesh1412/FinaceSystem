@@ -62,20 +62,6 @@ export function ProfilePage() {
           <Row label="Name" value={user.name} />
           <Row label="Email" value={user.email} />
           <Row label="Role" value={<Badge variant="accent">{user.role.label}</Badge>} />
-          <Row
-            label="Branch access"
-            value={
-              user.isSuperAdmin ? (
-                <Badge variant="info">Every branch</Badge>
-              ) : (
-                <span className="flex flex-wrap gap-1">
-                  {user.branches.map((b) => (
-                    <Badge key={b.id} className="font-mono">{b.code}</Badge>
-                  ))}
-                </span>
-              )
-            }
-          />
           <Row label="Last sign-in" value={formatDateTime(user.lastLoginAt)} />
           <Row
             label="Permissions"

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Types } from "mongoose";
 import { formatINR } from "@amiri/shared";
 import { withTransaction } from "../lib/unitOfWork.js";
-import { Branch, LedgerAccount, LedgerEntry, Transaction, User } from "../models/index.js";
+import { LedgerAccount, LedgerEntry, Transaction, User } from "../models/index.js";
 import { clearFixtures, seedFixtures, type Fixtures } from "../test/helpers.js";
 import * as ledger from "./ledger.service.js";
 
@@ -16,7 +16,6 @@ import * as ledger from "./ledger.service.js";
  */
 
 let fx: Fixtures;
-let branchId: string;
 let userId: string;
 
 /** Convenience: make a ledger account of a given kind for the test branch. */
@@ -32,7 +31,6 @@ async function makeAccount(
         code,
         name,
         kind,
-        branchId,
         enforceBalance: options.enforceBalance ?? false,
         overdraftLimit: options.overdraftLimit ?? 0,
         createdBy: userId,
@@ -83,7 +81,6 @@ async function balanceOf(id: string): Promise<number> {
 beforeAll(async () => {
   await clearFixtures();
   fx = await seedFixtures();
-  branchId = fx.branches["105"]!;
   userId = fx.users.superAdmin!.id;
   await ledger.ensureSystemAccounts();
 });
@@ -161,7 +158,6 @@ describe("double-entry invariant", () => {
           {
             type: "BANK_TRANSFER",
             date: new Date("2026-08-19"),
-            branchId,
             // Deliberately unbalanced.
             lines: [
               { ledgerAccountId: bankA, direction: "DEBIT", amount: 100_000 },
@@ -193,7 +189,7 @@ describe("bank to bank transfer — the §59 headline case", () => {
     // Fund A so the transfer is affordable.
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: bankA, branchId, amount: 500_000_00, date: new Date("2026-04-01"), label: "HDFC", createdBy: userId },
+        { ledgerAccountId: bankA, amount: 500_000_00, date: new Date("2026-04-01"), label: "HDFC", createdBy: userId },
         session,
       ),
     );
@@ -208,7 +204,6 @@ describe("bank to bank transfer — the §59 headline case", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: bankB, direction: "DEBIT", amount },
             { ledgerAccountId: bankA, direction: "CREDIT", amount },
@@ -249,7 +244,6 @@ describe("bank to bank transfer — the §59 headline case", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: bankB, direction: "DEBIT", amount: gross },
             { ledgerAccountId: charges, direction: "DEBIT", amount: charge },
@@ -281,7 +275,7 @@ describe("bank to bank transfer — the §59 headline case", () => {
 
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: bankA, branchId, amount: 10_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
+        { ledgerAccountId: bankA, amount: 10_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
         session,
       ),
     );
@@ -292,7 +286,6 @@ describe("bank to bank transfer — the §59 headline case", () => {
           {
             type: "BANK_TRANSFER",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: bankB, direction: "DEBIT", amount: 50_000_00 },
               { ledgerAccountId: bankA, direction: "CREDIT", amount: 50_000_00 },
@@ -323,7 +316,6 @@ describe("bank to bank transfer — the §59 headline case", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: dest, direction: "DEBIT", amount: 80_000_00 },
             { ledgerAccountId: od, direction: "CREDIT", amount: 80_000_00 },
@@ -345,7 +337,6 @@ describe("bank to bank transfer — the §59 headline case", () => {
           {
             type: "BANK_TRANSFER",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: dest, direction: "DEBIT", amount: 50_000_00 },
               { ledgerAccountId: od, direction: "CREDIT", amount: 50_000_00 },
@@ -370,7 +361,7 @@ describe("opening balances", () => {
 
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: bank, branchId, amount: 500_000_00, date: new Date("2026-04-01"), label: "Opening Bank", createdBy: userId },
+        { ledgerAccountId: bank, amount: 500_000_00, date: new Date("2026-04-01"), label: "Opening Bank", createdBy: userId },
         session,
       ),
     );
@@ -390,7 +381,7 @@ describe("opening balances", () => {
 
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: party, branchId, amount: -25_000_00, date: new Date("2026-04-01"), label: "Vendor", createdBy: userId },
+        { ledgerAccountId: party, amount: -25_000_00, date: new Date("2026-04-01"), label: "Vendor", createdBy: userId },
         session,
       ),
     );
@@ -404,7 +395,7 @@ describe("opening balances", () => {
 
     const result = await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: account, branchId, amount: 0, date: new Date("2026-04-01"), label: "Zero", createdBy: userId },
+        { ledgerAccountId: account, amount: 0, date: new Date("2026-04-01"), label: "Zero", createdBy: userId },
         session,
       ),
     );
@@ -426,7 +417,7 @@ describe("party balance direction — the Khata convention", () => {
     // They owe us ₹1,00,000 to begin with — LENA HAI.
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: party, branchId, amount: 100_000_00, date: new Date("2026-04-01"), label: "Ramanuj", createdBy: userId },
+        { ledgerAccountId: party, amount: 100_000_00, date: new Date("2026-04-01"), label: "Ramanuj", createdBy: userId },
         session,
       ),
     );
@@ -438,7 +429,6 @@ describe("party balance direction — the Khata convention", () => {
         {
           type: "PAYMENT_IN",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: bank, direction: "DEBIT", amount: 60_000_00 },
             { ledgerAccountId: party, direction: "CREDIT", amount: 60_000_00 },
@@ -460,7 +450,6 @@ describe("party balance direction — the Khata convention", () => {
         {
           type: "PAYMENT_OUT",
           date: new Date("2026-08-20"),
-          branchId,
           lines: [
             { ledgerAccountId: party, direction: "DEBIT", amount: 40_000_00 },
             { ledgerAccountId: bank, direction: "CREDIT", amount: 40_000_00 },
@@ -491,7 +480,6 @@ describe("immutability", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: b, direction: "DEBIT", amount: 1_000_00 },
             { ledgerAccountId: a, direction: "CREDIT", amount: 1_000_00 },
@@ -519,7 +507,6 @@ describe("immutability", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: b, direction: "DEBIT", amount: 1_000_00 },
             { ledgerAccountId: a, direction: "CREDIT", amount: 1_000_00 },
@@ -545,7 +532,6 @@ describe("immutability", () => {
         {
           type: "BANK_TRANSFER",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: b, direction: "DEBIT", amount: 1_000_00 },
             { ledgerAccountId: a, direction: "CREDIT", amount: 1_000_00 },
@@ -573,7 +559,7 @@ describe("integrity and reporting", () => {
 
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: account, branchId, amount: 50_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
+        { ledgerAccountId: account, amount: 50_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
         session,
       ),
     );
@@ -601,15 +587,15 @@ describe("integrity and reporting", () => {
 
     await withTransaction(async (session) => {
       await ledger.postOpeningBalance(
-        { ledgerAccountId: bank, branchId, amount: 500_000_00, date: new Date("2026-04-01"), label: "Bank", createdBy: userId },
+        { ledgerAccountId: bank, amount: 500_000_00, date: new Date("2026-04-01"), label: "Bank", createdBy: userId },
         session,
       );
       await ledger.postOpeningBalance(
-        { ledgerAccountId: cash, branchId, amount: 25_000_00, date: new Date("2026-04-01"), label: "Cash", createdBy: userId },
+        { ledgerAccountId: cash, amount: 25_000_00, date: new Date("2026-04-01"), label: "Cash", createdBy: userId },
         session,
       );
       await ledger.postOpeningBalance(
-        { ledgerAccountId: party, branchId, amount: 100_000_00, date: new Date("2026-04-01"), label: "Party", createdBy: userId },
+        { ledgerAccountId: party, amount: 100_000_00, date: new Date("2026-04-01"), label: "Party", createdBy: userId },
         session,
       );
     });
@@ -619,7 +605,6 @@ describe("integrity and reporting", () => {
         {
           type: "PAYMENT_IN",
           date: new Date("2026-08-19"),
-          branchId,
           lines: [
             { ledgerAccountId: bank, direction: "DEBIT", amount: 40_000_00 },
             { ledgerAccountId: party, direction: "CREDIT", amount: 40_000_00 },
@@ -632,7 +617,7 @@ describe("integrity and reporting", () => {
       ),
     );
 
-    const tb = await ledger.trialBalance({ branchId });
+    const tb = await ledger.trialBalance();
 
     // The whole point of a trial balance. Any other result means the engine is broken.
     expect(tb.totalDebit).toBe(tb.totalCredit);
@@ -650,7 +635,6 @@ describe("integrity and reporting", () => {
           {
             type: "PAYMENT_IN",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: a, direction: "DEBIT", amount: 1_000_00 },
               { ledgerAccountId: b, direction: "CREDIT", amount: 1_000_00 },
@@ -689,7 +673,6 @@ describe("integrity and reporting", () => {
           {
             type: "EXPENSE",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: a, direction: "DEBIT", amount },
               { ledgerAccountId: b, direction: "CREDIT", amount: creditAmount },
@@ -725,7 +708,6 @@ describe("integrity and reporting", () => {
           {
             type: "PAYMENT_IN",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: account, direction: "DEBIT", amount },
               { ledgerAccountId: other, direction: "CREDIT", amount },
@@ -759,7 +741,6 @@ describe("posting guards", () => {
           {
             type: "PAYMENT_IN",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: b, direction: "DEBIT", amount: 1_000_00 },
               { ledgerAccountId: a, direction: "CREDIT", amount: 1_000_00 },
@@ -782,7 +763,7 @@ describe("posting guards", () => {
 
     await withTransaction((session) =>
       ledger.postOpeningBalance(
-        { ledgerAccountId: account, branchId, amount: 10_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
+        { ledgerAccountId: account, amount: 10_000_00, date: new Date("2026-04-01"), label: "x", createdBy: userId },
         session,
       ),
     );
@@ -793,7 +774,6 @@ describe("posting guards", () => {
           {
             type: "ADJUSTMENT",
             date: new Date("2026-08-19"),
-            branchId,
             lines: [
               { ledgerAccountId: account, direction: "CREDIT", amount: 50_000_00 },
               { ledgerAccountId: account, direction: "DEBIT", amount: 45_000_00 },
@@ -817,8 +797,7 @@ describe("posting guards", () => {
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 describe("fixtures remain intact", () => {
-  it("keeps the seeded branch and user available to other suites", async () => {
-    expect(await Branch.countDocuments({})).toBeGreaterThan(0);
+  it("keeps the seeded users available to other suites", async () => {
     expect(await User.countDocuments({})).toBeGreaterThan(0);
   });
 });

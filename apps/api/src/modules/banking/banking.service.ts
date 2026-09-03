@@ -170,7 +170,6 @@ export async function createBankAccount(
           name: `${label} — ${input.accountName}`,
           kind: "BANK",
           // Organisation-wide. The branch lives on the entries, not on the account.
-          branchId: null,
           refKind: "BankAccount",
           overdraftLimit: input.overdraftLimit,
           // A bank account cannot be taken below its sanctioned overdraft. For a plain
@@ -234,7 +233,6 @@ export async function createBankAccount(
       await ledger.postOpeningBalance(
         {
           ledgerAccountId: ledgerAccount._id,
-          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
           label,
@@ -558,7 +556,6 @@ export async function createCashAccount(
           name: `Cash — ${input.name}`,
           kind: "CASH",
           // Organisation-wide. The branch lives on the entries, not on the account.
-          branchId: null,
           refKind: "CashAccount",
           overdraftLimit: 0,
           // Hard zero floor. You cannot hand over notes that are not in the drawer, so
@@ -604,7 +601,6 @@ export async function createCashAccount(
       await ledger.postOpeningBalance(
         {
           ledgerAccountId: ledgerAccount._id,
-          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
           label: `Cash — ${input.name}`,

@@ -210,7 +210,7 @@ MONGODB_DB_NAME=amiri_finance
 JWT_ACCESS_SECRET=$(gen_secret)
 JWT_REFRESH_SECRET=$(gen_secret)
 JWT_ACCESS_TTL=15m
-JWT_REFRESH_TTL_DAYS=7
+JWT_REFRESH_TTL_HOURS=6
 
 # Same-origin deployment: the browser only ever sees https://$DOMAIN, and nginx proxies
 # /api to this process. The allowlist still matters for anything calling from elsewhere.

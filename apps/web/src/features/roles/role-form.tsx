@@ -75,7 +75,7 @@ export function RoleRowActions({ role }: { role: RoleSummary }) {
   if (!can("roles.manage")) return null;
 
   // The super admin role is immutable in both directions — see the note above.
-  const locked = role.isSystem && role.isUnscoped;
+  const locked = role.isSystem && role.isSuperAdmin;
 
   return (
     <>
@@ -135,7 +135,7 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
   const [permissions, setPermissions] = React.useState<Permission[]>(
     (role?.permissions ?? []) as Permission[],
   );
-  const [isUnscoped, setIsUnscoped] = React.useState(role?.isUnscoped ?? false);
+  const [isSuperAdmin, setIsUnscoped] = React.useState(role?.isSuperAdmin ?? false);
 
   const groups = React.useMemo(() => groupPermissions(), []);
 
@@ -146,7 +146,7 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
       label: role?.label ?? "",
       description: role?.description ?? "",
       permissions: (role?.permissions ?? []) as never,
-      isUnscoped: role?.isUnscoped ?? false,
+      isSuperAdmin: role?.isSuperAdmin ?? false,
     } as never,
   });
 
@@ -157,9 +157,9 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
             label: values.label,
             description: values.description,
             permissions,
-            ...(user?.isSuperAdmin ? { isUnscoped } : {}),
+            ...(user?.isSuperAdmin ? { isSuperAdmin } : {}),
           })
-        : api.post<RoleSummary>("/roles", { ...values, permissions, isUnscoped }),
+        : api.post<RoleSummary>("/roles", { ...values, permissions, isSuperAdmin }),
     onSuccess: async () => {
       toast.success(editing ? `${role!.label} updated` : "Role created", {
         description:
@@ -246,7 +246,7 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
             </div>
             <Switch
               id="unscoped"
-              checked={isUnscoped}
+              checked={isSuperAdmin}
               onCheckedChange={setIsUnscoped}
               disabled={!user?.isSuperAdmin}
             />

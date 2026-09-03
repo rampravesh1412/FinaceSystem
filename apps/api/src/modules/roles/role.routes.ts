@@ -58,7 +58,7 @@ roleRouter.get(
         label: r.label,
         description: r.description,
         permissions: r.permissions,
-        isUnscoped: r.isUnscoped,
+        isSuperAdmin: r.isSuperAdmin,
         isSystem: r.isSystem,
         userCount: byRole.get(String(r._id)) ?? 0,
       })),
@@ -78,11 +78,11 @@ roleRouter.post(
      * Only an unscoped user may create an unscoped role.
      *
      * Without this check, anyone holding `roles.manage` could create a role with
-     * `isUnscoped: true`, assign it to themselves, and become a SuperAdmin. This is the
+     * `isSuperAdmin: true`, assign it to themselves, and become a SuperAdmin. This is the
      * single most important escalation guard in the system.
      */
-    if (input.isUnscoped && !req.auth!.isSuperAdmin) {
-      throw new ForbiddenError("Only a super admin can create a role with access to every branch");
+    if (input.isSuperAdmin && !req.auth!.isSuperAdmin) {
+      throw new ForbiddenError("Only a super admin can create another super-admin role");
     }
 
     try {
@@ -93,7 +93,7 @@ roleRouter.post(
         entity: "Role",
         entityId: String(role._id),
         entityLabel: role.name,
-        newValue: { name: role.name, permissions: role.permissions, isUnscoped: role.isUnscoped },
+        newValue: { name: role.name, permissions: role.permissions, isSuperAdmin: role.isSuperAdmin },
       });
 
       return created(res, role, `Role ${role.label} created`);
@@ -114,8 +114,8 @@ roleRouter.patch(
     const { id } = req.valid.params as z.infer<typeof idParam>;
     const input = req.valid.body as UpdateRoleInput;
 
-    if (input.isUnscoped !== undefined && !req.auth!.isSuperAdmin) {
-      throw new ForbiddenError("Only a super admin can change branch-wide access on a role");
+    if (input.isSuperAdmin !== undefined && !req.auth!.isSuperAdmin) {
+      throw new ForbiddenError("Only a super admin can grant or revoke super-admin access");
     }
 
     const role = await withTransaction(async (session) => {
@@ -128,13 +128,13 @@ roleRouter.patch(
        * Removing `roles.manage` from it — by accident or malice — would leave the system
        * with nobody able to grant it back, requiring direct database surgery to recover.
        */
-      if (doc.isSystem && doc.isUnscoped && input.permissions) {
+      if (doc.isSystem && doc.isSuperAdmin && input.permissions) {
         throw new ConflictError(
           "The super admin role's permissions cannot be edited — it must retain full access",
         );
       }
 
-      const before = { permissions: doc.permissions, label: doc.label, isUnscoped: doc.isUnscoped };
+      const before = { permissions: doc.permissions, label: doc.label, isSuperAdmin: doc.isSuperAdmin };
       Object.assign(doc, input, { updatedBy: req.auth!.userId });
       await doc.save({ session });
 
@@ -146,7 +146,7 @@ roleRouter.patch(
           entityId: id,
           entityLabel: doc.name,
           oldValue: before,
-          newValue: { permissions: doc.permissions, label: doc.label, isUnscoped: doc.isUnscoped },
+          newValue: { permissions: doc.permissions, label: doc.label, isSuperAdmin: doc.isSuperAdmin },
         },
         session,
       );
@@ -156,7 +156,7 @@ roleRouter.patch(
 
     // Everyone holding this role is signed out, so nobody keeps working with a stale
     // permission set cached in a live session.
-    if (input.permissions || input.isUnscoped !== undefined) {
+    if (input.permissions || input.isSuperAdmin !== undefined) {
       const holders = await User.find({ roleId: id }).select("_id").lean();
       await Promise.all(holders.map((u) => revokeAllSessions(String(u._id), "ROLE_PERMISSIONS_CHANGED")));
     }

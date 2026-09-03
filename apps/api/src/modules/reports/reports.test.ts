@@ -22,7 +22,6 @@ let app: Express;
 let client: TestClient;
 let fx: Fixtures;
 let token: string;
-let branchId: string;
 let hdfcId: string;
 let cashId: string;
 let cashAccountId: string;
@@ -39,7 +38,6 @@ beforeAll(async () => {
   client = new TestClient();
   await client.start(app);
   token = await client.loginAs("super@test.co");
-  branchId = fx.branches["105"]!;
 
   const bank = await client.post<{ data: { id: string } }>(
     "/banks",
@@ -49,7 +47,7 @@ beforeAll(async () => {
   const acc = await client.post<{ data: { id: string } }>(
     "/bank-accounts",
     {
-      bankId: bank.body.data.id, branchId, accountName: "HDFC Current",
+      bankId: bank.body.data.id, accountName: "HDFC Current",
       accountNumber: "50100234567890", ifsc: "HDFC0001234",
       openingBalance: "10,00,000", openingDate: "2026-04-01",
     },
@@ -59,7 +57,7 @@ beforeAll(async () => {
 
   const cash = await client.post<{ data: { id: string } }>(
     "/cash-accounts",
-    { branchId, name: "Main Counter", openingBalance: "1,00,000", openingDate: "2026-04-01" },
+    { name: "Main Counter", openingBalance: "1,00,000", openingDate: "2026-04-01" },
     { token },
   );
   cashId = cash.body.data.id;
@@ -68,7 +66,7 @@ beforeAll(async () => {
   const party = await client.post<{ data: { id: string } }>(
     "/parties",
     {
-      name: "Sharma Traders", branchId, type: "CUSTOMER",
+      name: "Sharma Traders", type: "CUSTOMER",
       openingBalance: "5,00,000", openingDate: "2026-04-01", creditDays: 30,
     },
     { token },
@@ -106,13 +104,13 @@ describe("cash flow is not profit (§21)", () => {
      */
     await client.post(
       "/payment-in",
-      { date: day, branchId, partyId, accountId: hdfcId, amount: "4,00,000", paymentMode: "NEFT" },
+      { date: day, partyId, accountId: hdfcId, amount: "4,00,000", paymentMode: "NEFT" },
       { token },
     );
 
     const pnl = await client.get<{
       data: { totalIncome: number; totalExpenses: number; netProfit: number; cashMovement: number };
-    }>(`/reports/profit-loss?from=${day}&to=${day}&branchId=${branchId}`, { token });
+    }>(`/reports/profit-loss?from=${day}&to=${day}`, { token });
 
     expect(pnl.status).toBe(200);
     // No income was earned.
@@ -129,18 +127,18 @@ describe("cash flow is not profit (§21)", () => {
     // cash movement is nil.
     await client.post(
       "/expenses",
-      { date: day, branchId, categoryId: salaryHeadId, partyId, amount: "20,000", taxAmount: "0" },
+      { date: day, categoryId: salaryHeadId, partyId, amount: "20,000", taxAmount: "0" },
       { token },
     );
     await client.post(
       "/income",
-      { date: day, branchId, headId: commissionHeadId, accountId: hdfcId, amount: "1,50,000", paymentMode: "UPI" },
+      { date: day, headId: commissionHeadId, accountId: hdfcId, amount: "1,50,000", paymentMode: "UPI" },
       { token },
     );
 
     const pnl = await client.get<{
       data: { totalIncome: number; totalExpenses: number; netProfit: number; cashMovement: number; margin: number };
-    }>(`/reports/profit-loss?from=${day}&to=${day}&branchId=${branchId}`, { token });
+    }>(`/reports/profit-loss?from=${day}&to=${day}`, { token });
 
     expect(pnl.body.data.totalIncome).toBe(150_000_00);
     expect(pnl.body.data.totalExpenses).toBe(20_000_00);
@@ -154,7 +152,7 @@ describe("cash flow is not profit (§21)", () => {
 
   it("expresses margin as a share of income", async () => {
     const pnl = await client.get<{ data: { margin: number; netProfit: number; totalIncome: number } }>(
-      `/reports/profit-loss?from=2026-08-20&to=2026-08-20&branchId=${branchId}`,
+      `/reports/profit-loss?from=2026-08-20&to=2026-08-20`,
       { token },
     );
     const { margin, netProfit, totalIncome } = pnl.body.data;
@@ -166,14 +164,14 @@ describe("cash flow is not profit (§21)", () => {
     await client.post(
       "/bank-transfers",
       {
-        date: day, branchId, sourceAccountId: hdfcId, destinationAccountId: cashId,
+        date: day, sourceAccountId: hdfcId, destinationAccountId: cashId,
         amount: "50,000", manualCharge: "50",
       },
       { token },
     );
 
     const pnl = await client.get<{ data: { totalExpenses: number; totalCharges: number } }>(
-      `/reports/profit-loss?from=${day}&to=${day}&branchId=${branchId}`,
+      `/reports/profit-loss?from=${day}&to=${day}`,
       { token },
     );
 
@@ -222,7 +220,7 @@ describe("balance sheet (§34)", () => {
   it("puts a party we owe on the liability side", async () => {
     const vendor = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Vendor We Owe", branchId, type: "VENDOR", openingBalance: "-75,000", openingDate: "2026-04-01" },
+      { name: "Vendor We Owe", type: "VENDOR", openingBalance: "-75,000", openingDate: "2026-04-01" },
       { token },
     );
     expect(vendor.status).toBe(201);
@@ -249,7 +247,7 @@ describe("cash flow report", () => {
         openingBalance: number; totalIn: number; totalOut: number; closingBalance: number;
         rows: Array<{ date: string; openingBalance: number; closingBalance: number; moneyIn: number; moneyOut: number }>;
       };
-    }>(`/reports/cash-flow?from=2026-08-19&to=2026-08-21&branchId=${branchId}`, { token });
+    }>(`/reports/cash-flow?from=2026-08-19&to=2026-08-21`, { token });
 
     expect(res.status).toBe(200);
     expect(res.body.data.rows.length).toBeGreaterThan(0);
@@ -309,7 +307,7 @@ describe("daily cash tally (§20, §62)", () => {
     }>(
       "/cash-tally",
       {
-        date: day, branchId, cashAccountId,
+        date: day, cashAccountId,
         actualClosing: String((expected - 20_000_00) / 100),
         notes: "Counted twice; ₹20,000 unaccounted for",
       },
@@ -344,7 +342,7 @@ describe("daily cash tally (§20, §62)", () => {
     const res = await client.post<{ data: { status: string; difference: number } }>(
       "/cash-tally",
       {
-        date: "2026-08-22", branchId, cashAccountId,
+        date: "2026-08-22", cashAccountId,
         actualClosing: String((t.body.data.expectedClosing + 500_00) / 100),
         notes: "Extra ₹500 in the drawer, source unknown",
       },
@@ -364,7 +362,7 @@ describe("daily cash tally (§20, §62)", () => {
     const res = await client.post<{ data: { status: string; difference: number }; message: string }>(
       "/cash-tally",
       {
-        date: "2026-08-23", branchId, cashAccountId,
+        date: "2026-08-23", cashAccountId,
         actualClosing: String(t.body.data.expectedClosing / 100),
       },
       { token },
@@ -425,9 +423,6 @@ describe("dashboard (§31, §32, §33)", () => {
     expect(m.todayProfit).toBe(m.todayIncome - m.todayExpenses);
     expect(m.totalBalance).toBe(m.cashBalance + m.bankBalance);
 
-    // A super admin sees the organisation and the branch comparison.
-    expect(res.body.data.scope).toBe("ORGANISATION");
-    expect(res.body.data.branches.length).toBeGreaterThan(0);
   });
 
   it("fills quiet days in the trend so the axis stays even", async () => {
@@ -445,26 +440,25 @@ describe("dashboard (§31, §32, §33)", () => {
     }
   });
 
-  it("gives a scoped user their own branch and NO branch comparison (§32)", async () => {
+  /**
+   * One set of books, so one dashboard.
+   *
+   * This replaces a pair of cases that asserted a scoped user saw only their own branch.
+   * There is no scoping dimension left — what still holds, and is worth holding, is that
+   * every caller who may read the dashboard reads the SAME figures.
+   */
+  it("shows every caller the same organisation-wide figures", async () => {
     const accountant = await client.loginAs("acct@test.co");
-    const res = await client.get<{
-      data: { scope: string; branch: { code: string } | null; branches: unknown[] };
-    }>("/dashboard", { token: accountant });
+    const scoped = await client.get<{ data: { metrics: Record<string, number> } }>("/dashboard", {
+      token: accountant,
+    });
+    const superAdmin = await client.get<{ data: { metrics: Record<string, number> } }>("/dashboard", {
+      token,
+    });
 
-    expect(res.status).toBe(200);
-    expect(res.body.data.scope).toBe("BRANCH");
-    expect(res.body.data.branch?.code).toBe("105");
-    // Showing another branch's performance to a scoped user is exactly the leak §3 forbids.
-    expect(res.body.data.branches).toHaveLength(0);
-  });
-
-  it("refuses a scoped user's request for another branch's dashboard", async () => {
-    const accountant = await client.loginAs("acct@test.co");
-    const res = await client.get<{ error: { code: string } }>(
-      `/dashboard?branchId=${fx.branches["107"]}`,
-      { token: accountant },
-    );
-    expect(res.status).toBe(403);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.data.metrics.cashBalance).toBe(superAdmin.body.data.metrics.cashBalance);
+    expect(scoped.body.data.metrics.receivable).toBe(superAdmin.body.data.metrics.receivable);
   });
 });
 
@@ -495,22 +489,13 @@ describe("monthly history", () => {
 
   async function history() {
     const res = await client.get<{ data: MonthlyHistory }>(
-      `/reports/monthly-history?${RANGE}&branchId=${branchId}`,
-      { token },
-    );
-    expect(res.status).toBe(200);
-    return res.body.data;
-  }
-
-  /** The same report with no branch — the organisation's own books. */
-  async function organisationHistory() {
-    const res = await client.get<{ data: MonthlyHistory }>(
       `/reports/monthly-history?${RANGE}`,
       { token },
     );
     expect(res.status).toBe(200);
     return res.body.data;
   }
+
 
   it("returns every month in the range, including ones with no trading at all", async () => {
     const data = await history();
@@ -543,7 +528,7 @@ describe("monthly history", () => {
 
     const pnl = await client.get<{
       data: { totalIncome: number; totalExpenses: number; netProfit: number; totalCharges: number };
-    }>(`/reports/profit-loss?from=2026-08-01&to=2026-08-31&branchId=${branchId}`, { token });
+    }>(`/reports/profit-loss?from=2026-08-01&to=2026-08-31`, { token });
 
     expect(august.income).toBe(pnl.body.data.totalIncome);
     expect(august.expenses).toBe(pnl.body.data.totalExpenses);
@@ -565,7 +550,8 @@ describe("monthly history", () => {
    * mislabelled as a balance, which is the bug this assertion exists to catch.
    */
   it("carries the party balance forward month to month", async () => {
-    for (const data of [await history(), await organisationHistory()]) {
+    {
+      const data = await history();
       for (let i = 1; i < data.months.length; i += 1) {
         const previous = data.months[i - 1]!;
         const current = data.months[i]!;
@@ -576,24 +562,10 @@ describe("monthly history", () => {
     }
   });
 
-  /**
-   * A party's opening balance is an ORGANISATION-level posting.
-   *
-   * Parties are organisation-wide, so what they owed on day one is not something any one
-   * office traded — the posting carries no branch, and both its legs are excluded together
-   * from a branch-filtered report, which is why that report still ties. The organisation's
-   * own history is where the opening position shows up.
-   *
-   * This is the visible consequence of the shared master, so it is asserted rather than
-   * left to be discovered in a report somebody does not trust.
-   */
-  it("shows the party opening balance on the organisation's books, not a branch's", async () => {
-    const organisation = await organisationHistory();
+  it("carries the party opening balance into the first month", async () => {
+    const data = await history();
     // The opening balances were posted on 2026-04-01, so April already carries them.
-    expect(organisation.months[0]!.partyClosing).not.toBe(0);
-
-    const branch = await history();
-    expect(branch.months[0]!.partyClosing).toBe(0);
+    expect(data.months[0]!.partyClosing).not.toBe(0);
   });
 
   it("ranks the best and worst months only among those that traded", async () => {

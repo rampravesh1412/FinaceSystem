@@ -22,15 +22,17 @@ import {
   type CreatePaymentInInput,
   type CreatePaymentOutInput,
   type TransactionQuery,
+  updateAccountHeadSchema,
+  updatePaymentSchema,
+  type PaymentEditResult,
+  type UpdateAccountHeadInput,
+  type UpdatePaymentInput,
 } from "@amiri/shared";
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
 import {
-  assertBranchInScope,
   requireAuth,
-  requireBranchAccess,
   requirePermission,
-  scopeOf,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
@@ -57,6 +59,16 @@ for (const r of [
 }
 
 const idParam = z.object({ id: objectId });
+
+/** What the toast says after an edit — the two outcomes are genuinely different events. */
+function editMessage(result: PaymentEditResult): string {
+  return result.outcome === "UPDATED"
+    ? `${result.transaction.txnNo} updated`
+    : `${result.replaced!.txnNo} reversed and reposted as ${result.transaction.txnNo}`;
+}
+
+const headMessage = (name: string, status: string) =>
+  status === "ACTIVE" ? `${name} is active` : `${name} retired`;
 const SORTABLE = ["date", "txnNo", "grossAmount", "netAmount", "createdAt", "status"];
 
 /**
@@ -83,7 +95,6 @@ function listHandler(type?: Parameters<typeof listing.list>[0]["type"]) {
         to: query.to,
         minAmount: query.minAmount,
         maxAmount: query.maxAmount,
-        scopeFilter: scopeOf(req),
       },
       page,
     );
@@ -97,7 +108,6 @@ function listHandler(type?: Parameters<typeof listing.list>[0]["type"]) {
 paymentInRouter.get(
   "/",
   requirePermission("finance.payment.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler("PAYMENT_IN"),
 );
@@ -105,15 +115,35 @@ paymentInRouter.get(
 paymentInRouter.post(
   "/",
   requirePermission("finance.payment.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createPaymentInSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreatePaymentInInput;
-    // The branch arrives in the body, so this is the write-path scope check.
-    assertBranchInScope(req, input.branchId);
     const txn = await payments.createPaymentIn(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
+  }),
+);
+
+/**
+ * Edit a posted Payment In.
+ *
+ * Guarded by `finance.payment.reverse`, not `.edit`: when the money changes this reverses
+ * and reposts, and anyone who can do that through this route could do it through the
+ * reversal route anyway. Gating it lower would be a way around the stricter permission.
+ */
+paymentInRouter.patch(
+  "/:id",
+  requirePermission("finance.payment.reverse"),
+  mutationLimiter,
+  validate({ params: idParam, body: updatePaymentSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const result = await payments.editPayment(
+      id,
+      req.valid.body as UpdatePaymentInput,
+      auditContextFrom(req),
+    );
+    return ok(res, result, editMessage(result));
   }),
 );
 
@@ -122,7 +152,6 @@ paymentInRouter.post(
 paymentOutRouter.get(
   "/",
   requirePermission("finance.payment.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler("PAYMENT_OUT"),
 );
@@ -130,14 +159,29 @@ paymentOutRouter.get(
 paymentOutRouter.post(
   "/",
   requirePermission("finance.payment.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createPaymentOutSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreatePaymentOutInput;
-    assertBranchInScope(req, input.branchId);
     const txn = await payments.createPaymentOut(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
+  }),
+);
+
+/** Edit a posted Payment Out. See the Payment In route above. */
+paymentOutRouter.patch(
+  "/:id",
+  requirePermission("finance.payment.reverse"),
+  mutationLimiter,
+  validate({ params: idParam, body: updatePaymentSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const result = await payments.editPayment(
+      id,
+      req.valid.body as UpdatePaymentInput,
+      auditContextFrom(req),
+    );
+    return ok(res, result, editMessage(result));
   }),
 );
 
@@ -146,7 +190,6 @@ paymentOutRouter.post(
 transferRouter.get(
   "/",
   requirePermission("finance.bank.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler("BANK_TRANSFER"),
 );
@@ -154,12 +197,10 @@ transferRouter.get(
 transferRouter.post(
   "/",
   requirePermission("finance.bank.transfer"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createBankTransferSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateBankTransferInput;
-    assertBranchInScope(req, input.branchId);
     const txn = await payments.createBankTransfer(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
   }),
@@ -170,7 +211,6 @@ transferRouter.post(
 expenseRouter.get(
   "/",
   requirePermission("finance.expense.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler("EXPENSE"),
 );
@@ -178,12 +218,10 @@ expenseRouter.get(
 expenseRouter.post(
   "/",
   requirePermission("finance.expense.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createExpenseSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateExpenseInput;
-    assertBranchInScope(req, input.branchId);
     const txn = await expenses.createExpense(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
   }),
@@ -225,12 +263,35 @@ expenseRouter.post(
   }),
 );
 
+/**
+ * Rename or retire an expense head.
+ *
+ * Retiring is what replaces deleting: a head with postings under it cannot be removed
+ * without orphaning them, so `status: "INACTIVE"` takes it out of the pickers and leaves
+ * the history intact. The same route reactivates it.
+ */
+expenseRouter.patch(
+  "/categories/:id",
+  requirePermission("finance.expense.manageCategories"),
+  mutationLimiter,
+  validate({ params: idParam, body: updateAccountHeadSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const head = await expenses.updateHead(
+      "EXPENSE",
+      id,
+      req.valid.body as UpdateAccountHeadInput,
+      auditContextFrom(req),
+    );
+    return ok(res, head, headMessage(head.name, head.status));
+  }),
+);
+
 /* ── Income (§17) ────────────────────────────────────────────────────────── */
 
 incomeRouter.get(
   "/",
   requirePermission("finance.income.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler("INCOME"),
 );
@@ -238,12 +299,10 @@ incomeRouter.get(
 incomeRouter.post(
   "/",
   requirePermission("finance.income.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createIncomeSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateIncomeInput;
-    assertBranchInScope(req, input.branchId);
     const txn = await expenses.createIncome(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
   }),
@@ -267,6 +326,24 @@ incomeRouter.post(
   asyncHandler(async (req, res) => {
     const head = await expenses.createHead("INCOME", req.valid.body as never, auditContextFrom(req));
     return created(res, head, `${head.name} added`);
+  }),
+);
+
+/** Rename or retire an income head. See the expense head route above. */
+incomeRouter.patch(
+  "/heads/:id",
+  requirePermission("finance.income.manageHeads"),
+  mutationLimiter,
+  validate({ params: idParam, body: updateAccountHeadSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const head = await expenses.updateHead(
+      "INCOME",
+      id,
+      req.valid.body as UpdateAccountHeadInput,
+      auditContextFrom(req),
+    );
+    return ok(res, head, headMessage(head.name, head.status));
   }),
 );
 
@@ -364,7 +441,6 @@ chargeRouter.post(
 transactionRouter.get(
   "/",
   requirePermission("finance.daybook.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: transactionQuerySchema }),
   listHandler(),
 );
@@ -372,11 +448,10 @@ transactionRouter.get(
 transactionRouter.get(
   "/:id",
   requirePermission("finance.daybook.view"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    return ok(res, await listing.getDetail(id, scopeOf(req)));
+    return ok(res, await listing.getDetail(id));
   }),
 );
 
@@ -389,7 +464,6 @@ transactionRouter.get(
 transactionRouter.post(
   "/:id/reverse",
   requirePermission("finance.payment.reverse"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: reverseTransactionSchema }),
   asyncHandler(async (req, res) => {
@@ -399,7 +473,6 @@ transactionRouter.post(
     const { original, reversal: mirror } = await reversal.reverseTransaction(
       id,
       body,
-      scopeOf(req),
       auditContextFrom(req),
     );
 

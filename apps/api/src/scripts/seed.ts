@@ -7,7 +7,7 @@ import {
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { connectDatabase, disconnectDatabase } from "../config/db.js";
-import { Bank, BankAccount, Branch, CashAccount, Party, Role, User } from "../models/index.js";
+import { Bank, BankAccount, CashAccount, Party, Role, User } from "../models/index.js";
 import { ensureSystemAccounts, trialBalance } from "../services/ledger.service.js";
 import * as banking from "../modules/banking/banking.service.js";
 import * as parties from "../modules/parties/party.service.js";
@@ -27,17 +27,8 @@ import { seedTransactions } from "./seed-transactions.js";
  * seed exists to surface.
  */
 
-const BRANCHES = [
-  { code: "101", name: "Head Office", city: "Patna", state: "Bihar" },
-  { code: "102", name: "Kankarbagh Branch", city: "Patna", state: "Bihar" },
-  { code: "105", name: "Boring Road Branch", city: "Patna", state: "Bihar" },
-  { code: "107", name: "Gaya Branch", city: "Gaya", state: "Bihar" },
-  { code: "108", name: "Muzaffarpur Branch", city: "Muzaffarpur", state: "Bihar" },
-  { code: "111", name: "Ranchi Branch", city: "Ranchi", state: "Jharkhand" },
-];
-
 const ROLE_META = {
-  SUPER_ADMIN: { label: "Super Admin", description: "Full access across every branch." },
+  SUPER_ADMIN: { label: "Super Admin", description: "Full access to everything." },
   BRANCH_ADMIN: { label: "Branch Admin", description: "Full control of their assigned branches." },
   ACCOUNTANT: { label: "Accountant", description: "Day-to-day finance operations, without approval rights." },
   VIEWER: { label: "Viewer", description: "Read-only access for auditors and owners." },
@@ -54,8 +45,8 @@ const BANKS = [
 /**
  * Bank accounts.
  *
- * Organisation-wide: every one of these is reachable from every branch. The names still
- * say which office opened them, because that is how the business refers to them.
+ * The names still say which office opened them, because that is how the business refers
+ * to them — but every account is reachable from anywhere.
  */
 const BANK_ACCOUNTS = [
   { bank: "HDFC Bank", name: "AMIRI Enterprises — Current", number: "50100234567890", ifsc: "HDFC0001234", opening: "12,50,000.00", type: "CURRENT" },
@@ -67,7 +58,7 @@ const BANK_ACCOUNTS = [
 ];
 
 /**
- * Cash drawers — named, not per branch, since a drawer is counted on its own.
+ * Cash drawers. Each is named and counted on its own.
  */
 const CASH_DRAWERS = [
   { name: "Main Counter", code: "CASH-MAIN" },
@@ -106,7 +97,7 @@ async function seedRoles() {
           label: meta.label,
           description: meta.description,
           permissions,
-          isUnscoped: name === SYSTEM_ROLES.SUPER_ADMIN,
+          isSuperAdmin: name === SYSTEM_ROLES.SUPER_ADMIN,
           isSystem: true,
         },
       },
@@ -119,30 +110,10 @@ async function seedRoles() {
   return roles;
 }
 
-async function seedBranches() {
-  const branches = new Map<string, string>();
-
-  for (const b of BRANCHES) {
-    const branch = await Branch.findOneAndUpdate(
-      { code: b.code },
-      {
-        $set: { name: b.name, city: b.city, state: b.state, status: "ACTIVE" },
-        $setOnInsert: { code: b.code, booksFromDate: new Date(Date.UTC(2026, 3, 1)) },
-      },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    );
-    branches.set(b.code, String(branch._id));
-  }
-
-  logger.info({ count: branches.size }, "branches ready");
-  return branches;
-}
-
 async function seedUser(input: {
   name: string;
   email: string;
   roleId: string;
-  branchIds: string[];
   designation: string;
 }) {
   const existing = await User.findOne({ email: input.email });
@@ -150,8 +121,6 @@ async function seedUser(input: {
     // Refresh assignment, but never touch the password — a developer may have changed it
     // and silently resetting it on every seed run is hostile.
     existing.roleId = input.roleId as never;
-    existing.branchIds = input.branchIds as never;
-    existing.defaultBranchId = (input.branchIds[0] ?? null) as never;
     existing.designation = input.designation;
     existing.status = "ACTIVE";
     await existing.save();
@@ -162,8 +131,6 @@ async function seedUser(input: {
     name: input.name,
     email: input.email,
     roleId: input.roleId,
-    branchIds: input.branchIds,
-    defaultBranchId: input.branchIds[0] ?? null,
     designation: input.designation,
     status: "ACTIVE",
     mustChangePassword: true,
@@ -175,7 +142,7 @@ async function seedUser(input: {
   return user;
 }
 
-async function seedFinancials(branches: Map<string, string>, ctx: AuditContext) {
+async function seedFinancials(ctx: AuditContext) {
   // Equity, suspense, bank charges. `EQUITY-OPENING` must exist before any opening
   // balance can be posted, or the entry would have nothing to balance against.
   await ensureSystemAccounts();
@@ -219,7 +186,6 @@ async function seedFinancials(branches: Map<string, string>, ctx: AuditContext) 
   }
   logger.info({ created: accountsCreated }, "bank accounts ready");
 
-  // Drawers are organisation-wide, so they are seeded by name rather than one per branch.
   let drawersCreated = 0;
   for (const drawer of CASH_DRAWERS) {
     if (await CashAccount.exists({ name: drawer.name })) continue;
@@ -270,15 +236,11 @@ async function main(): Promise<void> {
   await connectDatabase();
 
   const roles = await seedRoles();
-  const branches = await seedBranches();
 
   const superAdmin = await seedUser({
     name: "Super Admin",
     email: "superadmin@amiri.com",
     roleId: roles.get("SUPER_ADMIN")!,
-    // Cosmetic for a SuperAdmin: it only pre-selects a branch in the picker. Their
-    // access does not come from this list.
-    branchIds: [branches.get("101")!],
     designation: "Proprietor",
   });
 
@@ -286,15 +248,13 @@ async function main(): Promise<void> {
     name: "Suresh Kumar",
     email: "branchadmin@amiri.co",
     roleId: roles.get("BRANCH_ADMIN")!,
-    branchIds: [branches.get("105")!, branches.get("107")!],
-    designation: "Branch Manager",
+    designation: "Operations Manager",
   });
 
   await seedUser({
     name: "Anita Sharma",
     email: "accountant@amiri.co",
     roleId: roles.get("ACCOUNTANT")!,
-    branchIds: [branches.get("105")!],
     designation: "Senior Accountant",
   });
 
@@ -302,7 +262,6 @@ async function main(): Promise<void> {
     name: "Auditor",
     email: "viewer@amiri.co",
     roleId: roles.get("VIEWER")!,
-    branchIds: [...branches.values()],
     designation: "External Auditor",
   });
   logger.info("users ready");
@@ -314,13 +273,8 @@ async function main(): Promise<void> {
     roleName: "SUPER_ADMIN",
   };
 
-  await seedFinancials(branches, ctx);
-  await seedTransactions(branches, ctx);
-
-  const branchAdmin = await User.findOne({ email: "branchadmin@amiri.co" }).select("_id").lean();
-  if (branchAdmin) {
-    await Branch.updateMany({ code: { $in: ["105", "107"] } }, { $set: { managerId: branchAdmin._id } });
-  }
+  await seedFinancials(ctx);
+  await seedTransactions(ctx);
 
   // Proof, not assertion: the seeded books are read back and shown to tie.
   const tb = await trialBalance();
@@ -332,9 +286,9 @@ async function main(): Promise<void> {
 ├────────────────────────────────────────────────────────────────────────┤
 │  Sign in at http://localhost:5173                                      │
 │                                                                        │
-│  superadmin@amiri.co    ${SEED_PASSWORD}     every branch            │
-│  branchadmin@amiri.co   ${SEED_PASSWORD}     branches 105, 107       │
-│  accountant@amiri.co    ${SEED_PASSWORD}     branch 105              │
+│  superadmin@amiri.co    ${SEED_PASSWORD}     full access            │
+│  branchadmin@amiri.co   ${SEED_PASSWORD}     day-to-day finance      │
+│  accountant@amiri.co    ${SEED_PASSWORD}     entry and reports       │
 │  viewer@amiri.co        ${SEED_PASSWORD}     read-only               │
 │                                                                        │
 │  Each account must set a new password on first sign-in.                │
@@ -348,9 +302,8 @@ async function main(): Promise<void> {
 │  Every opening balance above is a real double-entry posting against    │
 │  equity — not a number written into a field.                           │
 ├────────────────────────────────────────────────────────────────────────┤
-│  Try this: sign in as the accountant and look for branch 107 or the    │
-│  Gaya bank account. They are invisible in every list, filter and       │
-│  ledger — the server refuses them, not the UI.                         │
+│  Try this: sign in as the accountant and try to open /users. The       │
+│  server refuses it on the permission, not the UI.                      │
 └────────────────────────────────────────────────────────────────────────┘
 `);
   /* eslint-enable no-console */

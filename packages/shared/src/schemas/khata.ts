@@ -94,7 +94,6 @@ export interface KhataStatement {
 export const createAdjustmentSchema = z
   .object({
     date: businessDate,
-    branchId: objectId,
     adjustmentType: z.nativeEnum(ADJUSTMENT_TYPE),
 
     /** Exactly one target must be named. */
@@ -180,7 +179,6 @@ export const createSavingsAccountSchema = z.object({
   memberName: z.string().trim().min(2, "Member name is required").max(140),
   /** Link to an existing party when the member is already on the books. */
   partyId: optionalObjectId,
-  branchId: objectId,
   mobile: z
     .union([z.string().trim().regex(/^[6-9]\d{9}$/, "Enter a 10-digit mobile number"), z.literal("")])
     .optional()
@@ -211,7 +209,6 @@ export interface SavingsAccountSummary {
   accountNo: string;
   memberName: string;
   mobile?: string;
-  branch: { id: string; name: string; code: string };
   balance: number;
   interestRateBps: number;
   /**
@@ -242,8 +239,7 @@ export interface SavingsSummary {
 export const createSettlementSchema = z
   .object({
     date: businessDate,
-    branchId: objectId,
-    kind: z.enum(["PARTY", "BANK", "BRANCH"]),
+    kind: z.enum(["PARTY", "BANK"]),
 
     partyId: optionalObjectId,
     sourceAccountId: optionalObjectId,
@@ -264,7 +260,7 @@ export const createSettlementSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["destinationAccountId"],
-        message: "A bank or branch settlement needs both a source and a destination",
+        message: "A bank settlement needs both a source and a destination",
       });
     }
   });

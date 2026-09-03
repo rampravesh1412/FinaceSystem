@@ -1,6 +1,6 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { RECORD_STATUS, type RecordStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField } from "./fields.js";
+import { actorField, baseSchemaOptions } from "./fields.js";
 
 /**
  * Bachat Khata — a member's savings account (§13).
@@ -18,7 +18,6 @@ export interface SavingsAccountDoc extends Document<Types.ObjectId> {
   /** Set when the member is already a party on the books. */
   partyId?: Types.ObjectId | null;
   mobile?: string;
-  branchId: Types.ObjectId;
   ledgerAccountId: Types.ObjectId;
   /** Annual rate in basis points. 6.5% = 650. */
   interestRateBps: number;
@@ -37,7 +36,6 @@ const savingsAccountSchema = new Schema<SavingsAccountDoc>(
     memberName: { type: String, required: true, trim: true, maxlength: 140 },
     partyId: { type: Schema.Types.ObjectId, ref: "Party", default: null, index: true },
     mobile: { type: String, trim: true, index: true },
-    branchId: branchField(true),
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true, index: true },
     interestRateBps: { type: Number, default: 0, min: 0, max: 10_000 },
     status: { type: String, enum: Object.values(RECORD_STATUS), default: RECORD_STATUS.ACTIVE, index: true },
@@ -49,7 +47,7 @@ const savingsAccountSchema = new Schema<SavingsAccountDoc>(
   baseSchemaOptions(),
 );
 
-savingsAccountSchema.index({ branchId: 1, status: 1, memberName: 1 });
+savingsAccountSchema.index({ status: 1, memberName: 1 });
 savingsAccountSchema.index({ memberName: "text", accountNo: "text", mobile: "text" }, { name: "savings_search" });
 
 export const SavingsAccount = model<SavingsAccountDoc>("SavingsAccount", savingsAccountSchema);

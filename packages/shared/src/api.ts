@@ -67,7 +67,6 @@ export const ERROR_CODES = {
   ACCOUNT_DISABLED: "ACCOUNT_DISABLED",
   FORBIDDEN: "FORBIDDEN",
   PERMISSION_DENIED: "PERMISSION_DENIED",
-  BRANCH_ACCESS_DENIED: "BRANCH_ACCESS_DENIED",
 
   // 404 / 409
   NOT_FOUND: "NOT_FOUND",
@@ -109,7 +108,6 @@ export interface ListQuery {
 export interface FinanceFilters extends ListQuery {
   from?: string;
   to?: string;
-  branchId?: string;
   accountId?: string;
   bankAccountId?: string;
   partyId?: string;

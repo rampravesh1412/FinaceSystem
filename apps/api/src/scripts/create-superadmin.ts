@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { SYSTEM_ROLES, password as passwordPolicy } from "@amiri/shared";
 import { logger } from "../config/logger.js";
 import { connectDatabase, disconnectDatabase } from "../config/db.js";
-import { Branch, Role, User } from "../models/index.js";
+import { Role, User } from "../models/index.js";
 
 /**
  * Create — or promote — a super admin, at any point in an install's life.
@@ -80,7 +80,6 @@ async function main(): Promise<void> {
   const email = (arg("email") ?? process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
   const name = arg("name") ?? process.env.ADMIN_NAME ?? "Super Admin";
   const designation = arg("designation") ?? "Proprietor";
-  const branchCode = arg("branch-code");
 
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     logger.fatal("Pass a valid address: --email you@example.com");
@@ -103,23 +102,6 @@ async function main(): Promise<void> {
   }
   const roleId = String(role._id);
 
-  /**
-   * A branch, purely so the UI has something selected.
-   *
-   * A super admin's access is unscoped and does not come from this list, but every posting
-   * is branch-scoped and the branch picker needs a default. Unlike bootstrap-admin this
-   * script never creates one: by the time a second admin is being added, the real branches
-   * exist and inventing a "Head Office" alongside them would be noise.
-   */
-  const branch = branchCode
-    ? await Branch.findOne({ code: branchCode }).select("_id code name").lean()
-    : await Branch.findOne({ status: "ACTIVE" }).sort({ createdAt: 1 }).select("_id code name").lean();
-
-  if (branchCode && !branch) {
-    logger.fatal({ branchCode }, "No branch with that code.");
-    await disconnectDatabase();
-    process.exit(1);
-  }
 
   const existing = await User.findOne({ email });
 
@@ -159,8 +141,6 @@ async function main(): Promise<void> {
 
   user.name = name;
   user.roleId = roleId as never;
-  user.branchIds = (branch ? [String(branch._id)] : []) as never;
-  user.defaultBranchId = (branch ? String(branch._id) : null) as never;
   user.designation = designation;
   user.status = "ACTIVE";
 
@@ -176,7 +156,6 @@ async function main(): Promise<void> {
     {
       admin: email,
       action: existing ? "promoted existing account" : "created",
-      branch: branch ? `${branch.code} ${branch.name}` : "none assigned",
     },
     "super admin ready",
   );

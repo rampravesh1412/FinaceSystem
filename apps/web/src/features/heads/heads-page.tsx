@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { Coins, Info, Plus, Receipt } from "lucide-react";
+import { Archive, Coins, Info, MoreHorizontal, Pencil, Plus, Receipt, RotateCcw } from "lucide-react";
 import {
   createExpenseCategorySchema,
   type CreateExpenseCategoryInput,
@@ -24,6 +24,16 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * Expense heads and income heads (§16, §17).
@@ -148,6 +158,7 @@ function HeadsTable({ kind }: { kind: Kind }) {
                   {kind === "EXPENSE" ? "Spent" : "Earned"}
                 </TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="screen-only w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -178,6 +189,11 @@ function HeadsTable({ kind }: { kind: Kind }) {
                       {row.status === "ACTIVE" ? "Active" : "Retired"}
                     </Badge>
                   </TableCell>
+                  <TableCell className="screen-only text-right">
+                    <Can permission={permission as never}>
+                      <HeadActions kind={kind} head={row} parents={rows} />
+                    </Can>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -190,6 +206,7 @@ function HeadsTable({ kind }: { kind: Kind }) {
                   <Money value={total} showIcon={false} className="font-semibold" />
                 </TableCell>
                 <TableCell />
+                <TableCell className="screen-only" />
               </TableRow>
             </TableFooter>
           </Table>
@@ -312,6 +329,209 @@ function HeadDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Retire, reactivate, rename ──────────────────────────────────────────── */
+
+/**
+ * A head is never deleted — it is RETIRED.
+ *
+ * Deleting one would orphan every posting made under it, and the Profit & Loss groups by
+ * exactly that account, so the figures would stop tying. Retiring takes it out of the
+ * pickers for new entries and leaves the history untouched, which is what "delete" almost
+ * always means when somebody asks for it here. The confirmation says so, because the
+ * difference matters and is not obvious from the word.
+ */
+function HeadActions({
+  kind,
+  head,
+  parents,
+}: {
+  kind: Kind;
+  head: AccountHeadRow;
+  parents: AccountHeadRow[];
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+  const retiring = head.status === "ACTIVE";
+
+  const mutation = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api.patch<AccountHeadRow>(`${ENDPOINT[kind]}/${head.id}`, body),
+    onSuccess: async (updated) => {
+      toast.success(
+        updated.status === "ACTIVE" ? `${updated.name} is active` : `${updated.name} retired`,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["heads"] });
+      await queryClient.invalidateQueries({ queryKey: ["expense-categories"] });
+      await queryClient.invalidateQueries({ queryKey: ["income-heads"] });
+      setConfirming(false);
+      setEditing(false);
+    },
+    onError: (error) =>
+      toast.error(error instanceof ApiError ? error.message : "Could not update the head."),
+  });
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label={`Actions for ${head.name}`}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setEditing(true)}>
+            <Pencil />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            destructive={retiring}
+            onSelect={(e) => {
+              e.preventDefault();
+              // Reactivating is harmless and immediate; retiring gets a confirmation,
+              // because it removes the head from every form that posts new entries.
+              if (retiring) setConfirming(true);
+              else mutation.mutate({ status: "ACTIVE" });
+            }}
+          >
+            {retiring ? <Archive /> : <RotateCcw />}
+            {retiring ? "Retire" : "Reactivate"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retire {head.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It disappears from the pickers, so nothing new can be posted against it.
+              {head.entryCount > 0 ? (
+                <>
+                  {" "}
+                  The {head.entryCount} entr{head.entryCount === 1 ? "y" : "ies"} already
+                  booked under it stay exactly where they are and keep appearing in the
+                  Profit &amp; Loss — retiring a head does not remove its history.
+                </>
+              ) : null}{" "}
+              You can reactivate it at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it active</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                mutation.mutate({ status: "INACTIVE" });
+              }}
+            >
+              Retire
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {editing ? (
+        <RenameHeadDialog
+          head={head}
+          parents={parents}
+          saving={mutation.isPending}
+          onSave={(body) => mutation.mutate(body)}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function RenameHeadDialog({
+  head,
+  parents,
+  saving,
+  onSave,
+  onClose,
+}: {
+  head: AccountHeadRow;
+  parents: AccountHeadRow[];
+  saving: boolean;
+  onSave: (body: Record<string, unknown>) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = React.useState(head.name);
+  const [description, setDescription] = React.useState(head.description ?? "");
+  const [parentId, setParentId] = React.useState(head.parentId ?? "none");
+
+  return (
+    <Dialog open onOpenChange={(v) => (v ? undefined : onClose())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename {head.code}</DialogTitle>
+          <DialogDescription>
+            The new name reaches the ledger account too, so the Profit &amp; Loss stops
+            printing the old one. The code never changes — reports already quote it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="head-name">Name</Label>
+            <Input id="head-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="head-desc">Description</Label>
+            <Input
+              id="head-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="head-parent">Under</Label>
+            <Select value={parentId} onValueChange={setParentId}>
+              <SelectTrigger id="head-parent">
+                <SelectValue placeholder="Top level" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Top level</SelectItem>
+                {parents
+                  .filter((p) => p.status === "ACTIVE" && !p.parentId && p.id !== head.id)
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="accent"
+            loading={saving}
+            disabled={name.trim().length < 2}
+            onClick={() =>
+              onSave({
+                name: name.trim(),
+                description: description.trim() || undefined,
+                parentId: parentId === "none" ? "" : parentId,
+              })
+            }
+          >
+            Save
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

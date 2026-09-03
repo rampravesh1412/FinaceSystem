@@ -150,10 +150,9 @@ describe("the fiscal year lock", () => {
 
   it("locks it once a transaction has been posted, and says why", async () => {
     // Anything that posts a ledger entry. An opening balance is the smallest such thing.
-    const branchId = fx.branches["105"]!;
     const cash = await client.post<{ data: { id: string } }>(
       "/cash-accounts",
-      { branchId, name: "Settings Test Drawer", openingBalance: "1,000" },
+      { name: "Settings Test Drawer", openingBalance: "1,000" },
       { token },
     );
     expect(cash.status).toBe(201);

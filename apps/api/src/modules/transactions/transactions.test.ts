@@ -3,6 +3,7 @@ import type { Express } from "express";
 import { formatINR } from "@amiri/shared";
 import { createApp } from "../../app.js";
 import {
+  AuditLog,
   BankAccount,
   ChargeRule,
   ExpenseCategory,
@@ -29,7 +30,6 @@ let app: Express;
 let client: TestClient;
 let fx: Fixtures;
 let superToken: string;
-let branchId: string;
 
 let hdfcId: string;
 let iciciId: string;
@@ -61,7 +61,6 @@ beforeAll(async () => {
   client = new TestClient();
   await client.start(app);
   superToken = await client.loginAs("super@test.co");
-  branchId = fx.branches["105"]!;
 
   const bank = await client.post<{ data: { id: string } }>(
     "/banks",
@@ -74,7 +73,6 @@ beforeAll(async () => {
       "/bank-accounts",
       {
         bankId: bank.body.data.id,
-        branchId,
         accountName: name,
         accountNumber: number,
         ifsc: "HDFC0001234",
@@ -90,14 +88,14 @@ beforeAll(async () => {
 
   const cash = await client.post<{ data: { id: string } }>(
     "/cash-accounts",
-    { branchId, name: "Main Counter", openingBalance: "50,000" },
+    { name: "Main Counter", openingBalance: "50,000" },
     { token: superToken },
   );
   cashId = cash.body.data.id;
 
   const ramanuj = await client.post<{ data: { id: string } }>(
     "/parties",
-    { name: "RAMANUJ PUNB", branchId, type: "DISTRIBUTOR", openingBalance: "9,50,000", creditLimit: "20,00,000" },
+    { name: "RAMANUJ PUNB", type: "DISTRIBUTOR", openingBalance: "9,50,000", creditLimit: "20,00,000" },
     { token: superToken },
   );
   ramanujId = ramanuj.body.data.id;
@@ -106,14 +104,14 @@ beforeAll(async () => {
   // without tripping the credit check, which is a different rule under test elsewhere.
   const eddigo = await client.post<{ data: { id: string } }>(
     "/parties",
-    { name: "EDDIGO DISTRIBUTOR", branchId, type: "DISTRIBUTOR", openingBalance: "-2,40,000" },
+    { name: "EDDIGO DISTRIBUTOR", type: "DISTRIBUTOR", openingBalance: "-2,40,000" },
     { token: superToken },
   );
   eddigoId = eddigo.body.data.id;
 
   const vendor = await client.post<{ data: { id: string } }>(
     "/parties",
-    { name: "Bihar Panel Services", branchId, type: "VENDOR", openingBalance: "0" },
+    { name: "Bihar Panel Services", type: "VENDOR", openingBalance: "0" },
     { token: superToken },
   );
   vendorId = vendor.body.data.id;
@@ -245,7 +243,7 @@ describe("charge engine (§18)", () => {
     }>(
       "/payment-out",
       {
-        date: "2026-08-19", branchId, partyId: eddigoId, accountId: hdfcId,
+        date: "2026-08-19", partyId: eddigoId, accountId: hdfcId,
         amount: "50,000", paymentMode: "CASH", chargeRuleId: String(rule._id),
       },
       { token: superToken },
@@ -278,7 +276,7 @@ describe("charge engine (§18)", () => {
     const res = await client.post<{ data: { id: string } }>(
       "/payment-out",
       {
-        date: "2026-08-19", branchId, partyId: eddigoId, accountId: hdfcId,
+        date: "2026-08-19", partyId: eddigoId, accountId: hdfcId,
         amount: "50,000", paymentMode: "CASH", chargeRuleId: String(rule._id),
       },
       { token: superToken },
@@ -302,7 +300,7 @@ describe("charge engine (§18)", () => {
     const res = await client.post<{ data: { id: string } }>(
       "/bank-transfers",
       {
-        date: "2026-08-19", branchId,
+        date: "2026-08-19",
         sourceAccountId: hdfcId, destinationAccountId: iciciId,
         amount: "1,00,000", manualCharge: "500", paymentMode: "NEFT",
       },
@@ -324,7 +322,7 @@ describe("charge engine (§18)", () => {
     const res = await client.post<{ error: { message: string } }>(
       "/bank-transfers",
       {
-        date: "2026-08-19", branchId,
+        date: "2026-08-19",
         sourceAccountId: hdfcId, destinationAccountId: iciciId,
         amount: "1,00,000", chargeRuleId: String(rule!._id),
       },
@@ -347,7 +345,7 @@ describe("payment in (§14)", () => {
     const res = await client.post<{ data: { id: string; txnNo: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: ramanujId, accountId: hdfcId,
+        date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
         amount: "2,00,000", paymentMode: "NEFT", referenceNo: "NEFT9981",
       },
       { token: superToken },
@@ -373,7 +371,7 @@ describe("payment in (§14)", () => {
     const res = await client.post<{ data: { id: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: ramanujId, accountId: hdfcId,
+        date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
         amount: "1,00,000", paymentMode: "RTGS", chargeRuleId: String(rule!._id),
       },
       { token: superToken },
@@ -397,7 +395,7 @@ describe("payment in (§14)", () => {
   });
 
   /**
-   * A receipt may be taken from a party whose home branch is elsewhere — a customer pays
+   * A receipt may be taken from any party — a customer pays
    * at whichever office is nearest. What must NOT bend is where the entries land: both
    * legs belong to the branch that took the money, or that branch's till would reconcile
    * against cash it never held.
@@ -405,7 +403,7 @@ describe("payment in (§14)", () => {
   it("accepts a party from another branch and books both legs in the posting branch", async () => {
     const other = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Other Branch Party", branchId: fx.branches["107"], openingBalance: 0 },
+      { name: "Other Branch Party", openingBalance: 0 },
       { token: superToken },
     );
     const otherPartyId = other.body.data.id;
@@ -413,7 +411,7 @@ describe("payment in (§14)", () => {
     const res = await client.post<{ data: { id: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: otherPartyId,
+        date: "2026-08-19", partyId: otherPartyId,
         accountId: hdfcId, amount: "1,000", paymentMode: "CASH",
       },
       { token: superToken },
@@ -425,8 +423,7 @@ describe("payment in (§14)", () => {
     const entries = await LedgerEntry.find({ transactionId: res.body.data.id }).lean();
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
-      expect(String(entry.branchId)).toBe(branchId);
-    }
+          }
 
     // Double entry still holds for that branch in isolation.
     const debits = entries.filter((e) => e.direction === "DEBIT").reduce((s, e) => s + e.amount, 0);
@@ -456,7 +453,7 @@ describe("payment in (§14)", () => {
     const res = await client.post<{ data: { id: string } }>(
       "/expenses",
       {
-        date: "2026-08-19", branchId, categoryId: panelHeadId,
+        date: "2026-08-19", categoryId: panelHeadId,
         partyId: other.body.data.id, amount: "1,000", paymentMode: "CASH", accountId: hdfcId,
       },
       { token: superToken },
@@ -467,7 +464,6 @@ describe("payment in (§14)", () => {
     // Every entry the posting produced is stamped with the branch that booked it.
     const entries = await LedgerEntry.find({ transactionId: res.body.data.id }).lean();
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries.every((e) => String(e.branchId) === branchId)).toBe(true);
   });
 });
 
@@ -481,7 +477,7 @@ describe("payment out (§15)", () => {
     const res = await client.post<{ data: { txnNo: string } }>(
       "/payment-out",
       {
-        date: "2026-08-19", branchId, partyId: vendorId, accountId: hdfcId,
+        date: "2026-08-19", partyId: vendorId, accountId: hdfcId,
         amount: "75,000", paymentMode: "IMPS",
       },
       { token: superToken },
@@ -502,7 +498,7 @@ describe("payment out (§15)", () => {
     const res = await client.post<{ error: { code: string; details: { shortfall: number } } }>(
       "/payment-out",
       {
-        date: "2026-08-19", branchId, partyId: vendorId, accountId: cashId,
+        date: "2026-08-19", partyId: vendorId, accountId: cashId,
         amount: "5,00,000", paymentMode: "CASH",
       },
       { token: superToken },
@@ -520,14 +516,14 @@ describe("payment out (§15)", () => {
   it("refuses a payment that would breach the party's credit limit", async () => {
     const limited = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Tight Limit Co", branchId, openingBalance: "0", creditLimit: "50,000" },
+      { name: "Tight Limit Co", openingBalance: "0", creditLimit: "50,000" },
       { token: superToken },
     );
 
     const res = await client.post<{ error: { code: string; details: { limit: number; excess: number } } }>(
       "/payment-out",
       {
-        date: "2026-08-19", branchId, partyId: limited.body.data.id,
+        date: "2026-08-19", partyId: limited.body.data.id,
         accountId: hdfcId, amount: "80,000", paymentMode: "NEFT",
       },
       { token: superToken },
@@ -553,7 +549,7 @@ describe("bank transfer (§8)", () => {
     const res = await client.post<{ data: { id: string; txnNo: string } }>(
       "/bank-transfers",
       {
-        date: "2026-08-19", branchId,
+        date: "2026-08-19",
         sourceAccountId: hdfcId, destinationAccountId: iciciId,
         amount: "9,50,000", paymentMode: "RTGS", manualCharge: "50",
         narration: "RAMANUJ PUNB to EDDIGO DISTRIBUTOR",
@@ -579,7 +575,7 @@ describe("bank transfer (§8)", () => {
     const res = await client.post<{ error: { code: string } }>(
       "/bank-transfers",
       {
-        date: "2026-08-19", branchId,
+        date: "2026-08-19",
         sourceAccountId: hdfcId, destinationAccountId: hdfcId, amount: "1,000",
       },
       { token: superToken },
@@ -612,7 +608,7 @@ describe("expenses (§16)", () => {
     const res = await client.post<{ data: { id: string; txnNo: string } }>(
       "/expenses",
       {
-        date: "2026-08-19", branchId, categoryId: panelHeadId, accountId: hdfcId,
+        date: "2026-08-19", categoryId: panelHeadId, accountId: hdfcId,
         amount: "12,000", paymentMode: "BANK_TRANSFER", invoiceNo: "INV-4471",
         items: [
           { description: "Panel licence — August", quantity: 2, unitPrice: "5,000", amount: "10,000" },
@@ -635,7 +631,7 @@ describe("expenses (§16)", () => {
     const res = await client.post<{ error: { code: string; details: Array<{ message: string }> } }>(
       "/expenses",
       {
-        date: "2026-08-19", branchId, categoryId: panelHeadId, accountId: hdfcId,
+        date: "2026-08-19", categoryId: panelHeadId, accountId: hdfcId,
         amount: "10,000",
         items: [{ description: "Mismatch", quantity: 1, unitPrice: "9,000", amount: "9,000" }],
       },
@@ -650,7 +646,7 @@ describe("expenses (§16)", () => {
     const partyBefore = await balanceOfParty(vendorId);
 
     const res = await client.post("/expenses", {
-      date: "2026-08-19", branchId, categoryId: panelHeadId, partyId: vendorId,
+      date: "2026-08-19", categoryId: panelHeadId, partyId: vendorId,
       amount: "8,000",
     }, { token: superToken });
 
@@ -662,7 +658,7 @@ describe("expenses (§16)", () => {
   it("refuses an expense with neither an account nor a party", async () => {
     const res = await client.post<{ error: { code: string } }>(
       "/expenses",
-      { date: "2026-08-19", branchId, categoryId: panelHeadId, amount: "1,000" },
+      { date: "2026-08-19", categoryId: panelHeadId, amount: "1,000" },
       { token: superToken },
     );
     // With neither, there is nothing to credit and the entry cannot balance.
@@ -676,7 +672,7 @@ describe("income (§17)", () => {
     const partyBefore = await balanceOfParty(ramanujId);
 
     const res = await client.post("/income", {
-      date: "2026-08-19", branchId, headId: commissionHeadId, accountId: hdfcId,
+      date: "2026-08-19", headId: commissionHeadId, accountId: hdfcId,
       partyId: ramanujId, amount: "15,000", paymentMode: "UPI",
     }, { token: superToken });
 
@@ -703,7 +699,7 @@ describe("reversal (§28)", () => {
     const created = await client.post<{ data: { id: string; txnNo: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: ramanujId, accountId: hdfcId,
+        date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
         amount: "3,33,333", paymentMode: "NEFT",
       },
       { token: superToken },
@@ -756,7 +752,7 @@ describe("reversal (§28)", () => {
     const created = await client.post<{ data: { id: string } }>(
       "/payment-in",
       {
-        date: "2026-08-19", branchId, partyId: ramanujId, accountId: hdfcId,
+        date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
         amount: "2,00,000", paymentMode: "RTGS", chargeRuleId: String(rule!._id),
       },
       { token: superToken },
@@ -779,7 +775,7 @@ describe("reversal (§28)", () => {
   it("refuses to reverse the same transaction twice", async () => {
     const created = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId: vendorId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId: vendorId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -802,7 +798,7 @@ describe("reversal (§28)", () => {
   it("refuses to reverse a reversal", async () => {
     const created = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId: vendorId, accountId: hdfcId, amount: "2,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId: vendorId, accountId: hdfcId, amount: "2,000", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -825,7 +821,7 @@ describe("reversal (§28)", () => {
   it("requires a substantive reason", async () => {
     const created = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId: vendorId, accountId: hdfcId, amount: "500", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId: vendorId, accountId: hdfcId, amount: "500", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -899,5 +895,171 @@ describe("the books still tie after everything above", () => {
 
     expect(res.body.data.timeline.length).toBeGreaterThan(0);
     expect(res.body.data.timeline[0]!.by).toBeTruthy();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Editing a posted payment (§25, §28).
+ *
+ * The rule these cases exist to pin down: a posted transaction is never rewritten. What
+ * happens on save depends on WHAT was edited, and the two paths must stay distinguishable
+ * — an edit that quietly rewrote an amount would move a balance with nothing in the ledger
+ * to explain it, which is the failure the whole append-only design prevents.
+ */
+describe("editing a posted payment", () => {
+  async function makePayment(amount: string) {
+    const res = await client.post<{ data: { id: string; txnNo: string } }>(
+      "/payment-in",
+      {
+        date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
+        amount, paymentMode: "NEFT", referenceNo: "ORIG-REF",
+      },
+      { token: superToken },
+    );
+    expect(res.status).toBe(201);
+    return res.body.data;
+  }
+
+  it("updates a label in place, moving no money and posting no entries", async () => {
+    const original = await makePayment("10,000");
+    const bankBefore = await balanceOfAccount(hdfcId);
+    const entriesBefore = await LedgerEntry.countDocuments({});
+
+    const res = await client.patch<{ data: { outcome: string; transaction: { txnNo: string } } }>(
+      `/payment-in/${original.id}`,
+      { referenceNo: "CORRECTED-REF", reason: "Reference was mistyped at the counter" },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.outcome).toBe("UPDATED");
+    // Same voucher — a typo does not deserve a new number.
+    expect(res.body.data.transaction.txnNo).toBe(original.txnNo);
+
+    const after = (await Transaction.findById(original.id).lean())!;
+    expect(after.referenceNo).toBe("CORRECTED-REF");
+    expect(after.status).toBe("COMPLETED");
+
+    // The ledger is untouched: no new entries, no balance movement.
+    expect(await LedgerEntry.countDocuments({})).toBe(entriesBefore);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore);
+  });
+
+  it("reverses and reposts when the amount changes, leaving all three linked", async () => {
+    const original = await makePayment("10,000");
+    const bankBefore = await balanceOfAccount(hdfcId);
+
+    const res = await client.patch<{
+      data: {
+        outcome: string;
+        transaction: { id: string; txnNo: string };
+        replaced: { txnNo: string };
+        reversal: { txnNo: string };
+      };
+    }>(
+      `/payment-in/${original.id}`,
+      { amount: "7,500", reason: "Counted the cash again — it was 7,500" },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.outcome).toBe("REPOSTED");
+    expect(res.body.data.replaced.txnNo).toBe(original.txnNo);
+
+    // The original stays on the books, reversed, pointing at its replacement.
+    const before = (await Transaction.findById(original.id).lean())!;
+    expect(before.status).toBe("REVERSED");
+    expect(String(before.supersededBy)).toBe(res.body.data.transaction.id);
+    expect(before.reversedBy).toBeTruthy();
+
+    // The replacement points back.
+    const replacement = (await Transaction.findById(res.body.data.transaction.id).lean())!;
+    expect(String(replacement.supersedes)).toBe(original.id);
+    expect(replacement.grossAmount).toBe(7_500_00);
+
+    /**
+     * The arithmetic that matters: the original's ₹10,000 was cancelled and ₹7,500 posted,
+     * so the account moved by the DIFFERENCE — not by ₹7,500 on top of ₹10,000, and not by
+     * ₹10,000 silently becoming ₹7,500.
+     */
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 10_000_00 + 7_500_00);
+  });
+
+  it("records who edited it and what they changed", async () => {
+    const original = await makePayment("4,000");
+
+    await client.patch(
+      `/payment-in/${original.id}`,
+      { amount: "4,200", reason: "Bank credited 4,200 — receipt was written short" },
+      { token: superToken },
+    );
+
+    const entry = await AuditLog.findOne({
+      action: "BALANCE_ADJUSTED",
+      entityLabel: { $regex: `corrects ${original.txnNo}` },
+    }).lean();
+
+    expect(entry).toBeTruthy();
+    expect(entry!.userEmail).toBe("super@test.co");
+    expect(entry!.reason).toContain("4,200");
+    // The before and after are both on the row, so the change is readable without
+    // reconstructing it from the two postings.
+    expect((entry!.oldValue as { amount: number }).amount).toBe(4_000_00);
+    expect((entry!.newValue as { amount: number }).amount).toBe(4_200_00);
+    expect(entry!.changedFields).toContain("amount");
+  });
+
+  it("surfaces the whole chain on the detail drawer", async () => {
+    const original = await makePayment("2,000");
+    const edit = await client.patch<{ data: { transaction: { id: string; txnNo: string } } }>(
+      `/payment-in/${original.id}`,
+      { amount: "2,500", reason: "Corrected against the deposit slip" },
+      { token: superToken },
+    );
+
+    const before = await client.get<{
+      data: { status: string; supersededBy: string | null; supersededByTxn: { txnNo: string } | null };
+    }>(`/transactions/${original.id}`, { token: superToken });
+
+    expect(before.body.data.status).toBe("REVERSED");
+    expect(before.body.data.supersededByTxn?.txnNo).toBe(edit.body.data.transaction.txnNo);
+
+    const after = await client.get<{
+      data: { supersedesTxn: { txnNo: string } | null; timeline: Array<{ action: string }> };
+    }>(`/transactions/${edit.body.data.transaction.id}`, { token: superToken });
+
+    expect(after.body.data.supersedesTxn?.txnNo).toBe(original.txnNo);
+    expect(after.body.data.timeline.some((t) => t.action === "BALANCE_ADJUSTED")).toBe(true);
+  });
+
+  it("refuses to edit a transaction that was already reversed", async () => {
+    const original = await makePayment("1,000");
+    await client.post(
+      `/transactions/${original.id}/reverse`,
+      { reason: "Duplicate entry, cancelling it" },
+      { token: superToken },
+    );
+
+    const res = await client.patch<{ error: { code: string } }>(
+      `/payment-in/${original.id}`,
+      { amount: "1,100", reason: "Trying to edit history" },
+      { token: superToken },
+    );
+
+    // Editing a reversed transaction would fork the chain and leave two current versions
+    // of the same payment, both claiming to be authoritative.
+    expect(res.body.error.code).toBe("STATE_CONFLICT");
+  });
+
+  it("requires a reason, as every correction does", async () => {
+    const original = await makePayment("3,000");
+    const res = await client.patch(
+      `/payment-in/${original.id}`,
+      { amount: "3,100", reason: "oops" },
+      { token: superToken },
+    );
+    expect(res.status).toBe(422);
   });
 });

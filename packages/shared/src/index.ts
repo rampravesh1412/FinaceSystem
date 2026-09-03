@@ -7,7 +7,6 @@ export * from "./fiscal.js";
 
 export * from "./schemas/common.js";
 export * from "./schemas/auth.js";
-export * from "./schemas/branch.js";
 export * from "./schemas/user.js";
 export * from "./schemas/banking.js";
 export * from "./schemas/party.js";

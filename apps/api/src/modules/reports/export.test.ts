@@ -19,7 +19,6 @@ let app: Express;
 let client: TestClient;
 let fx: Fixtures;
 let token: string;
-let branchId: string;
 
 async function raw(path: string, tok: string): Promise<{ status: number; text: string }> {
   const res = await fetch(`${(client as unknown as { baseUrl: string }).baseUrl}/api/v1${path}`, {
@@ -37,7 +36,6 @@ beforeAll(async () => {
   client = new TestClient();
   await client.start(app);
   token = await client.loginAs("super@test.co");
-  branchId = fx.branches["105"]!;
 
   const bank = await client.post<{ data: { id: string } }>(
     "/banks", { name: "HDFC Bank", shortName: "HDFC", ifscPrefix: "HDFC" }, { token },
@@ -45,7 +43,7 @@ beforeAll(async () => {
   const acc = await client.post<{ data: { id: string } }>(
     "/bank-accounts",
     {
-      bankId: bank.body.data.id, branchId, accountName: "HDFC Current",
+      bankId: bank.body.data.id, accountName: "HDFC Current",
       accountNumber: "50100234567890", ifsc: "HDFC0001234",
       openingBalance: "10,00,000", openingDate: "2026-04-01",
     },
@@ -54,14 +52,14 @@ beforeAll(async () => {
 
   const party = await client.post<{ data: { id: string } }>(
     "/parties",
-    { name: "Sharma Traders", branchId, type: "CUSTOMER", openingBalance: "1,00,000", openingDate: "2026-04-01" },
+    { name: "Sharma Traders", type: "CUSTOMER", openingBalance: "1,00,000", openingDate: "2026-04-01" },
     { token },
   );
 
   await client.post(
     "/payment-in",
     {
-      date: "2026-08-19", branchId, partyId: party.body.data.id,
+      date: "2026-08-19", partyId: party.body.data.id,
       accountId: acc.body.data.id, amount: "1,25,101", paymentMode: "NEFT",
     },
     { token },
@@ -103,7 +101,7 @@ describe("export (§53, §54)", () => {
     // A party whose name is a formula. Opening the export in Excel would otherwise run it.
     await client.post(
       "/parties",
-      { name: "=cmd|'/c calc'!A1", branchId, type: "OTHER", openingBalance: "0", openingDate: "2026-04-01" },
+      { name: "=cmd|'/c calc'!A1", type: "OTHER", openingBalance: "0", openingDate: "2026-04-01" },
       { token },
     );
 
@@ -200,7 +198,6 @@ describe("export (§53, §54)", () => {
     expect([200, 403]).toContain(res.status);
 
     if (res.status === 200) {
-      const foreign = await AuditLog.findOne({ branchId: fx.branches["107"] }).lean();
       if (foreign?.entityLabel) expect(res.text).not.toContain(foreign.entityLabel);
     }
   });
@@ -230,11 +227,11 @@ describe("import (§52)", () => {
   ];
 
   it("previews without writing anything", async () => {
-    const before = await Party.countDocuments({ branchId });
+    const before = await Party.countDocuments({});
 
     const res = await client.post<{ data: { totalRows: number; valid: number; invalid: number; sample: unknown[] } }>(
       "/import/parties/preview",
-      { branchId, rows: goodRows },
+      { rows: goodRows },
       { token },
     );
 
@@ -244,7 +241,7 @@ describe("import (§52)", () => {
     expect(res.body.data.sample.length).toBe(2);
 
     // The whole point of a preview.
-    expect(await Party.countDocuments({ branchId })).toBe(before);
+    expect(await Party.countDocuments({})).toBe(before);
   });
 
   it("normalises header spelling", async () => {
@@ -252,21 +249,20 @@ describe("import (§52)", () => {
     // exported from anywhere has inconsistent headers.
     const res = await client.post<{ data: { valid: number } }>(
       "/import/parties/preview",
-      { branchId, rows: [{ party_name: "Header Test Co", TYPE: "CUSTOMER", "opening balance": "1,000" }] },
+      { rows: [{ party_name: "Header Test Co", TYPE: "CUSTOMER", "opening balance": "1,000" }] },
       { token },
     );
     expect(res.body.data.valid).toBe(1);
   });
 
   it("reports invalid rows and does NOT import them", async () => {
-    const before = await Party.countDocuments({ branchId });
+    const before = await Party.countDocuments({});
 
     const res = await client.post<{
       data: { imported: number; invalid: number; issues: Array<{ row: number; message: string }> };
     }>(
       "/import/parties/commit",
       {
-        branchId,
         rows: [
           { "Party Name": "Valid Import Co", "Opening Balance": "10,000" },
           { "Party Name": "X" },                                  // name too short
@@ -280,27 +276,27 @@ describe("import (§52)", () => {
     // Only the good row landed.
     expect(res.body.data.imported).toBe(1);
     expect(res.body.data.issues.length).toBeGreaterThan(0);
-    expect(await Party.countDocuments({ branchId })).toBe(before + 1);
+    expect(await Party.countDocuments({})).toBe(before + 1);
 
-    expect(await Party.findOne({ branchId, name: "Bad Amount Co" }).lean()).toBeNull();
+    expect(await Party.findOne({ name: "Bad Amount Co" }).lean()).toBeNull();
   });
 
   it("detects a duplicate rather than overwriting or silently skipping it", async () => {
-    await client.post("/import/parties/commit", { branchId, rows: goodRows }, { token });
+    await client.post("/import/parties/commit", { rows: goodRows }, { token });
 
     const again = await client.post<{
       data: { imported: number; duplicates: number; issues: Array<{ message: string; severity: string }> };
-    }>("/import/parties/commit", { branchId, rows: goodRows }, { token });
+    }>("/import/parties/commit", { rows: goodRows }, { token });
 
     expect(again.body.data.imported).toBe(0);
     expect(again.body.data.duplicates).toBe(2);
     // Reported as a warning the operator can act on, not swallowed.
     expect(again.body.data.issues.some((i) => i.severity === "warning")).toBe(true);
-    expect(await Party.countDocuments({ branchId, name: "Imported Traders" })).toBe(1);
+    expect(await Party.countDocuments({ name: "Imported Traders" })).toBe(1);
   });
 
   it("creates each imported party with a ledger account and a posted opening balance", async () => {
-    const party = await Party.findOne({ branchId, name: "Imported Traders" }).lean();
+    const party = await Party.findOne({ name: "Imported Traders" }).lean();
     expect(party).toBeTruthy();
     // Bulk-inserting documents would have been far faster and left them unusable.
     expect(party!.ledgerAccountId).toBeTruthy();
@@ -338,12 +334,12 @@ describe("notifications (§50)", () => {
     });
 
     const account = await client.get<{ data: Array<{ id: string }> }>("/bank-accounts", { token });
-    const party = await Party.findOne({ branchId, name: "Sharma Traders" }).lean();
+    const party = await Party.findOne({ name: "Sharma Traders" }).lean();
 
     await client.post(
       "/payment-out",
       {
-        date: "2026-08-22", branchId, partyId: String(party!._id),
+        date: "2026-08-22", partyId: String(party!._id),
         accountId: account.body.data[0]!.id, amount: "40,000", paymentMode: "NEFT",
       },
       { token },

@@ -34,7 +34,6 @@ const lazyPage = <K extends string>(
 
 const DashboardPage = lazyPage(() => import("@/features/dashboard/dashboard-page"), "DashboardPage");
 const ProfilePage = lazyPage(() => import("@/features/auth/profile-page"), "ProfilePage");
-const BranchesPage = lazyPage(() => import("@/features/branches/branches-page"), "BranchesPage");
 const UsersPage = lazyPage(() => import("@/features/users/users-page"), "UsersPage");
 const RolesPage = lazyPage(() => import("@/features/roles/roles-page"), "RolesPage");
 const BanksPage = lazyPage(() => import("@/features/banking/banks-page"), "BanksPage");
@@ -64,7 +63,6 @@ const GeneralLedgerPage = lazyPage(() => import("@/features/books/ledger-book-pa
 const ExpenseLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "ExpenseLedgerPage");
 const IncomeLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "IncomeLedgerPage");
 const SavingsLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "SavingsLedgerPage");
-const BranchLedgerPage = lazyPage(() => import("@/features/books/branch-ledger-page"), "BranchLedgerPage");
 const BankBookPage = lazyPage(() => import("@/features/books/ledger-book-page"), "BankBookPage");
 const PartyLedgerPage = lazyPage(() => import("@/features/books/ledger-book-page"), "PartyLedgerPage");
 
@@ -274,14 +272,6 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        path: "branches",
-        element: (
-          <RequirePermission permission="branches.view">
-            <BranchesPage />
-          </RequirePermission>
-        ),
-      },
-      {
         path: "users",
         element: (
           <RequirePermission permission="users.view">
@@ -318,14 +308,6 @@ export const router = createBrowserRouter([
         element: (
           <RequirePermission permission="finance.ledger.view">
             <GeneralLedgerPage />
-          </RequirePermission>
-        ),
-      },
-      {
-        path: "branch-ledger",
-        element: (
-          <RequirePermission permission="reports.trialBalance">
-            <BranchLedgerPage />
           </RequirePermission>
         ),
       },

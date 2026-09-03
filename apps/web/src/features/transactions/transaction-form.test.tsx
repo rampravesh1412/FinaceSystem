@@ -115,13 +115,18 @@ describe("transaction form", () => {
   });
 
   /**
-   * The posting branch is a field on the form, so a super admin working from the
-   * all-branches view can record an entry without leaving the dialog to switch context.
+   * A receipt is entered at a counter while somebody waits, so the form asks only what it
+   * cannot work out for itself: no payment mode, no narration — and, now that the business
+   * is one set of books, no branch either.
    */
-  it("carries the chosen branch through to the payload", async () => {
+  it("asks a receipt for nothing it can work out for itself", async () => {
     const user = await openForm("PAYMENT_IN", "Payment In");
 
-    expect(screen.getByRole("combobox", { name: /^branch/i })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /^branch/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /payment mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^narration/i)).not.toBeInTheDocument();
+    // Reference stays, and says plainly that it is optional.
+    expect(screen.getByLabelText(/reference no \(optional\)/i)).toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/^amount/i), "5000");
     await user.click(screen.getByRole("combobox", { name: /^party/i }));
@@ -132,7 +137,17 @@ describe("transaction form", () => {
     await user.click(screen.getByRole("button", { name: /record receipt/i }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalled());
-    expect(api.post.mock.calls[0]![1]).toHaveProperty("branchId", BRANCH_ID);
+    const payload = api.post.mock.calls[0]![1] as Record<string, unknown>;
+
+    expect(payload).not.toHaveProperty("branchId");
+    // And no mode is invented for a receipt nobody was asked about.
+    expect(payload.paymentMode).toBeUndefined();
+  });
+
+  /** No form anywhere asks for a branch — the concept is gone from the product. */
+  it("never asks any mode for a branch", async () => {
+    await openForm("EXPENSE", "Record Expense");
+    expect(screen.queryByRole("combobox", { name: /^branch/i })).not.toBeInTheDocument();
   });
 
   /**

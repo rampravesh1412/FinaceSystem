@@ -21,7 +21,6 @@ let app: Express;
 let client: TestClient;
 let fx: Fixtures;
 let token: string;
-let branchId: string;
 let hdfcId: string;
 let cashId: string;
 let partyId: string;
@@ -40,7 +39,6 @@ beforeAll(async () => {
   client = new TestClient();
   await client.start(app);
   token = await client.loginAs("super@test.co");
-  branchId = fx.branches["105"]!;
 
   const bank = await client.post<{ data: { id: string } }>(
     "/banks",
@@ -61,7 +59,7 @@ beforeAll(async () => {
   const acc = await client.post<{ data: { id: string } }>(
     "/bank-accounts",
     {
-      bankId: bank.body.data.id, branchId, accountName: "HDFC Current",
+      bankId: bank.body.data.id, accountName: "HDFC Current",
       accountNumber: "50100234567890", ifsc: "HDFC0001234", openingBalance: "20,00,000",
       openingDate: "2026-04-01",
     },
@@ -71,7 +69,7 @@ beforeAll(async () => {
 
   const cash = await client.post<{ data: { id: string } }>(
     "/cash-accounts",
-    { branchId, name: "Main Counter", openingBalance: "1,00,000", openingDate: "2026-04-01" },
+    { name: "Main Counter", openingBalance: "1,00,000", openingDate: "2026-04-01" },
     { token },
   );
   cashId = cash.body.data.id;
@@ -79,7 +77,7 @@ beforeAll(async () => {
   const party = await client.post<{ data: { id: string } }>(
     "/parties",
     {
-      name: "Sharma Traders", branchId, type: "CUSTOMER",
+      name: "Sharma Traders", type: "CUSTOMER",
       openingBalance: "1,00,000", openingDate: "2026-04-01",
       creditLimit: "2,00,000", creditDays: 30,
     },
@@ -100,7 +98,7 @@ describe("Digital Khata (§11)", () => {
     // They owe us ₹1,00,000 from the opening. Take ₹40,000 off it.
     await client.post(
       "/payment-in",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "40,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "40,000", paymentMode: "CASH" },
       { token },
     );
 
@@ -140,7 +138,7 @@ describe("Digital Khata (§11)", () => {
   it("keeps a reversed entry visible in the statement", async () => {
     const created = await client.post<{ data: { id: string } }>(
       "/payment-in",
-      { date: "2026-08-20", branchId, partyId, accountId: hdfcId, amount: "5,000", paymentMode: "CASH" },
+      { date: "2026-08-20", partyId, accountId: hdfcId, amount: "5,000", paymentMode: "CASH" },
       { token },
     );
     await client.post(
@@ -179,7 +177,7 @@ describe("adjustments (§25)", () => {
     const res = await client.post<{ data: { id: string; txnNo: string } }>(
       "/adjustments",
       {
-        date: "2026-08-21", branchId, adjustmentType: "BALANCE_CORRECTION", partyId,
+        date: "2026-08-21", adjustmentType: "BALANCE_CORRECTION", partyId,
         amount: "-10,000",
         reason: "Duplicate invoice raised in July, confirmed with the customer by phone",
       },
@@ -203,7 +201,7 @@ describe("adjustments (§25)", () => {
   it("refuses an adjustment without a substantive reason", async () => {
     const res = await client.post<{ error: { code: string } }>(
       "/adjustments",
-      { date: "2026-08-21", branchId, adjustmentType: "BALANCE_CORRECTION", partyId, amount: "-100", reason: "fix" },
+      { date: "2026-08-21", adjustmentType: "BALANCE_CORRECTION", partyId, amount: "-100", reason: "fix" },
       { token },
     );
     expect(res.status).toBe(422);
@@ -213,7 +211,7 @@ describe("adjustments (§25)", () => {
     const res = await client.post<{ error: { code: string } }>(
       "/adjustments",
       {
-        date: "2026-08-21", branchId, adjustmentType: "BALANCE_CORRECTION", partyId, amount: "0",
+        date: "2026-08-21", adjustmentType: "BALANCE_CORRECTION", partyId, amount: "0",
         reason: "This adjustment would change absolutely nothing at all",
       },
       { token },
@@ -255,7 +253,7 @@ describe("credit aging (§12)", () => {
   it("does not age a party we owe — there is nothing to collect", async () => {
     const vendor = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "We Owe Them Ltd", branchId, type: "VENDOR", openingBalance: "-50,000", openingDate: "2026-04-01" },
+      { name: "We Owe Them Ltd", type: "VENDOR", openingBalance: "-50,000", openingDate: "2026-04-01" },
       { token },
     );
 
@@ -272,7 +270,7 @@ describe("credit aging (§12)", () => {
   it("flags a party past their credit limit", async () => {
     const tight = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Over Limit Co", branchId, type: "CUSTOMER", openingBalance: "80,000", openingDate: "2026-04-01", creditLimit: "50,000" },
+      { name: "Over Limit Co", type: "CUSTOMER", openingBalance: "80,000", openingDate: "2026-04-01", creditLimit: "50,000" },
       { token },
     );
 
@@ -296,12 +294,12 @@ describe("Bachat Khata (§13)", () => {
   it("opens an account as a liability — the money is the member's, not ours", async () => {
     const res = await client.post<{ data: { id: string; accountNo: string; ledgerAccountId: string } }>(
       "/savings",
-      { memberName: "Kamla Devi", branchId, mobile: "9876500011", interestRateBps: 650, openingBalance: "10,000", openingDate: "2026-04-01" },
+      { memberName: "Kamla Devi", mobile: "9876500011", interestRateBps: 650, openingBalance: "10,000", openingDate: "2026-04-01" },
       { token },
     );
 
     expect(res.status).toBe(201);
-    expect(res.body.data.accountNo).toMatch(/^SB-105-\d{5}$/);
+    expect(res.body.data.accountNo).toMatch(/^SB-\d{5}$/);
     savingsId = res.body.data.id;
 
     const ledgerAccount = await LedgerAccount.findById(res.body.data.ledgerAccountId).lean();
@@ -532,16 +530,8 @@ describe("reconciliation (§23, §62)", () => {
     expect(closedWithDifference!.difference).toBe(-5_000_00);
   });
 
-  /**
-   * Reconciliation is ORGANISATION-WIDE, because the account it reconciles is.
-   *
-   * The bank issues one statement covering every counter's activity on that account, so
-   * there is no per-branch share of it that could ever tie against the paper. This case
-   * asserted the opposite before accounts became organisation-wide; the isolation it was
-   * testing has moved to `finance.bank.reconcile`, which is what now decides who may
-   * open, match and close one.
-   */
-  it("lets any reconciler reach a reconciliation, since the account has no branch", async () => {
+  /** Reconciliation is gated by `finance.bank.reconcile` and nothing else. */
+  it("lets any holder of the permission reach a reconciliation", async () => {
     const bank = await client.get<{ data: Array<{ id: string }> }>("/banks?q=HDFC", { token });
 
     const account = await client.post<{ data: { id: string } }>(
@@ -564,7 +554,7 @@ describe("reconciliation (§23, §62)", () => {
     expect(opened.status).toBe(201);
     const id = opened.body.data.id;
 
-    // badmin@test.co is assigned to branch 105 only, and holds finance.bank.reconcile.
+    // badmin@test.co holds finance.bank.reconcile.
     const scopedToken = await client.loginAs("badmin@test.co");
 
     const read = await client.get(`/reconciliation/${id}`, { token: scopedToken });

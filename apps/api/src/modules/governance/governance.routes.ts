@@ -20,10 +20,8 @@ import { asyncHandler, created, escapeRegex, ok, paginated, paging } from "../..
 import { validate } from "../../middleware/validate.js";
 import {
   requireAuth,
-  requireBranchAccess,
   requirePermission,
   requireSuperAdmin,
-  scopeOf,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { AuditLog, FinancialPeriod, Transaction } from "../../models/index.js";
@@ -51,14 +49,12 @@ const actorOf = (req: { auth?: Express.AuthContext }) => ({
 approvalRouter.get(
   "/",
   requirePermission("approvals.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: approvalQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ApprovalQuery;
     const page = paging(query, { createdAt: 1 });
 
     const { items, total, totalValue } = await approvals.listPending(
-      scopeOf(req),
       actorOf(req),
       { skip: page.skip, limit: page.limit },
     );
@@ -91,7 +87,6 @@ approvalRouter.put(
 approvalRouter.post(
   "/:id/approve",
   requirePermission("approvals.act"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: z.object({ comment: z.string().trim().max(1000).optional() }) }),
   asyncHandler(async (req, res) => {
@@ -102,7 +97,6 @@ approvalRouter.post(
       id,
       actorOf(req),
       comment,
-      scopeOf(req),
       audit.auditContextFrom(req),
     );
 
@@ -113,14 +107,13 @@ approvalRouter.post(
 approvalRouter.post(
   "/:id/reject",
   requirePermission("approvals.act"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: rejectSchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
     const { reason } = req.valid.body as { reason: string };
 
-    const txn = await approvals.reject(id, actorOf(req), reason, scopeOf(req), audit.auditContextFrom(req));
+    const txn = await approvals.reject(id, actorOf(req), reason, audit.auditContextFrom(req));
     return ok(res, txn, "Rejected — nothing was posted");
   }),
 );
@@ -314,24 +307,12 @@ periodRouter.post(
 auditRouter.get(
   "/",
   requirePermission("audit.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: auditQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as AuditQuery;
     const page = paging(query, { createdAt: -1 }, ["createdAt", "action", "amount"]);
 
     const filter: Record<string, unknown> = {};
-
-    /**
-     * Branch scoping.
-     *
-     * A scoped user sees their branches' rows plus the ones with no branch at all —
-     * sign-ins, role changes, settings. Excluding those would hide "somebody changed my
-     * permissions" from the person it happened to.
-     */
-    if (!req.scope!.isUnscoped) {
-      filter.$or = [{ branchId: { $in: req.scope!.branchIds } }, { branchId: { $exists: false } }, { branchId: null }];
-    }
 
     if (query.action) filter.action = query.action;
     if (query.entity) filter.entity = query.entity;
@@ -377,7 +358,6 @@ auditRouter.get(
         userName: r.userName,
         userEmail: r.userEmail,
         roleName: r.roleName,
-        branchId: r.branchId ? String(r.branchId) : undefined,
         changedFields: r.changedFields,
         oldValue: r.oldValue,
         newValue: r.newValue,

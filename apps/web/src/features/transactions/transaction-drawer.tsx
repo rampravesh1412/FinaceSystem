@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
-  ArrowRight, Clock, FileText, Link2, Paperclip, Scale, TriangleAlert, Undo2, User,
+  ArrowRight, Clock, FileText, Link2, Paperclip, Pencil, Scale, TriangleAlert, Undo2, User,
 } from "lucide-react";
 import { reverseTransactionSchema, type ReverseTransactionInput, type TransactionDetail } from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { statusVariant } from "./transaction-table";
+import { EditPaymentDialog } from "./payment-edit";
 
 /**
  * Transaction details drawer (§46).
@@ -74,6 +75,8 @@ export function TransactionDrawer({
 function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => void }) {
   const { can } = useAuth();
   const [reverseOpen, setReverseOpen] = React.useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
+  const isPayment = txn.type === "PAYMENT_IN" || txn.type === "PAYMENT_OUT";
 
   const totalDebit = txn.entries.reduce((s, e) => s + e.debit, 0);
   const totalCredit = txn.entries.reduce((s, e) => s + e.credit, 0);
@@ -95,12 +98,7 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
                   Reversal
                 </Badge>
               ) : null}
-              {/* Absent on an organisation-level posting — an opening balance belongs
-                  to the business, not to a branch. */}
-              {txn.branch ? (
-                <Badge variant="outline" className="font-mono">{txn.branch.code}</Badge>
-              ) : null}
-            </div>
+                          </div>
           </div>
         </div>
       </SheetHeader>
@@ -112,9 +110,31 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
           <div className="flex items-start gap-2.5 border-b border-warning/30 bg-warning-subtle px-5 py-3 text-sm">
             <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
             <div>
-              <p className="font-medium text-foreground">This transaction was reversed.</p>
+              {/* An EDIT and a plain reversal both leave the original REVERSED, and they
+                  read very differently. Saying "reversed" alone would send somebody
+                  looking for a cancellation that never happened. */}
+              <p className="font-medium text-foreground">
+                {txn.supersededByTxn
+                  ? `This was corrected — ${txn.supersededByTxn.txnNo} replaced it.`
+                  : "This transaction was reversed."}
+              </p>
               <p className="text-muted-foreground">
-                It remains on the record for audit. Its effect on every balance has been cancelled.
+                {txn.supersededByTxn
+                  ? "It stays on the record with the reversal that cancelled it, so the correction is auditable end to end."
+                  : "It remains on the record for audit. Its effect on every balance has been cancelled."}
+              </p>
+            </div>
+          </div>
+        ) : txn.supersedesTxn ? (
+          <div className="flex items-start gap-2.5 border-b border-info/30 bg-info/5 px-5 py-3 text-sm">
+            <Pencil className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
+            <div>
+              <p className="font-medium text-foreground">
+                This corrects {txn.supersedesTxn.txnNo}.
+              </p>
+              <p className="text-muted-foreground">
+                The original was reversed rather than rewritten, so both versions and the
+                reversal between them are still on the books.
               </p>
             </div>
           </div>
@@ -280,6 +300,15 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
                     {event.by}
                     {event.role ? ` · ${event.role.replace(/_/g, " ").toLowerCase()}` : ""}
                   </p>
+                  {event.changedFields?.length ? (
+                    <p className="flex flex-wrap items-center gap-1 pt-0.5">
+                      {event.changedFields.map((f) => (
+                        <Badge key={f} variant="outline" className="font-mono text-2xs">
+                          {f}
+                        </Badge>
+                      ))}
+                    </p>
+                  ) : null}
                   {event.reason ? (
                     <p className="mt-1 rounded border border-border bg-surface-muted px-2 py-1 text-xs">
                       {event.reason}
@@ -292,32 +321,68 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
           </ol>
         </section>
 
-        {txn.reversedBy || txn.reversalOf ? (
+        {txn.reversedBy || txn.reversalOf || txn.supersededByTxn || txn.supersedesTxn ? (
           <>
             <Separator />
             <section className="space-y-2 p-5">
               <SectionTitle icon={Link2}>Related</SectionTitle>
-              <p className="text-sm text-muted-foreground">
-                {txn.reversedBy
-                  ? "This transaction was cancelled by a reversal."
-                  : "This is the reversal of an earlier transaction."}
-              </p>
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                {txn.supersededByTxn ? (
+                  <li>
+                    Replaced by{" "}
+                    <span className="font-mono text-foreground">{txn.supersededByTxn.txnNo}</span>,
+                    which carries the corrected figures.
+                  </li>
+                ) : null}
+                {txn.supersedesTxn ? (
+                  <li>
+                    Corrects{" "}
+                    <span className="font-mono text-foreground">{txn.supersedesTxn.txnNo}</span>.
+                  </li>
+                ) : null}
+                {txn.reversedBy ? <li>Cancelled by a reversal.</li> : null}
+                {txn.reversalOf ? <li>This is the reversal of an earlier transaction.</li> : null}
+              </ul>
             </section>
           </>
         ) : null}
       </div>
 
-      {/* Reversal is the only mutation offered. There is no delete, anywhere. */}
+      {/**
+        * Edit and Reverse. There is no delete, anywhere.
+        *
+        * Edit is offered only on a payment, because it is the only type whose correction
+        * path is built — and it shares `finance.payment.reverse`, since a money edit IS a
+        * reversal underneath and gating it lower would be a way around the stricter
+        * permission.
+        */}
       {txn.status === "COMPLETED" && !txn.isReversal && can("finance.payment.reverse") ? (
         <div className="flex items-center justify-between gap-3 border-t border-border p-4">
           <p className="text-2xs text-muted-foreground">
-            Posted transactions are never edited or deleted — only reversed.
+            Nothing here is deleted. A correction is posted; the original stays.
           </p>
-          <Button variant="destructive" size="sm" onClick={() => setReverseOpen(true)}>
-            <Undo2 />
-            Reverse
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            {isPayment ? (
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                <Pencil />
+                Edit
+              </Button>
+            ) : null}
+            <Button variant="destructive" size="sm" onClick={() => setReverseOpen(true)}>
+              <Undo2 />
+              Reverse
+            </Button>
+          </div>
         </div>
+      ) : null}
+
+      {isPayment ? (
+        <EditPaymentDialog
+          txn={txn}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          onDone={onClose}
+        />
       ) : null}
 
       <ReverseDialog

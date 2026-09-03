@@ -6,7 +6,6 @@ export interface AuditLogDoc extends Document<Types.ObjectId> {
   userName: string;
   userEmail?: string;
   roleName?: string;
-  branchId?: Types.ObjectId;
 
   action: AuditAction;
   entity: string;
@@ -45,7 +44,6 @@ const auditLogSchema = new Schema<AuditLogDoc>(
     userName: { type: String, required: true },
     userEmail: { type: String },
     roleName: { type: String },
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", index: true },
 
     action: { type: String, enum: Object.values(AUDIT_ACTION), required: true, index: true },
     entity: { type: String, required: true, index: true },
@@ -123,7 +121,6 @@ auditLogSchema.pre("save", function preventEdit(next) {
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ entity: 1, entityId: 1, createdAt: -1 }); // record timeline (§51)
 auditLogSchema.index({ userId: 1, createdAt: -1 }); // user activity report
-auditLogSchema.index({ branchId: 1, createdAt: -1 }); // branch-scoped audit view
 auditLogSchema.index({ action: 1, createdAt: -1 });
 
 export const AuditLog = model<AuditLogDoc>("AuditLog", auditLogSchema);

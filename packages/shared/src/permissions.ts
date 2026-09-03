@@ -9,7 +9,7 @@
  * Roles are NOT hard-coded gates. A role is a database row holding an array of these
  * strings, editable by a SuperAdmin at runtime. The constants below are the vocabulary;
  * the Role documents are the policy. The only role name the code ever special-cases is
- * SUPER_ADMIN, and only to mean "unscoped" (see `branchScope`).
+ * SUPER_ADMIN, and only for the handful of actions reserved to it.
  */
 
 export const PERMISSIONS = {
@@ -87,24 +87,17 @@ export const PERMISSIONS = {
   // ── Reporting ────────────────────────────────────────────────────────────
   "reports.view": "View financial reports",
   "reports.export": "Export reports to PDF / Excel / CSV",
-  "reports.viewAllBranches": "See every branch in a report, regardless of assignment",
   "reports.pnl": "View Profit & Loss",
   "reports.balanceSheet": "View the Balance Sheet",
   "reports.trialBalance": "View the Trial Balance",
 
   // ── Administration ───────────────────────────────────────────────────────
-  "branches.create": "Create branches",
-  "branches.view": "View branches",
-  "branches.edit": "Edit branch details",
-  "branches.disable": "Disable a branch",
-  "branches.transferFunds": "Move funds between branches",
 
   "users.create": "Create users",
   "users.view": "View users",
   "users.edit": "Edit users",
   "users.disable": "Disable a user",
   "users.resetPassword": "Reset another user's password",
-  "users.assignBranch": "Assign users to branches",
 
   "roles.view": "View roles and their permissions",
   "roles.manage": "Create roles and change role permissions",
@@ -153,7 +146,6 @@ export const PERMISSION_GROUPS: Array<{ key: string; label: string; match: RegEx
   { key: "charges", label: "Charges & Commission", match: /^finance\.charges\./ },
   { key: "ledger", label: "DayBook & Ledger", match: /^finance\.(daybook|ledger)\./ },
   { key: "reports", label: "Reports", match: /^reports\./ },
-  { key: "branches", label: "Branches", match: /^branches\./ },
   { key: "users", label: "Users", match: /^users\./ },
   { key: "roles", label: "Roles & Permissions", match: /^roles\./ },
   { key: "approvals", label: "Approvals", match: /^approvals\./ },
@@ -189,10 +181,10 @@ export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
  * change any of them from the Roles & Permissions screen.
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRole, Permission[]> = {
-  // Everything. The only role that is also unscoped across branches.
+  // Everything.
   SUPER_ADMIN: ALL_PERMISSIONS,
 
-  // Full operational control, but only over their own branch(es).
+  // Full operational control over day-to-day finance, short of administering the system.
   BRANCH_ADMIN: [
     "finance.payment.create", "finance.payment.view", "finance.payment.edit",
     "finance.payment.delete", "finance.payment.reverse", "finance.payment.approve",
@@ -221,7 +213,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRole, Permission[]> = {
     "period.view",
     "settings.view",
     "import.run",
-    "branches.view",
   ],
 
   // Operational finance. Notably absent: approve, reverse, credit limits, user
@@ -243,10 +234,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRole, Permission[]> = {
     "reports.view",
     "approvals.view",
     "period.view",
-    // Read-only visibility of their own branches. `requireBranchAccess` still restricts
-    // this to the branches they are assigned to; without it the branch picker, the global
-    // filters and every branch column in a report would be empty for an accountant.
-    "branches.view",
   ],
 
   // Read-only. Useful for auditors and owners who should never mutate the books.
@@ -256,7 +243,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRole, Permission[]> = {
     "finance.khata.view", "finance.savings.view", "finance.settlement.view",
     "finance.charges.view", "finance.daybook.view", "finance.ledger.view",
     "reports.view", "reports.pnl", "reports.balanceSheet", "reports.trialBalance",
-    "branches.view", "period.view",
+    "period.view",
   ],
 };
 

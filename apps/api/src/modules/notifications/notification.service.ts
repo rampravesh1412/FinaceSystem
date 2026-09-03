@@ -19,7 +19,6 @@ export interface NotifyInput {
   body?: string;
   link?: string;
   amount?: number;
-  branchId?: string | null;
   entity?: string;
   entityId?: string;
 }
@@ -38,7 +37,6 @@ export async function notify(userIds: string[], input: NotifyInput): Promise<voi
         body: input.body,
         link: input.link,
         amount: input.amount,
-        branchId: input.branchId ?? null,
         entity: input.entity,
         entityId: input.entityId,
       })),
@@ -51,18 +49,14 @@ export async function notify(userIds: string[], input: NotifyInput): Promise<voi
 }
 
 /**
- * Send to everyone holding a permission, within a branch.
+ * Send to everyone holding a permission.
  *
  * Resolves role membership at SEND time and writes one row per user. Storing "notify
  * whoever can approve" and resolving it at read time would silently re-target the message
  * whenever somebody changed role, so a message about last week's payment could surface
  * for a person who had nothing to do with it.
  */
-export async function notifyPermission(
-  permission: string,
-  branchId: string | null,
-  input: NotifyInput,
-): Promise<void> {
+export async function notifyPermission(permission: string, input: NotifyInput): Promise<void> {
   try {
     const roles = await Role.find({
       $or: [{ permissions: permission }, { permissions: "*" }],
@@ -76,14 +70,8 @@ export async function notifyPermission(
       roleId: { $in: roles.map((r) => r._id) },
       status: "ACTIVE",
     };
-    // Unscoped users are notified regardless of branch — they can see everything anyway,
-    // and an approval waiting in a branch they oversee is exactly their concern.
-    if (branchId) {
-      filter.$or = [{ branchIds: new Types.ObjectId(branchId) }, { branchIds: { $size: 0 } }];
-    }
-
     const users = await User.find(filter).select("_id").lean();
-    await notify(users.map((u) => String(u._id)), { ...input, branchId });
+    await notify(users.map((u) => String(u._id)), input);
   } catch (err) {
     logger.error({ err, permission }, "failed to resolve notification recipients");
   }
@@ -92,15 +80,13 @@ export async function notifyPermission(
 /* ── The events worth telling somebody about ─────────────────────────────── */
 
 export async function notifyApprovalRequired(options: {
-  /** Null for an organisation-level posting — everyone who may approve is told. */
-  branchId: string | null;
   transactionId: string;
   txnNo: string;
   typeLabel: string;
   amount: number;
   submittedBy: string;
 }): Promise<void> {
-  await notifyPermission("approvals.act", options.branchId, {
+  await notifyPermission("approvals.act", {
     type: "APPROVAL_REQUIRED",
     severity: "WARNING",
     title: `${options.typeLabel} of ${formatINR(options.amount)} needs approval`,
@@ -137,19 +123,14 @@ export async function notifyApprovalDecided(options: {
   });
 }
 
-/**
- * A drawer that did not tally.
- *
- * `branchId` is null: cash drawers are organisation-wide, so a shortfall is everybody's
- * concern rather than one office's. Everyone holding `finance.cash.view` is told.
- */
+/** A drawer that did not tally. Everyone holding `finance.cash.view` is told. */
 export async function notifyCashTallyMismatch(options: {
   drawer: string;
   difference: number;
   status: string;
   countedBy: string;
 }): Promise<void> {
-  await notifyPermission("finance.cash.view", null, {
+  await notifyPermission("finance.cash.view", {
     type: "CASH_TALLY_MISMATCH",
     severity: "WARNING",
     title: `Cash ${options.status.toLowerCase()} by ${formatINR(Math.abs(options.difference))}`,
@@ -160,14 +141,13 @@ export async function notifyCashTallyMismatch(options: {
 }
 
 export async function notifyReversal(options: {
-  branchId: string;
   originalNo: string;
   reversalNo: string;
   amount: number;
   reversedBy: string;
   reason: string;
 }): Promise<void> {
-  await notifyPermission("finance.daybook.view", options.branchId, {
+  await notifyPermission("finance.daybook.view", {
     type: "TRANSACTION_REVERSED",
     severity: "WARNING",
     title: `${options.originalNo} was reversed`,

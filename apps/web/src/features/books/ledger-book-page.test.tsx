@@ -15,11 +15,10 @@ vi.mock("@/lib/api", async () => {
   return { ...actual, api };
 });
 
-const BRANCH_ID = "6501aa000000000000000003";
 
 vi.mock("@/features/auth/auth-context", () => ({
   useAuth: () => ({
-    user: { id: "6501aa000000000000000001", activeBranchId: BRANCH_ID, isSuperAdmin: true },
+    user: { id: "6501aa000000000000000001", isSuperAdmin: true },
     can: () => true,
   }),
   Can: ({ children }: { children: React.ReactNode }) => children,
@@ -27,7 +26,6 @@ vi.mock("@/features/auth/auth-context", () => ({
 
 const { renderWithProviders } = await import("@/test/harness");
 const books = await import("./ledger-book-page");
-const { BranchLedgerPage } = await import("./branch-ledger-page");
 
 /**
  * The ledger books (§4.1, §34).
@@ -122,73 +120,5 @@ describe("ledger books", () => {
     // Unfiltered: the endpoint returns every kind when `kind` is omitted, so nine parallel
     // round trips would reassemble what one call already gives.
     expect(accountCalls[0]).not.toContain("kind=");
-  });
-});
-
-/**
- * The Branch Ledger (§3).
- *
- * A branch is a grouping of accounts, not an account — so this is a trial balance scoped to
- * one branch, and the assertion that matters is that the branch actually reaches the query.
- * A screen that showed the organisation-wide figures under a branch's name would be worse
- * than no screen.
- */
-describe("branch ledger", () => {
-  beforeEach(() => {
-    api.list.mockResolvedValue({
-      items: [{ id: BRANCH_ID, name: "Head Office", code: "101" }],
-      meta: { page: 1, limit: 25, total: 1, totalPages: 1, hasNext: false, hasPrev: false },
-    });
-    api.get.mockResolvedValue({
-      rows: [
-        { ledgerAccountId: "a1", code: "1001", name: "Cash — Main", kind: "CASH", accountClass: "ASSET", debit: 4500000, credit: 0 },
-        { ledgerAccountId: "a2", code: "3001", name: "Opening Equity", kind: "EQUITY", accountClass: "EQUITY", debit: 0, credit: 4500000 },
-      ],
-      totalDebit: 4500000,
-      totalCredit: 4500000,
-      difference: 0,
-      asOf: "2026-08-22T00:00:00.000Z",
-      branchId: BRANCH_ID,
-    });
-  });
-
-  it("scopes the trial balance to the selected branch", async () => {
-    renderWithProviders(<BranchLedgerPage />);
-
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-    const call = api.get.mock.calls.find(([p]) => String(p).includes("trial-balance"));
-
-    expect(call).toBeDefined();
-    expect(String(call![0])).toContain(BRANCH_ID);
-  });
-
-  it("reports that the branch ties on its own, not merely organisation-wide", async () => {
-    renderWithProviders(<BranchLedgerPage />);
-
-    // §3: every posting carries a branchId on both sides, so each branch balances
-    // independently. A branch that did not would be masked on the org-wide report.
-    expect(await screen.findByText(/ties on its own/i)).toBeInTheDocument();
-  });
-
-  it("surfaces a per-branch imbalance rather than hiding it", async () => {
-    api.get.mockResolvedValue({
-      rows: [{ ledgerAccountId: "a1", code: "1001", name: "Cash", kind: "CASH", accountClass: "ASSET", debit: 100, credit: 0 }],
-      totalDebit: 100, totalCredit: 0, difference: 100, asOf: "", branchId: BRANCH_ID,
-    });
-
-    renderWithProviders(<BranchLedgerPage />);
-
-    expect(await screen.findByText(/out of balance/i)).toBeInTheDocument();
-    // The explanation matters as much as the number: this is the failure mode the
-    // org-wide trial balance cannot see.
-    expect(screen.getByText(/another branch carries the opposite error/i)).toBeInTheDocument();
-  });
-
-  it("lists every account kind present in the branch", async () => {
-    renderWithProviders(<BranchLedgerPage />);
-
-    expect(await screen.findByText("Cash — Main")).toBeInTheDocument();
-    // Equity has no book of its own, which is exactly why it needs to appear here.
-    expect(screen.getByText("Opening Equity")).toBeInTheDocument();
   });
 });

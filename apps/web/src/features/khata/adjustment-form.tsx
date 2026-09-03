@@ -15,8 +15,6 @@ import {
   type PartySummary,
 } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
-import { useAuth } from "@/features/auth/auth-context";
-import { BranchRequired } from "@/components/branch-required";
 import { NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -79,7 +77,6 @@ type Target = "PARTY" | "ACCOUNT";
 type Direction = "INCREASE" | "DECREASE";
 
 function AdjustmentDialog({ partyId, onClose }: { partyId?: string; onClose: () => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [target, setTarget] = React.useState<Target>(partyId ? "PARTY" : "PARTY");
   const [direction, setDirection] = React.useState<Direction>("INCREASE");
@@ -99,7 +96,6 @@ function AdjustmentDialog({ partyId, onClose }: { partyId?: string; onClose: () 
     resolver: zodResolver(createAdjustmentSchema),
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      branchId: user?.activeBranchId ?? "",
       adjustmentType: "BALANCE_CORRECTION",
       partyId: partyId ?? "",
       amount: 0,
@@ -194,9 +190,6 @@ function AdjustmentDialog({ partyId, onClose }: { partyId?: string; onClose: () 
           </DialogDescription>
         </DialogHeader>
 
-        {!user?.activeBranchId ? (
-          <BranchRequired action="An adjustment" />
-        ) : (
         <form onSubmit={form.handleSubmit(submit)} className="space-y-4" noValidate>
           <Tabs
             value={target}
@@ -378,7 +371,6 @@ function AdjustmentDialog({ partyId, onClose }: { partyId?: string; onClose: () 
             </Button>
           </DialogFooter>
         </form>
-        )}
       </DialogContent>
     </Dialog>
   );

@@ -5,12 +5,9 @@ import { actorField, baseSchemaOptions } from "./fields.js";
 /**
  * A banking institution — HDFC, ICICI, SBI, Axis.
  *
- * Holds NO balance and no branch. Money lives in the BankAccounts beneath it, and those
- * are branch-owned. Keeping the institution separate means "HDFC" is spelled one way in
- * every branch, on every report, and in the bank-wise summary on the dashboard.
- *
- * Deliberately NOT branch-scoped: two branches banking with the same institution must
- * share one Bank row, or a bank-wise total across the organisation becomes meaningless.
+ * Holds NO balance. Money lives in the BankAccounts beneath it. Keeping the institution
+ * separate means "HDFC" is spelled one way on every report and in the bank-wise summary
+ * on the dashboard.
  */
 export interface BankDoc extends Document<Types.ObjectId> {
   name: string;

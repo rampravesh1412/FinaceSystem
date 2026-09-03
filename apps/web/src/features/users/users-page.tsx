@@ -99,7 +99,6 @@ export function UsersPage() {
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="hidden md:table-cell">Role</TableHead>
-                  <TableHead className="hidden lg:table-cell">Branches</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden sm:table-cell">Last sign-in</TableHead>
                   <TableHead className="w-12 screen-only"><span className="sr-only">Actions</span></TableHead>
@@ -124,22 +123,6 @@ export function UsersPage() {
                         {user.role?.name === "SUPER_ADMIN" ? <ShieldCheck className="size-3" /> : null}
                         {user.role?.label ?? "—"}
                       </Badge>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {user.branches.length === 0 ? (
-                        <span className="text-xs text-muted-foreground">All branches</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {user.branches.slice(0, 3).map((b) => (
-                            <Badge key={b.id} variant="default" className="font-mono">
-                              {b.code}
-                            </Badge>
-                          ))}
-                          {user.branches.length > 3 ? (
-                            <Badge variant="outline">+{user.branches.length - 3}</Badge>
-                          ) : null}
-                        </div>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={user.status === "ACTIVE" ? "success" : "warning"}>

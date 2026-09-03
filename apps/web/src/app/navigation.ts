@@ -1,9 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  ArrowLeftRight, BadgeIndianRupee, BookOpen, Building2, CalendarClock, CalendarRange, ClipboardCheck,
-  Coins, CreditCard, FileBarChart, FileSpreadsheet, Landmark, LayoutDashboard, Notebook,
-  PiggyBank, Receipt, ScrollText, Scale, Settings, ShieldCheck, TrendingDown, TrendingUp,
-  Users, Wallet, Percent, Handshake, ListChecks, History, Upload, FolderTree, Layers,
+  ArrowLeftRight, BadgeIndianRupee, BookOpen, CalendarClock, CalendarRange, ClipboardCheck, Coins, CreditCard, FileBarChart, FileSpreadsheet, Landmark, LayoutDashboard, Notebook, PiggyBank, Receipt, ScrollText, Scale, Settings, ShieldCheck, TrendingDown, TrendingUp, Users, Wallet, Percent, Handshake, ListChecks, History, Upload, FolderTree, Layers,
 } from "lucide-react";
 import type { Permission } from "@amiri/shared";
 
@@ -67,7 +64,6 @@ export const NAVIGATION: NavSection[] = [
       { label: "Savings Ledger", to: "/savings-ledger", icon: BookOpen, permission: "finance.ledger.view", phase: 10, keywords: ["member statement"] },
       { label: "Party Ledger", to: "/party-ledger", icon: ScrollText, permission: "finance.ledger.view", phase: 7, keywords: ["statement"] },
       { label: "General Ledger", to: "/ledger", icon: Layers, permission: "finance.ledger.view", phase: 10, keywords: ["chart of accounts", "any account", "suspense", "equity"] },
-      { label: "Branch Ledger", to: "/branch-ledger", icon: Building2, permission: "reports.trialBalance", phase: 10, keywords: ["per branch", "branch trial balance"] },
       { label: "Import Parties", to: "/import", icon: Upload, permission: "import.run", phase: 7, keywords: ["bulk", "csv", "excel", "upload", "migrate"] },
     ],
   },
@@ -104,7 +100,6 @@ export const NAVIGATION: NavSection[] = [
   {
     label: "Administration",
     items: [
-      { label: "Branches", to: "/branches", icon: Building2, permission: "branches.view", phase: 1, keywords: ["office", "location"] },
       { label: "Users", to: "/users", icon: Users, permission: "users.view", phase: 1, keywords: ["staff", "team"] },
       { label: "Roles & Permissions", to: "/roles", icon: ShieldCheck, permission: "roles.view", phase: 1, keywords: ["access", "rbac"] },
       { label: "Approvals", to: "/approvals", icon: ClipboardCheck, permission: "approvals.view", phase: 6 },

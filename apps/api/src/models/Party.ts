@@ -9,15 +9,6 @@ import { actorField, baseSchemaOptions, moneyField } from "./fields.js";
  * account each. A business that both buys from and sells to you should show ONE net
  * position, not two rows with opposite signs that somebody has to mentally offset.
  *
- * ORGANISATION-WIDE — there is no `branchId` here.
- *
- * The same reasoning that gives a party one ledger account gives them one master record:
- * a customer who pays at whichever counter is nearest must not become three part-parties
- * with three part-balances that only add up if somebody adds them up. The branch has not
- * disappeared from the books, it has moved to where it belongs — every LedgerEntry
- * carries the branch that posted it, so the DayBook, the branch trial balance and the
- * per-branch P&L are computed exactly as before and still tie.
- *
  * As everywhere else: no stored balance. The party's position is the signed sum of their
  * ledger entries, cached on their LedgerAccount. The sign convention is the Khata's:
  *

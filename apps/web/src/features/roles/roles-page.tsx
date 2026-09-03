@@ -89,7 +89,7 @@ export function RolesPage() {
                     <Users className="size-3" />
                     {role.userCount} user{role.userCount === 1 ? "" : "s"}
                   </Badge>
-                  {role.isUnscoped ? (
+                  {role.isSuperAdmin ? (
                     <Badge variant="warning" title="This role bypasses branch isolation">
                       <ShieldCheck className="size-3" />
                       Every branch

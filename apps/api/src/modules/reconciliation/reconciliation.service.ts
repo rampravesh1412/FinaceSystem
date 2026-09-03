@@ -38,9 +38,7 @@ import * as audit from "../../services/audit.service.js";
 /**
  * Load an open reconciliation, or behave as though it does not exist.
  *
- * Reconciliations are organisation-wide, because the account they reconcile is: the bank
- * issues one statement covering every counter's activity, so there is no per-branch share
- * of it that could tie. Access is governed by `finance.bank.reconcile` alone.
+ * Access is governed by `finance.bank.reconcile` alone.
  *
  * Still routed through one loader rather than a bare `findById` at each call site, so the
  * NotFound behaviour and the open/closed checks stay in one place.
@@ -246,7 +244,7 @@ export async function setLineStatus(
   const line = await ReconciliationLine.findById(lineId);
   if (!line) throw new NotFoundError("Statement line", lineId);
 
-  // Scoped through the PARENT: the line carries no branch of its own, so its owner is
+  // Resolved through the PARENT: a line has no standing of its own, so its owner is
   // whichever reconciliation it belongs to — and that lookup is where isolation applies.
   const recon = await loadScoped(String(line.reconciliationId));
   if (recon.status !== "IN_PROGRESS") {
@@ -340,7 +338,7 @@ export async function getSummary(
 }
 
 /**
- * Reconciliations for the branches in scope, newest first.
+ * Every reconciliation, newest first.
  *
  * Returns the same summary shape as `getSummary` so the list and the detail screen agree
  * on what a reconciliation looks like — including `difference`, which is the column the

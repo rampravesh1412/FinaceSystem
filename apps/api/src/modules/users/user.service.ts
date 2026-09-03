@@ -1,6 +1,6 @@
 import { Types, type FilterQuery } from "mongoose";
 import type { CreateUserInput, UpdateUserInput } from "@amiri/shared";
-import { Branch, Role, User, type UserDoc } from "../../models/index.js";
+import { Role, User, type UserDoc } from "../../models/index.js";
 import {
   BadRequestError,
   ConflictError,
@@ -16,53 +16,32 @@ import * as audit from "../../services/audit.service.js";
 export interface ActingUser {
   userId: string;
   isSuperAdmin: boolean;
-  branchIds: Types.ObjectId[];
 }
 
 /**
  * Privilege-escalation guard.
  *
- * A branch admin managing their own staff must not be able to hand out access they do not
- * themselves hold. Two rules, both enforced here rather than in a controller:
- *
- *   1. A scoped actor cannot assign a role marked `isUnscoped` — that would mint a
- *      SuperAdmin.
- *   2. A scoped actor cannot assign branches outside their own set — that would let a
- *      105 admin create a user who can read 107.
+ * An admin managing staff must not hand out access they do not themselves hold: only a
+ * super admin may assign a role marked `isSuperAdmin`. Enforced here rather than in a
+ * controller, so every path that assigns a role goes through it.
  */
 async function assertMayAssign(
-  actor: ActingUser,
+  actor: { isSuperAdmin: boolean },
   roleId: string | undefined,
-  branchIds: string[] | undefined,
 ): Promise<void> {
-  if (actor.isSuperAdmin) return;
+  if (!roleId || actor.isSuperAdmin) return;
 
-  if (roleId) {
-    const role = await Role.findById(roleId).select("isUnscoped name").lean();
-    if (!role) throw new NotFoundError("Role", roleId);
-    if (role.isUnscoped) {
-      throw new ForbiddenError("You cannot assign a role that has access to every branch");
-    }
-  }
-
-  if (branchIds?.length) {
-    const allowed = new Set(actor.branchIds.map(String));
-    const outside = branchIds.filter((b) => !allowed.has(b));
-    if (outside.length > 0) {
-      throw new ForbiddenError(
-        "You can only assign users to branches you are yourself assigned to",
-        "BRANCH_ACCESS_DENIED",
-      );
-    }
+  const role = await Role.findById(roleId).select("isSuperAdmin name").lean();
+  if (!role) throw new NotFoundError("Role", roleId);
+  if (role.isSuperAdmin) {
+    throw new ForbiddenError("You cannot assign a role with super-admin access");
   }
 }
 
 export interface UserListFilters {
   q?: string;
   roleId?: string;
-  branchId?: string;
   status?: string;
-  scopeIds: Types.ObjectId[] | null;
 }
 
 export async function list(filters: UserListFilters, page: Paging) {
@@ -70,11 +49,6 @@ export async function list(filters: UserListFilters, page: Paging) {
 
   if (filters.status) filter.status = filters.status;
   if (filters.roleId) filter.roleId = filters.roleId;
-  if (filters.branchId) filter.branchIds = filters.branchId;
-
-  // Branch isolation for the user directory: a scoped admin sees only users who share at
-  // least one branch with them, never the whole organisation's staff list.
-  if (filters.scopeIds) filter.branchIds = { $in: filters.scopeIds };
 
   if (filters.q?.trim()) {
     const rx = new RegExp(escapeRegex(filters.q.trim()), "i");
@@ -89,10 +63,6 @@ export async function list(filters: UserListFilters, page: Paging) {
       .populate<{ roleId: { _id: Types.ObjectId; name: string; label: string } }>(
         "roleId",
         "name label",
-      )
-      .populate<{ branchIds: Array<{ _id: Types.ObjectId; name: string; code: string }> }>(
-        "branchIds",
-        "name code",
       )
       .lean(),
     User.countDocuments(filter),
@@ -116,8 +86,6 @@ type PopulatedUser = {
   phone?: string;
   designation?: string;
   roleId?: { _id: unknown; name: string; label: string } | null;
-  branchIds?: Array<{ _id: unknown; name: string; code: string }>;
-  defaultBranchId?: unknown;
   status: string;
   mustChangePassword?: boolean;
   lastLoginAt?: Date | null;
@@ -134,12 +102,6 @@ function toUserSummary(u: PopulatedUser) {
     role: u.roleId
       ? { id: String(u.roleId._id), name: u.roleId.name, label: u.roleId.label }
       : null,
-    branches: (u.branchIds ?? []).map((b) => ({
-      id: String(b._id),
-      name: b.name,
-      code: b.code,
-    })),
-    defaultBranchId: u.defaultBranchId ? String(u.defaultBranchId) : null,
     status: u.status,
     mustChangePassword: Boolean(u.mustChangePassword),
     lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
@@ -151,20 +113,17 @@ function toUserSummary(u: PopulatedUser) {
 export async function getSummary(id: string) {
   const user = await User.findById(id)
     .populate("roleId", "name label")
-    .populate("branchIds", "name code")
     .lean();
 
   if (!user) throw new NotFoundError("User", id);
   return toUserSummary(user as never);
 }
 
-export async function getById(id: string, scopeIds: Types.ObjectId[] | null) {
+export async function getById(id: string) {
   const filter: FilterQuery<UserDoc> = { _id: id };
-  if (scopeIds) filter.branchIds = { $in: scopeIds };
 
   const user = await User.findOne(filter)
     .populate("roleId", "name label permissions")
-    .populate("branchIds", "name code")
     .lean();
 
   if (!user) throw new NotFoundError("User", id);
@@ -176,27 +135,10 @@ export async function create(
   actor: ActingUser,
   ctx: audit.AuditContext,
 ): Promise<UserDoc> {
-  await assertMayAssign(actor, input.roleId, input.branchIds);
+  await assertMayAssign(actor, input.roleId);
 
-  const role = await Role.findById(input.roleId).select("name isUnscoped").lean();
+  const role = await Role.findById(input.roleId).select("name").lean();
   if (!role) throw new NotFoundError("Role", input.roleId);
-
-  if (input.branchIds.length > 0) {
-    const found = await Branch.countDocuments({ _id: { $in: input.branchIds } });
-    if (found !== input.branchIds.length) {
-      throw new BadRequestError("One or more of the selected branches does not exist", "branchIds");
-    }
-  }
-
-  // A scoped role with no branches can see nothing at all. That is a valid intermediate
-  // state, but it is almost always a mistake at creation time, so it is refused here
-  // rather than producing a user who silently cannot work.
-  if (!role.isUnscoped && input.branchIds.length === 0) {
-    throw new BadRequestError(
-      "Assign at least one branch — a user with this role cannot see any data otherwise",
-      "branchIds",
-    );
-  }
 
   return withTransaction(async (session) => {
     try {
@@ -210,8 +152,6 @@ export async function create(
             phone: input.phone,
             passwordHash,
             roleId: input.roleId,
-            branchIds: input.branchIds,
-            defaultBranchId: input.defaultBranchId ?? input.branchIds[0] ?? null,
             designation: input.designation,
             status: input.status,
             mustChangePassword: input.mustChangePassword,
@@ -230,13 +170,12 @@ export async function create(
           entity: "User",
           entityId: String(user._id),
           entityLabel: user.name,
-          // `sanitize()` in the audit service strips the hash; the branch and role
-          // assignment is the part that matters for an access review.
+          // `sanitize()` in the audit service strips the hash; the role assignment is the
+          // part that matters for an access review.
           newValue: {
             name: user.name,
             email: user.email,
             role: role.name,
-            branchIds: user.branchIds.map(String),
             status: user.status,
           },
         },
@@ -258,51 +197,29 @@ export async function update(
   actor: ActingUser,
   ctx: audit.AuditContext,
 ): Promise<UserDoc> {
-  await assertMayAssign(actor, input.roleId, input.branchIds);
+  await assertMayAssign(actor, input.roleId);
 
   return withTransaction(async (session) => {
     const user = await User.findById(id).session(session);
     if (!user) throw new NotFoundError("User", id);
 
-    // A scoped admin may only touch users inside their own branches.
-    if (!actor.isSuperAdmin) {
-      const shares = user.branchIds.some((b) =>
-        actor.branchIds.some((a) => a.equals(b as Types.ObjectId)),
-      );
-      if (!shares) throw new ForbiddenError("That user is not in one of your branches");
-    }
-
     const before = {
       name: user.name,
       email: user.email,
       roleId: String(user.roleId),
-      branchIds: user.branchIds.map(String),
       status: user.status,
       designation: user.designation,
     };
 
     const roleChanged = input.roleId !== undefined && input.roleId !== String(user.roleId);
-    const branchesChanged =
-      input.branchIds !== undefined &&
-      JSON.stringify([...input.branchIds].sort()) !==
-        JSON.stringify(user.branchIds.map(String).sort());
 
     Object.assign(user, input, { updatedBy: ctx.userId });
-
-    // Keep the default branch consistent with the assignment set, or a user can end up
-    // defaulting into a branch they no longer hold.
-    if (input.branchIds && user.defaultBranchId) {
-      const stillAssigned = input.branchIds.includes(String(user.defaultBranchId));
-      if (!stillAssigned) user.defaultBranchId = (input.branchIds[0] as never) ?? null;
-    }
-
     await user.save({ session });
 
     const after = {
       name: user.name,
       email: user.email,
       roleId: String(user.roleId),
-      branchIds: user.branchIds.map(String),
       status: user.status,
       designation: user.designation,
     };
@@ -310,7 +227,7 @@ export async function update(
     await audit.record(
       ctx,
       {
-        action: roleChanged ? "ROLE_CHANGE" : branchesChanged ? "BRANCH_ASSIGN" : "UPDATE",
+        action: roleChanged ? "ROLE_CHANGE" : "UPDATE",
         entity: "User",
         entityId: id,
         entityLabel: user.name,
@@ -320,17 +237,17 @@ export async function update(
       session,
     );
 
-    return { user, roleChanged, branchesChanged };
-  }, { label: "user.update" }).then(async ({ user, roleChanged, branchesChanged }) => {
+    return { user, roleChanged };
+  }, { label: "user.update" }).then(async ({ user, roleChanged }) => {
     /**
-     * A change to role or branch assignment revokes every session for that user.
+     * A change of role revokes every session for that user.
      *
      * `requireAuth` re-reads permissions on each request, so a revoked permission takes
      * effect immediately anyway — but forcing a fresh sign-in also refreshes the branch
      * ids baked into their access token and makes the change unambiguous in the audit
      * trail. Done after commit so a failed revocation cannot roll back the update.
      */
-    if (roleChanged || branchesChanged) {
+    if (roleChanged) {
       await revokeAllSessions(id, roleChanged ? "ROLE_CHANGED" : "BRANCHES_CHANGED");
     }
     return user;
@@ -395,15 +312,8 @@ export async function resetPassword(
   actor: ActingUser,
   ctx: audit.AuditContext,
 ): Promise<void> {
-  const user = await User.findById(id).select("+passwordHash name email branchIds");
+  const user = await User.findById(id).select("+passwordHash name email");
   if (!user) throw new NotFoundError("User", id);
-
-  if (!actor.isSuperAdmin) {
-    const shares = user.branchIds.some((b) =>
-      actor.branchIds.some((a) => a.equals(b as Types.ObjectId)),
-    );
-    if (!shares) throw new ForbiddenError("That user is not in one of your branches");
-  }
 
   await user.setPassword(newPassword);
   user.mustChangePassword = mustChange;

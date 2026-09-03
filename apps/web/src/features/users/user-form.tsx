@@ -3,10 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { Check, Copy, KeyRound, Plus, ShieldAlert, TriangleAlert } from "lucide-react";
+import { Check, Copy, KeyRound, Plus, TriangleAlert } from "lucide-react";
 import {
   createUserSchema,
-  type BranchSummary,
   type CreateUserInput,
   type RoleSummary,
   type UserSummary,
@@ -16,8 +15,6 @@ import { SelectField, TextField, applyServerErrors } from "@/components/form";
 import { generatePassword } from "./password";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -55,7 +52,6 @@ function UserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
   const queryClient = useQueryClient();
   const [formError, setFormError] = React.useState<string | null>(null);
   const [created, setCreated] = React.useState<{ user: UserSummary; password: string } | null>(null);
-  const [branchIds, setBranchIds] = React.useState<string[]>([]);
 
   const roles = useQuery({
     queryKey: ["roles", "for-user-form"],
@@ -63,17 +59,11 @@ function UserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
     enabled: open,
   });
 
-  const branches = useQuery({
-    queryKey: ["branches", "for-user-form"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
-    enabled: open,
-  });
-
   const form = useForm<CreateUserInput>({
     resolver: zodResolver(createUserSchema),
     defaultValues: {
       name: "", email: "", phone: "", password: "",
-      roleId: "", branchIds: [], designation: "",
+      roleId: "", designation: "",
       status: "ACTIVE", mustChangePassword: true,
     } as never,
   });
@@ -93,23 +83,10 @@ function UserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
 
   const close = () => {
     form.reset();
-    setBranchIds([]);
     setCreated(null);
     setFormError(null);
     onOpenChange(false);
   };
-
-  const toggleBranch = (id: string) => {
-    const next = branchIds.includes(id) ? branchIds.filter((b) => b !== id) : [...branchIds, id];
-    setBranchIds(next);
-    form.setValue("branchIds", next, { shouldValidate: true });
-    // A default branch that is no longer assigned would fail the schema's own refinement.
-    const current = form.getValues("defaultBranchId");
-    if (current && !next.includes(current)) form.setValue("defaultBranchId", undefined);
-  };
-
-  const selectedRole = roles.data?.items.find((r) => r.id === form.watch("roleId"));
-  const roleIsUnscoped = Boolean(selectedRole?.isUnscoped);
 
   if (created) {
     return (
@@ -162,70 +139,6 @@ function UserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
               detail: `${r.permissions.length} permissions`,
             }))}
           />
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label>
-              Branches
-              {!roleIsUnscoped ? <span className="ml-0.5 text-destructive">*</span> : null}
-            </Label>
-
-            {roleIsUnscoped ? (
-              /* A super admin is unscoped by role; showing checkboxes that do nothing
-                 would imply a restriction that the server does not apply. */
-              <p className="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-xs">
-                <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-info" aria-hidden />
-                <span>
-                  <span className="font-medium">{selectedRole?.label}</span> is unscoped — this
-                  user sees every branch, present and future. Branch assignment does not apply.
-                </span>
-              </p>
-            ) : (
-              <>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {(branches.data?.items ?? []).map((branch) => (
-                    <label
-                      key={branch.id}
-                      className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border p-2.5 text-sm hover:bg-surface-muted"
-                    >
-                      <Checkbox
-                        checked={branchIds.includes(branch.id)}
-                        onCheckedChange={() => toggleBranch(branch.id)}
-                        className="mt-0.5"
-                      />
-                      <span>
-                        <span className="block font-medium">
-                          {branch.code} — {branch.name}
-                        </span>
-                        {branch.city ? (
-                          <span className="block text-2xs text-muted-foreground">{branch.city}</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-
-                {branchIds.length === 0 ? (
-                  <p className="flex items-start gap-2 text-xs text-warning-foreground">
-                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-                    With no branch assigned this user can sign in but will see no data at all —
-                    every query is filtered by their branch list.
-                  </p>
-                ) : (
-                  <SelectField
-                    form={form}
-                    name="defaultBranchId"
-                    label="Default branch"
-                    hint="Which branch they land in when they sign in."
-                    options={(branches.data?.items ?? [])
-                      .filter((b) => branchIds.includes(b.id))
-                      .map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }))}
-                  />
-                )}
-              </>
-            )}
-          </div>
 
           <Separator />
 
@@ -339,11 +252,6 @@ function CredentialHandover({
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">{user.role.label}</Badge>
-          <Badge variant="outline">
-            {user.branches.length === 0
-              ? "Unscoped"
-              : `${user.branches.length} branch${user.branches.length === 1 ? "" : "es"}`}
-          </Badge>
           <span>They will be asked to set a new password on first sign-in.</span>
         </div>
       </div>

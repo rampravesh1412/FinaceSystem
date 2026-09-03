@@ -1,6 +1,6 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { SETTLEMENT_KIND, SETTLEMENT_STATUS, type SettlementKind, type SettlementStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField, businessDateField, moneyField } from "./fields.js";
+import { actorField, baseSchemaOptions, businessDateField, moneyField } from "./fields.js";
 
 /**
  * Settlement (§24).
@@ -16,7 +16,6 @@ import { actorField, baseSchemaOptions, branchField, businessDateField, moneyFie
 export interface SettlementDoc extends Document<Types.ObjectId> {
   settlementNo: string;
   date: Date;
-  branchId: Types.ObjectId;
   kind: SettlementKind;
 
   partyId?: Types.ObjectId | null;
@@ -47,7 +46,6 @@ const settlementSchema = new Schema<SettlementDoc>(
   {
     settlementNo: { type: String, required: true, unique: true, uppercase: true, trim: true },
     date: businessDateField(true),
-    branchId: branchField(true),
     kind: { type: String, enum: Object.values(SETTLEMENT_KIND), required: true, index: true },
 
     partyId: { type: Schema.Types.ObjectId, ref: "Party", default: null, index: true },
@@ -78,7 +76,7 @@ const settlementSchema = new Schema<SettlementDoc>(
   baseSchemaOptions(),
 );
 
-settlementSchema.index({ branchId: 1, date: -1 });
-settlementSchema.index({ branchId: 1, status: 1, date: -1 });
+settlementSchema.index({ date: -1 });
+settlementSchema.index({ status: 1, date: -1 });
 
 export const Settlement = model<SettlementDoc>("Settlement", settlementSchema);

@@ -14,7 +14,7 @@ import {
 } from "@amiri/shared";
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { requireAuth, requireBranchAccess, requirePermission } from "../../middleware/auth.js";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import * as service from "./user.service.js";
@@ -26,16 +26,14 @@ userRouter.use(requireAuth);
 const idParam = z.object({ id: objectId });
 const SORTABLE = ["name", "email", "status", "lastLoginAt", "createdAt"];
 
-const actorOf = (req: { auth?: Express.AuthContext; scope?: Express.BranchScope }): service.ActingUser => ({
+const actorOf = (req: { auth?: Express.AuthContext }): service.ActingUser => ({
   userId: req.auth!.userId,
   isSuperAdmin: req.auth!.isSuperAdmin,
-  branchIds: req.scope?.branchIds ?? [],
 });
 
 userRouter.get(
   "/",
   requirePermission("users.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: userQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as UserQuery;
@@ -45,9 +43,7 @@ userRouter.get(
       {
         q: query.q,
         roleId: query.roleId,
-        branchId: query.branchId,
         status: query.status,
-        scopeIds: req.scope!.isUnscoped ? null : req.scope!.branchIds,
       },
       page,
     );
@@ -59,11 +55,10 @@ userRouter.get(
 userRouter.get(
   "/:id",
   requirePermission("users.view"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    const user = await service.getById(id, req.scope!.isUnscoped ? null : req.scope!.branchIds);
+    const user = await service.getById(id);
     return ok(res, user);
   }),
 );
@@ -71,7 +66,6 @@ userRouter.get(
 userRouter.post(
   "/",
   requirePermission("users.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createUserSchema }),
   asyncHandler(async (req, res) => {
@@ -87,7 +81,6 @@ userRouter.post(
 userRouter.patch(
   "/:id",
   requirePermission("users.edit"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: updateUserSchema }),
   asyncHandler(async (req, res) => {
@@ -101,7 +94,6 @@ userRouter.patch(
 userRouter.post(
   "/:id/status",
   requirePermission("users.disable"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({
     params: idParam,
@@ -128,7 +120,6 @@ userRouter.post(
 userRouter.post(
   "/:id/reset-password",
   requirePermission("users.resetPassword"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({
     params: idParam,

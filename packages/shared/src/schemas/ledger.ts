@@ -14,7 +14,6 @@ import {
 
 export const ledgerAccountQuerySchema = listQuery.extend({
   kind: z.nativeEnum(ACCOUNT_KIND).optional(),
-  branchId: objectId.optional(),
   /** Hide accounts with no entries and a zero balance — the trial balance's usual view. */
   activeOnly: booleanFlag.optional(),
 });
@@ -23,7 +22,6 @@ export type LedgerAccountQuery = z.infer<typeof ledgerAccountQuerySchema>;
 export const ledgerEntryQuerySchema = listQuery
   .extend({
     ledgerAccountId: objectId.optional(),
-    branchId: objectId.optional(),
     transactionId: objectId.optional(),
   })
   .and(dateRange);
@@ -35,7 +33,6 @@ export interface LedgerAccountSummary {
   name: string;
   kind: AccountKind;
   accountClass: AccountClass;
-  branchId: string | null;
   /** Signed against the account's normal side: positive means a normal balance. */
   balance: number;
   entryCount: number;
@@ -80,5 +77,4 @@ export interface TrialBalance {
   /** Always zero in a correct system. Non-zero is a bug, and is surfaced, not hidden. */
   difference: number;
   asOf: string;
-  branchId: string | null;
 }

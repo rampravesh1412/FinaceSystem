@@ -119,7 +119,6 @@ export const createChargeRuleSchema = z
     /** Restrict to a party type, e.g. distributor commission. Empty means any. */
     partyTypes: z.array(z.nativeEnum(PARTY_TYPE)).default([]),
 
-    branchId: objectId.optional(),
     status: z.nativeEnum(RECORD_STATUS).default("ACTIVE"),
     notes: note(),
   })

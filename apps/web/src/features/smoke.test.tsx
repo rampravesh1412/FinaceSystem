@@ -15,7 +15,6 @@ vi.mock("@/lib/api", async () => {
   return { ...actual, api };
 });
 
-const BRANCH_ID = "6501aa000000000000000003";
 
 vi.mock("@/features/auth/auth-context", () => ({
   useAuth: () => ({
@@ -25,16 +24,12 @@ vi.mock("@/features/auth/auth-context", () => ({
       email: "test@amiri.co",
       role: { id: "r", name: "SUPER_ADMIN", label: "Super Admin" },
       permissions: ["*"],
-      branchIds: [BRANCH_ID],
-      branches: [{ id: BRANCH_ID, name: "Head Office", code: "101" }],
-      activeBranchId: BRANCH_ID,
       isSuperAdmin: true,
       mustChangePassword: false,
     },
     status: "authenticated",
     can: () => true,
     logout: vi.fn(),
-    switchBranch: vi.fn(),
   }),
   Can: ({ children }: { children: React.ReactNode }) => children,
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -70,7 +65,6 @@ const SCREENS: Array<{ name: string; load: () => Promise<{ default?: unknown } &
   { name: "Accounts", load: () => import("@/features/banking/bank-accounts-page"), export: "BankAccountsPage" },
   { name: "Users", load: () => import("@/features/users/users-page"), export: "UsersPage" },
   { name: "Roles", load: () => import("@/features/roles/roles-page"), export: "RolesPage" },
-  { name: "Branches", load: () => import("@/features/branches/branches-page"), export: "BranchesPage" },
   { name: "Khata", load: () => import("@/features/khata/khata-page"), export: "KhataPage" },
   { name: "Credit", load: () => import("@/features/credit/credit-page"), export: "CreditPage" },
   { name: "Savings", load: () => import("@/features/savings/savings-page"), export: "SavingsPage" },
@@ -92,7 +86,6 @@ const SCREENS: Array<{ name: string; load: () => Promise<{ default?: unknown } &
   { name: "Expense ledger", load: () => import("@/features/books/ledger-book-page"), export: "ExpenseLedgerPage" },
   { name: "Income ledger", load: () => import("@/features/books/ledger-book-page"), export: "IncomeLedgerPage" },
   { name: "Savings ledger", load: () => import("@/features/books/ledger-book-page"), export: "SavingsLedgerPage" },
-  { name: "Branch ledger", load: () => import("@/features/books/branch-ledger-page"), export: "BranchLedgerPage" },
 ];
 
 describe("every screen renders without throwing", () => {
@@ -142,7 +135,7 @@ describe("the dashboard's slotted link", () => {
     api.get.mockResolvedValue({
       totalBalance: 0, bankBalance: 0, cashBalance: 0, savingsHeld: 0,
       todayIn: 0, todayOut: 0, todayNet: 0, todayIncome: 0, todayExpense: 0,
-      agingBuckets: {}, trend: [], topExpenses: [], branchProfit: [],
+      agingBuckets: {}, trend: [], topExpenses: [],
     });
   });
 

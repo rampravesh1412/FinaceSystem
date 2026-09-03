@@ -52,7 +52,6 @@ export async function createParty(
           kind: "PARTY",
           // Organisation-wide, like the party it belongs to. The branch lives on the
           // entries posted against this account, not on the account itself.
-          branchId: null,
           refKind: "Party",
           // A party balance legitimately swings either way — they owe us, or we owe them.
           // Enforcing a floor here would block recording a genuine payable.
@@ -116,7 +115,6 @@ export async function createParty(
           ledgerAccountId: ledgerAccount._id,
           // No branch: what a party owed on day one is an organisation-level fact, not
           // something any one office traded.
-          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
           label: `${input.name} (${code})`,

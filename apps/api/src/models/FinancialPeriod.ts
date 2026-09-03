@@ -13,7 +13,7 @@ import { actorField, baseSchemaOptions, businessDateField } from "./fields.js";
  * LOCKED goes further — reopening requires a super admin. It is for a year that has been
  * filed with the tax authority.
  *
- * Periods are organisation-wide, not per branch. A branch closing its books
+ * Periods are organisation-wide. One office closing its books
  * independently would make a consolidated report meaningless, since half the
  * organisation could still be posting into a month the other half had finalised.
  */

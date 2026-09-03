@@ -45,10 +45,6 @@ function signAccessToken(user: UserDoc, isSuperAdmin: boolean, sessionId: string
   const payload = {
     sub: String(user._id),
     role: String(user.roleId),
-    // Branch ids ride in the token so the common case needs no user lookup. They are a
-    // performance hint, not the authority: `requireAuth` still loads the live user, and a
-    // branch revoked after the token was issued takes effect on the next request.
-    branchIds: user.branchIds.map(String),
     isSuperAdmin,
     sid: sessionId,
   };
@@ -90,7 +86,7 @@ export async function issueTokens(
 ): Promise<IssuedTokens> {
   const refreshToken = crypto.randomBytes(48).toString("base64url");
   const familyId = context.familyId ?? crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + env.JWT_REFRESH_TTL_DAYS * 86_400_000);
+  const expiresAt = new Date(Date.now() + env.JWT_REFRESH_TTL_HOURS * 3_600_000);
 
   const session = await Session.create({
     userId: user._id,
@@ -190,7 +186,7 @@ export function setRefreshCookie(res: Response, token: string): void {
     secure: env.COOKIE_SECURE,
     sameSite: "strict",
     path: `${env.API_PREFIX}/auth`,
-    maxAge: env.JWT_REFRESH_TTL_DAYS * 86_400_000,
+    maxAge: env.JWT_REFRESH_TTL_HOURS * 3_600_000,
     ...(env.COOKIE_DOMAIN ? { domain: env.COOKIE_DOMAIN } : {}),
   });
 }

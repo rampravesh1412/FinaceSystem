@@ -11,7 +11,6 @@ import {
   parseAmount,
   savingsTransactionSchema,
   type BankAccountSummary,
-  type BranchSummary,
   type CashAccountSummary,
   type CreateSavingsAccountInput,
   type PartySummary,
@@ -57,14 +56,8 @@ export function NewSavingsAccountButton() {
 }
 
 function OpenAccountDialog({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [formError, setFormError] = React.useState<string | null>(null);
-
-  const branches = useQuery({
-    queryKey: ["branches", "for-savings"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
-  });
 
   const parties = useQuery({
     queryKey: ["parties", "for-savings"],
@@ -75,7 +68,6 @@ function OpenAccountDialog({ onClose }: { onClose: () => void }) {
     resolver: zodResolver(createSavingsAccountSchema),
     defaultValues: {
       memberName: "",
-      branchId: user?.activeBranchId ?? "",
       mobile: "",
       interestRateBps: 0,
       openingBalance: 0,
@@ -127,17 +119,6 @@ function OpenAccountDialog({ onClose }: { onClose: () => void }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField form={form} name="mobile" label="Mobile" inputMode="numeric" maxLength={10} />
-            <SelectField
-              form={form}
-              name="branchId"
-              label="Branch"
-              required
-              placeholder={branches.isPending ? "Loading…" : "Choose a branch"}
-              options={(branches.data?.items ?? []).map((b) => ({
-                value: b.id,
-                label: `${b.code} — ${b.name}`,
-              }))}
-            />
           </div>
 
           <SelectField

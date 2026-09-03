@@ -20,16 +20,6 @@ export interface LedgerEntryDoc extends Document<Types.ObjectId> {
   transactionType: TransactionType;
 
   ledgerAccountId: Types.ObjectId;
-  /**
-   * The branch that transacted — the ONLY place the branch dimension lives now that
-   * accounts and parties are organisation-wide. Every branch report reads this field.
-   *
-   * Null for an organisation-level posting: the opening balance of a shared account or
-   * party, which belongs to the business rather than to an office. Both legs of such a
-   * posting are null together, so a branch-filtered trial balance excludes the pair and
-   * still ties, while the organisation-wide one includes it.
-   */
-  branchId?: Types.ObjectId | null;
 
   date: Date;
   direction: Direction;
@@ -66,7 +56,6 @@ const ledgerEntrySchema = new Schema<LedgerEntryDoc>(
     transactionType: { type: String, required: true },
 
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true },
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null },
 
     date: businessDateField(true),
     direction: { type: String, enum: Object.values(DIRECTION), required: true },
@@ -164,7 +153,6 @@ ledgerEntrySchema.pre("save", function guardSave(next) {
  * without it, page 2 of a statement can repeat a row from page 1.
  */
 ledgerEntrySchema.index({ ledgerAccountId: 1, date: 1, _id: 1 });
-ledgerEntrySchema.index({ branchId: 1, date: -1, _id: -1 });
 ledgerEntrySchema.index({ transactionId: 1 });
 ledgerEntrySchema.index({ ledgerAccountId: 1, reconciledAt: 1 }); // unreconciled lookup
 

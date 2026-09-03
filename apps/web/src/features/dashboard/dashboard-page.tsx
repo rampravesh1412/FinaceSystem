@@ -13,15 +13,14 @@ import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/stat-card";
 import { EmptyState } from "@/components/empty-state";
-import { BranchProfitChart, BucketChart, RankedBarChart, TrendChart } from "@/components/charts";
+import { BucketChart, RankedBarChart, TrendChart } from "@/components/charts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 /**
- * Dashboard (§31 SuperAdmin, §32 Branch, §33 Accountant).
+ * Dashboard (§31, §33).
  *
  * The layout enforces §21 visually: CASH FLOW and PROFIT live in separate, labelled
  * groups with their own charts, and the page never shows a figure that adds one to the
@@ -35,7 +34,7 @@ export function DashboardPage() {
   const [days, setDays] = React.useState(30);
 
   const query = useQuery({
-    queryKey: ["dashboard", { days, branch: user?.activeBranchId }],
+    queryKey: ["dashboard", { days }],
     queryFn: () => api.get<DashboardResponse>(`/dashboard${qs({ days })}`),
   });
 
@@ -63,11 +62,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <PageHeader
         title={`${greeting}, ${firstName}`}
-        description={
-          d?.scope === "BRANCH" && d.branch
-            ? `${d.branch.code} — ${d.branch.name}`
-            : "Across every branch."
-        }
+        description="Here is where the business stands today."
         actions={
           <div className="flex rounded-lg bg-surface-muted p-1" role="group" aria-label="Trend period">
             {[7, 30, 90].map((n) => (
@@ -217,47 +212,6 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* Branch comparison is for unscoped users only — §32 forbids showing a scoped
-          user another branch's numbers, and the server omits them entirely. */}
-      {d && d.branches.length > 0 ? (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Branch performance</CardTitle>
-            <p className="text-xs text-muted-foreground">Profit this month, by branch.</p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <BranchProfitChart data={d.branches.map((b) => ({ code: b.code, profit: b.profit }))} />
-
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Branch</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Income</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Expenses</TableHead>
-                  <TableHead className="text-right">Profit</TableHead>
-                  <TableHead className="hidden text-right lg:table-cell">Receivable</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {d.branches.map((b) => (
-                  <TableRow key={b.branchId}>
-                    <TableCell>
-                      <span className="font-mono text-xs font-medium">{b.code}</span>
-                      <span className="ml-2 text-sm text-muted-foreground">{b.name}</span>
-                    </TableCell>
-                    <TableCell className="text-right"><Money value={b.balance} showIcon={false} size="sm" /></TableCell>
-                    <TableCell className="hidden text-right sm:table-cell"><Money value={b.income} showIcon={false} size="sm" /></TableCell>
-                    <TableCell className="hidden text-right sm:table-cell"><Money value={b.expenses} showIcon={false} size="sm" /></TableCell>
-                    <TableCell className="text-right"><Money value={b.profit} direction="auto" showIcon={false} size="sm" /></TableCell>
-                    <TableCell className="hidden text-right lg:table-cell"><Money value={b.receivable} showIcon={false} size="sm" /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

@@ -35,7 +35,6 @@ export interface ChargeRuleDoc extends Document<Types.ObjectId> {
   bearer: ChargeBearer;
   appliesTo: string[];
   partyTypes: string[];
-  branchId?: Types.ObjectId | null;
   status: RecordStatus;
   notes?: string;
   createdBy?: Types.ObjectId;
@@ -83,7 +82,6 @@ const chargeRuleSchema = new Schema<ChargeRuleDoc>(
     partyTypes: [{ type: String, enum: Object.values(PARTY_TYPE) }],
 
     /** Null makes the rule organisation-wide. */
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null, index: true },
     status: { type: String, enum: Object.values(RECORD_STATUS), default: RECORD_STATUS.ACTIVE, index: true },
     notes: { type: String, trim: true, maxlength: 500 },
     createdBy: actorField(),

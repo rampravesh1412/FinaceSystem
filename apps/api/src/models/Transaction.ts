@@ -21,7 +21,7 @@ import {
  * collections. That choice buys three things that matter daily:
  *
  *   • one numbering sequence and one uniqueness guarantee across all vouchers
- *   • the DayBook is `find({ branchId, date })` — not an eight-way union
+ *   • the DayBook is `find({ date })` — not an eight-way union
  *   • status, approval, attachments, reversal and audit behave identically everywhere
  *
  * Type-specific fields live on the discriminator schemas registered in Phase 3.
@@ -30,14 +30,6 @@ export interface TransactionDoc extends Document<Types.ObjectId> {
   txnNo: string;
   type: TransactionType;
   date: Date;
-  /**
-   * The branch that transacted.
-   *
-   * Null on an organisation-level posting — the opening balance of a shared account or
-   * party. Those belong to the business, not to an office, and stamping one with an
-   * arbitrary branch would put a figure nobody at that branch recognises on its books.
-   */
-  branchId?: Types.ObjectId | null;
   status: TransactionStatus;
 
   /**
@@ -85,6 +77,27 @@ export interface TransactionDoc extends Document<Types.ObjectId> {
   reversalReason?: string;
 
   /**
+   * The EDIT chain, distinct from the reversal chain and stored separately on purpose.
+   *
+   * Changing an amount, party, account or date on a posted transaction cannot rewrite it —
+   * the balance would move with no entry to explain it. Instead the original is reversed
+   * and a corrected transaction is posted, and these two fields join them up:
+   *
+   *     PAY-IN-000012   status REVERSED, supersededBy → PAY-IN-000014
+   *     REV-000003      reversalOf      → PAY-IN-000012
+   *     PAY-IN-000014   supersedes      → PAY-IN-000012
+   *
+   * `reversedBy` alone could not express this: it says "this was cancelled", not "this was
+   * cancelled BECAUSE it was corrected, and here is the version that replaced it". Without
+   * the distinction, an edit is indistinguishable from a plain reversal on every screen
+   * that shows one.
+   */
+  supersededBy?: Types.ObjectId | null;
+  supersedes?: Types.ObjectId | null;
+  /** Why the correction was made. Mandatory on an edit, as on a reversal. */
+  editReason?: string;
+
+  /**
    * The postings that WILL be written when this transaction is approved (§27).
    *
    * Populated only while status is PENDING, and cleared on approval. A transaction
@@ -130,7 +143,6 @@ const transactionSchema = new Schema<TransactionDoc>(
     txnNo: { type: String, required: true, unique: true, uppercase: true, trim: true },
     type: { type: String, enum: Object.values(TRANSACTION_TYPE), required: true, index: true },
     date: businessDateField(true),
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null, index: true },
 
     status: {
       type: String,
@@ -163,6 +175,10 @@ const transactionSchema = new Schema<TransactionDoc>(
     reversalOf: { type: Schema.Types.ObjectId, ref: "Transaction", default: null, index: true },
     reversedBy: { type: Schema.Types.ObjectId, ref: "Transaction", default: null },
     reversalReason: { type: String, trim: true, maxlength: 1000 },
+
+    supersededBy: { type: Schema.Types.ObjectId, ref: "Transaction", default: null },
+    supersedes: { type: Schema.Types.ObjectId, ref: "Transaction", default: null, index: true },
+    editReason: { type: String, trim: true, maxlength: 1000 },
 
     pendingLines: {
       type: [
@@ -220,9 +236,9 @@ transactionSchema.pre("validate", function checkAmounts(next) {
 });
 
 /* Indexes, named after the screen each one serves. */
-transactionSchema.index({ branchId: 1, date: -1, _id: -1 }); // DayBook
-transactionSchema.index({ branchId: 1, status: 1, date: -1 }); // approval queue
-transactionSchema.index({ branchId: 1, type: 1, date: -1 }); // per-type listings
+transactionSchema.index({ date: -1, _id: -1 }); // DayBook
+transactionSchema.index({ status: 1, date: -1 }); // approval queue
+transactionSchema.index({ type: 1, date: -1 }); // per-type listings
 transactionSchema.index({ partyId: 1, date: -1 }); // party statement
 transactionSchema.index({ fiscalYear: 1, type: 1 });
 transactionSchema.index({ narration: "text", referenceNo: "text" }, { name: "txn_search" });

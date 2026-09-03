@@ -14,7 +14,6 @@ import { PaginationBar } from "@/components/pagination-bar";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -102,7 +101,6 @@ export function SavingsPage() {
                 <TableRow>
                   <TableHead>Member</TableHead>
                   <TableHead className="hidden md:table-cell">Account no</TableHead>
-                  <TableHead className="hidden xl:table-cell">Branch</TableHead>
                   <TableHead className="hidden lg:table-cell text-right">Rate</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="hidden sm:table-cell">Last activity</TableHead>
@@ -132,7 +130,6 @@ export function SavingsPage() {
                     </TableCell>
                     <TableCell className="hidden font-mono text-xs md:table-cell">{account.accountNo}</TableCell>
                     <TableCell className="hidden xl:table-cell">
-                      <Badge variant="outline" className="font-mono">{account.branch.code}</Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell tabular text-right text-xs text-muted-foreground">
                       {account.interestRateBps > 0 ? `${account.interestRateBps / 100}%` : "—"}

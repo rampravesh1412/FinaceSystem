@@ -1,5 +1,21 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 
+/**
+ * One signed-in session — one device, one browser.
+ *
+ * A user may hold SEVERAL at once. Signing in on a phone does not disturb the session on
+ * the counter machine: each login creates its own row with its own rotation family, and
+ * nothing here revokes a sibling. That is deliberate — a shared counter where the second
+ * sign-in silently kicked out the first would have people quietly losing half-entered
+ * vouchers.
+ *
+ * What DOES revoke every session at once is a change to the credential or the authority
+ * behind them: a password change, or a role change. Both are handled by
+ * `revokeAllSessions`, and both should take effect everywhere immediately.
+ *
+ * Each session lasts `JWT_REFRESH_TTL_HOURS` (six hours by default) from the moment it is
+ * created, and Mongo's TTL sweep removes the row once `expiresAt` passes.
+ */
 export interface SessionDoc extends Document<Types.ObjectId> {
   userId: Types.ObjectId;
   /** SHA-256 of the refresh token. The token itself is never stored. */

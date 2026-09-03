@@ -3,13 +3,7 @@ import { BANK_ACCOUNT_TYPE, RECORD_STATUS, type BankAccountType, type RecordStat
 import { actorField, baseSchemaOptions, moneyField } from "./fields.js";
 
 /**
- * A real bank account, owned by the organisation.
- *
- * NOT branch-scoped. One HDFC current account is one account: every counter pays into it
- * and draws on it, and the bank prints one statement for it. Filing a copy per branch
- * would split that single real balance across several ledgers, and none of them would
- * reconcile against the statement. The branch that transacted is recorded on each posting
- * instead, which is what per-branch reporting reads.
+ * A real bank account.
  *
  * Note what is NOT here: no `currentBalance`, no `availableBalance`. The balance is the
  * signed sum of this account's ledger entries, cached on its LedgerAccount row. Storing a

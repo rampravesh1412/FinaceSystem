@@ -7,7 +7,7 @@ export interface RoleDoc extends Document<Types.ObjectId> {
   label: string;
   description?: string;
   permissions: string[];
-  isUnscoped: boolean;
+  isSuperAdmin: boolean;
   isSystem: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -59,13 +59,13 @@ const roleSchema = new Schema<RoleDoc>(
     },
 
     /**
-     * Unscoped roles bypass branch filtering entirely.
+     * Marks a role as a super admin.
      *
      * This is the single most dangerous flag in the system — it is what makes a
      * SuperAdmin a SuperAdmin. The role service refuses to set it unless the acting user
-     * is themselves unscoped, so a branch admin cannot mint an unscoped role and escalate.
+     * is themselves a super admin, so a lesser role cannot mint one and escalate.
      */
-    isUnscoped: { type: Boolean, default: false },
+    isSuperAdmin: { type: Boolean, default: false },
 
     /** Seeded roles: permissions stay editable, but the role cannot be renamed or deleted. */
     isSystem: { type: Boolean, default: false },

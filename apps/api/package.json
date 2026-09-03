@@ -14,7 +14,8 @@
     "create:globaladmin": "tsx src/scripts/create-global-admin.ts",
     "migrate:global-masters": "tsx src/scripts/migrate-global-masters.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate:remove-branches": "tsx src/scripts/migrate-remove-branches.ts"
   },
   "dependencies": {
     "@amiri/shared": "*",

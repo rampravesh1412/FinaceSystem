@@ -1,5 +1,4 @@
 /* Identity & organisation */
-export { Branch, type BranchDoc } from "./Branch.js";
 export { Role, type RoleDoc } from "./Role.js";
 export { User, type UserDoc, type UserModel } from "./User.js";
 export { Session, type SessionDoc } from "./Session.js";

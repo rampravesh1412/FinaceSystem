@@ -18,7 +18,7 @@ import {
 /**
  * A Bank is the institution (HDFC, ICICI, SBI). It holds NO balance — money lives in the
  * accounts beneath it. Keeping the institution separate is what lets "HDFC" be spelled
- * one way across every branch and every report.
+ * one way on every report.
  */
 export const createBankSchema = z.object({
   name: z.string().trim().min(2, "Bank name is required").max(120),
@@ -61,13 +61,7 @@ export interface BankSummary {
 /* Bank account                                                               */
 /* -------------------------------------------------------------------------- */
 
-/**
- * A real bank account.
- *
- * ORGANISATION-WIDE. The account belongs to the business, not to an office: one HDFC
- * current account is paid into from every counter, and its balance is one number. The
- * branch that transacted is recorded on each posting, so branch books still tie.
- */
+/** A real bank account. One HDFC current account is one account with one balance. */
 export const createBankAccountSchema = z.object({
   bankId: objectId,
   accountName: z.string().trim().min(2, "Account name is required").max(120),

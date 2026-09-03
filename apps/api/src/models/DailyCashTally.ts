@@ -5,8 +5,7 @@ import { actorField, baseSchemaOptions, businessDateField, moneyField } from "./
 /**
  * A counted cash drawer (§20).
  *
- * Keyed by drawer and date, with no branch of its own: the drawer is organisation-wide,
- * so "which branch counted it" is not a property of the count.
+ * Keyed by drawer and date.
  *
  * Only `actualClosing` and `notes` come from a human. Everything else is a SNAPSHOT of
  * what the ledger said at the moment of counting, frozen deliberately: if a back-dated

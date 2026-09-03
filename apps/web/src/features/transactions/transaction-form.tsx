@@ -14,7 +14,6 @@ import {
   formatINR,
 } from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
-import { useAuth } from "@/features/auth/auth-context";
 import { Money } from "@/components/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,33 +99,34 @@ export function TransactionFormDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const config = MODE_CONFIG[mode];
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = React.useState(false);
+
+  /**
+   * A receipt or a payment — the two modes that record money moving with a party.
+   *
+   * They are the shortest forms in the application by design: a clerk at a counter is
+   * entering these while someone waits. Branch, payment mode and narration are all
+   * answerable from what is already known, so the form does not ask.
+   */
+  const isPayment = mode === "PAYMENT_IN" || mode === "PAYMENT_OUT";
 
   const form = useForm<Record<string, unknown>>({
     resolver: zodResolver(config.schema as never),
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      // Seeded from the branch in context, but the operator can change it below. Empty
-      // under the all-branches view, which makes the field the thing that asks.
-      branchId: user?.activeBranchId ?? "",
       amount: "",
-      paymentMode: mode === "BANK_TRANSFER" ? "NEFT" : "CASH",
+      /**
+       * No default for a receipt or payment: the field is not on the form, and recording
+       * "CASH" for a transfer into a bank account because nobody was asked would be a
+       * worse record than leaving it blank.
+       */
+      paymentMode: mode === "BANK_TRANSFER" ? "NEFT" : isPayment ? undefined : "CASH",
       attachments: [],
       items: [],
       taxAmount: "0",
     },
   });
-
-  /**
-   * The posting branch is now a field, not the ambient context.
-   *
-   * Reading it back from the form rather than from the session is what lets a super admin
-   * work from the all-branches view: they choose where this entry belongs as part of
-   * filling it in, instead of leaving the dialog to switch context and starting over.
-   */
-  const branchId = (form.watch("branchId") as string) ?? "";
 
   const { options: allAccounts, isPending: accountsPending } = useAccounts();
 
@@ -143,23 +143,6 @@ export function TransactionFormDialog({
   const categories = useExpenseCategories();
   const incomeHeads = useIncomeHeads();
   const chargeRules = useChargeRules();
-
-  /**
-   * Changing the branch drops any account already chosen.
-   *
-   * The account fields are filtered by branch, so a selection made under the previous one
-   * would otherwise survive as an id the operator can no longer see in the list — and be
-   * submitted, and be refused by the server for a reason nothing on screen explains.
-   * Party and amount are left alone: those are still valid wherever this is posted.
-   */
-  const previousBranch = React.useRef(branchId);
-  React.useEffect(() => {
-    if (previousBranch.current === branchId) return;
-    previousBranch.current = branchId;
-    for (const field of ["accountId", "sourceAccountId", "destinationAccountId"]) {
-      if (form.getValues(field) !== undefined) form.setValue(field, "");
-    }
-  }, [branchId, form]);
 
   const amount = String(form.watch("amount") ?? "");
   const chargeRuleId = form.watch("chargeRuleId") as string | undefined;
@@ -220,25 +203,9 @@ export function TransactionFormDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4" noValidate>
-          <Field label="Branch" error={err(form, "branchId")}>
-            {({ id, describedBy }) => (
-              <SelectField
-                id={id}
-                describedBy={describedBy}
-                value={branchId}
-                onChange={(v) => form.setValue("branchId", v, { shouldValidate: true })}
-                placeholder="Choose a branch"
-                options={(user?.branches ?? []).map((b) => ({
-                  value: b.id,
-                  label: `${b.code} — ${b.name}`,
-                }))}
-              />
-            )}
-          </Field>
-
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Date" error={err(form, "date")}>
-              <Input type="date" {...form.register("date")} />
+              {({ id }) => <Input id={id} type="date" {...form.register("date")} />}
             </Field>
 
             <Field label="Amount" error={err(form, "amount")}>
@@ -377,7 +344,7 @@ export function TransactionFormDialog({
                   )}
                 </Field>
                 <Field label="Invoice no" error={err(form, "invoiceNo")}>
-                  <Input placeholder="INV-4471" {...form.register("invoiceNo")} />
+                  {({ id }) => <Input id={id} placeholder="INV-4471" {...form.register("invoiceNo")} />}
                 </Field>
               </div>
 
@@ -435,7 +402,7 @@ export function TransactionFormDialog({
             </>
           ) : null}
 
-          {mode !== "BANK_TRANSFER" ? (
+          {mode !== "BANK_TRANSFER" && !isPayment ? (
             <Field label="Payment mode" error={err(form, "paymentMode")}>
               {({ id, describedBy }) => (
                 <SelectField
@@ -482,16 +449,33 @@ export function TransactionFormDialog({
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Reference no" error={err(form, "referenceNo")}>
-              <Input placeholder="NEFT2026081901" {...form.register("referenceNo")} />
+            <Field label="Reference no (optional)" error={err(form, "referenceNo")}>
+              {({ id }) => (
+                <Input id={id} placeholder="NEFT2026081901" {...form.register("referenceNo")} />
+              )}
             </Field>
-            <Field label="Narration" error={err(form, "narration")}>
-              <Input placeholder="Optional description" {...form.register("narration")} />
-            </Field>
+            {/* Narration is dropped on a receipt or payment: the server writes
+                "Payment received from <party>" from the fields already on the form, which
+                is both more consistent and more informative than a hurried free-text line.
+                Anything genuinely worth saying goes in Notes below. */}
+            {isPayment ? null : (
+              <Field label="Narration" error={err(form, "narration")}>
+                {({ id }) => (
+                  <Input id={id} placeholder="Optional description" {...form.register("narration")} />
+                )}
+              </Field>
+            )}
           </div>
 
           <Field label="Notes" error={err(form, "notes")}>
-            <Textarea rows={2} placeholder="Anything worth recording alongside this entry" {...form.register("notes")} />
+            {({ id }) => (
+              <Textarea
+                id={id}
+                rows={2}
+                placeholder="Anything worth recording alongside this entry"
+                {...form.register("notes")}
+              />
+            )}
           </Field>
 
           {confirming ? (

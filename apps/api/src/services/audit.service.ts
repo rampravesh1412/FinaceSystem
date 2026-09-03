@@ -24,7 +24,6 @@ export interface AuditContext {
   userName: string;
   userEmail?: string;
   roleName?: string;
-  branchId?: string | null;
   ip?: string;
   userAgent?: string;
   requestId?: string;
@@ -50,7 +49,6 @@ export function auditContextFrom(req: Request): AuditContext {
     userName: req.auth?.name ?? "anonymous",
     userEmail: req.auth?.email,
     roleName: req.auth?.roleName,
-    branchId: req.scope?.activeBranchId ? String(req.scope.activeBranchId) : null,
     ip: clientIp(req),
     userAgent: req.get("user-agent"),
     requestId: req.reqId,
@@ -135,7 +133,6 @@ export async function record(
         userName: context.userName,
         userEmail: context.userEmail,
         roleName: context.roleName,
-        branchId: context.branchId ?? undefined,
 
         action: input.action,
         entity: input.entity,

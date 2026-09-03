@@ -21,7 +21,6 @@ notificationRouter.use(requireAuth);
  * single-shot import, because an operator who has not seen the validation errors first has
  * no way to know what a 500-row file is about to do to their party master.
  */
-// No `branchId`: the party master is organisation-wide, so an import lands in it whole.
 const importBody = z.object({
   // Rows as the client parsed them from the spreadsheet, headers included. Header names
   // are normalised server-side, so "Party Name", "party_name" and "PARTY NAME" all work.

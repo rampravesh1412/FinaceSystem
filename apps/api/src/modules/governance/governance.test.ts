@@ -18,7 +18,6 @@ let client: TestClient;
 let fx: Fixtures;
 let superToken: string;
 let adminToken: string;
-let branchId: string;
 let hdfcId: string;
 let partyId: string;
 
@@ -54,7 +53,6 @@ beforeAll(async () => {
   await client.start(app);
   superToken = await client.loginAs("super@test.co");
   adminToken = await client.loginAs("badmin@test.co");
-  branchId = fx.branches["105"]!;
 
   const bank = await client.post<{ data: { id: string } }>(
     "/banks", { name: "HDFC Bank", shortName: "HDFC", ifscPrefix: "HDFC" }, { token: superToken },
@@ -62,7 +60,7 @@ beforeAll(async () => {
   const acc = await client.post<{ data: { id: string } }>(
     "/bank-accounts",
     {
-      bankId: bank.body.data.id, branchId, accountName: "HDFC Current",
+      bankId: bank.body.data.id, accountName: "HDFC Current",
       accountNumber: "50100234567890", ifsc: "HDFC0001234",
       openingBalance: "50,00,000", openingDate: "2026-04-01",
     },
@@ -72,7 +70,7 @@ beforeAll(async () => {
 
   const party = await client.post<{ data: { id: string } }>(
     "/parties",
-    { name: "Sharma Traders", branchId, type: "CUSTOMER", openingBalance: "0", openingDate: "2026-04-01" },
+    { name: "Sharma Traders", type: "CUSTOMER", openingBalance: "0", openingDate: "2026-04-01" },
     { token: superToken },
   );
   partyId = party.body.data.id;
@@ -97,7 +95,7 @@ describe("approval workflow (§27)", () => {
 
     const res = await client.post<{ data: { txnNo: string; status: string } }>(
       "/payment-in",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "9,00,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "9,00,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -113,7 +111,7 @@ describe("approval workflow (§27)", () => {
     // Below the ₹10,000 minimum — a day of small receipts should not fill the queue.
     const res = await client.post<{ data: { status: string } }>(
       "/payment-in",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "5,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "5,000", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -128,7 +126,7 @@ describe("approval workflow (§27)", () => {
 
     const res = await client.post<{ data: { id: string; status: string; txnNo: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "80,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "80,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -161,7 +159,7 @@ describe("approval workflow (§27)", () => {
 
     const submitted = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "75,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "75,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -187,7 +185,7 @@ describe("approval workflow (§27)", () => {
 
     const submitted = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "60,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "60,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -208,7 +206,7 @@ describe("approval workflow (§27)", () => {
     // ₹6,00,000 sits in the SUPER_ADMIN band.
     const submitted = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "6,00,000", paymentMode: "RTGS" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "6,00,000", paymentMode: "RTGS" },
       { token: superToken },
     );
 
@@ -228,7 +226,7 @@ describe("approval workflow (§27)", () => {
 
     const submitted = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "90,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "90,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -253,7 +251,7 @@ describe("approval workflow (§27)", () => {
 
     const submitted = await client.post<{ data: { id: string } }>(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "45,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "45,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 
@@ -271,7 +269,7 @@ describe("approval workflow (§27)", () => {
 
     await client.post(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "7,00,000", paymentMode: "RTGS" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "7,00,000", paymentMode: "RTGS" },
       { token: superToken },
     );
 
@@ -353,7 +351,7 @@ describe("financial periods (§35)", () => {
     const res = await client.post<{ error: { code: string; message: string } }>(
       "/payment-in",
       // 15 May 2026 falls inside the now-closed Q1.
-      { date: "2026-05-15", branchId, partyId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
+      { date: "2026-05-15", partyId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -367,7 +365,7 @@ describe("financial periods (§35)", () => {
     // numbers already reported on cannot move retrospectively.
     const posted = await client.post<{ data: { id: string } }>(
       "/payment-in",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "2,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "2,000", paymentMode: "CASH" },
       { token: superToken },
     );
 
@@ -385,7 +383,7 @@ describe("financial periods (§35)", () => {
     const before = await bankBalance();
     const res = await client.post(
       "/payment-in",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "3,000", paymentMode: "CASH" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "3,000", paymentMode: "CASH" },
       { token: superToken },
     );
     expect(res.status).toBe(201);
@@ -401,7 +399,7 @@ describe("financial periods (§35)", () => {
 
     const res = await client.post(
       "/payment-in",
-      { date: "2026-05-15", branchId, partyId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
+      { date: "2026-05-15", partyId, accountId: hdfcId, amount: "1,000", paymentMode: "CASH" },
       { token: superToken },
     );
     expect(res.status).toBe(201);
@@ -437,7 +435,7 @@ describe("financial periods (§35)", () => {
     await setThresholds(true, "1,000");
     await client.post(
       "/payment-out",
-      { date: "2026-08-19", branchId, partyId, accountId: hdfcId, amount: "40,000", paymentMode: "NEFT" },
+      { date: "2026-08-19", partyId, accountId: hdfcId, amount: "40,000", paymentMode: "NEFT" },
       { token: superToken },
     );
 

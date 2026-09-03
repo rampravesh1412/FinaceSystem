@@ -53,7 +53,6 @@ describe("bank accounts", () => {
       "/bank-accounts",
       {
         bankId,
-        branchId: fx.branches["105"],
         accountName: "AMIRI Enterprises Current",
         accountNumber: "123456789012",
         ifsc: "ICIC0001234",
@@ -119,7 +118,6 @@ describe("bank accounts", () => {
       "/bank-accounts",
       {
         bankId, // ICICI
-        branchId: fx.branches["105"],
         accountName: "Wrong Bank",
         accountNumber: "999888777666",
         ifsc: "HDFC0001234", // an HDFC code
@@ -138,7 +136,6 @@ describe("bank accounts", () => {
       "/bank-accounts",
       {
         bankId,
-        branchId: fx.branches["105"],
         accountName: "Duplicate",
         accountNumber: "123456789012",
         ifsc: "ICIC0001234",
@@ -159,7 +156,6 @@ describe("bank accounts", () => {
       "/bank-accounts",
       {
         bankId,
-        branchId: fx.branches["105"],
         accountName: "Will Fail",
         accountNumber: "123456789012", // duplicate
         ifsc: "ICIC0001234",
@@ -256,7 +252,6 @@ describe("create returns the list's shape", () => {
       "/bank-accounts",
       {
         bankId: bank.body.data.id,
-        branchId: fx.branches["105"]!,
         accountName: "Shape Test Current",
         accountNumber: "50100999888777",
         ifsc: "STBK0001234",
@@ -293,7 +288,6 @@ describe("create returns the list's shape", () => {
       "/bank-accounts",
       {
         bankId: bank.body.data.id,
-        branchId: fx.branches["105"]!,
         accountName: "Mask Test Current",
         accountNumber: "50100111222333",
         ifsc: "MTBK0001234",
@@ -354,7 +348,6 @@ describe("parties", () => {
       "/parties",
       {
         name: "RAMANUJ PUNB",
-        branchId: fx.branches["105"],
         type: "DISTRIBUTOR",
         mobile: "9876543210",
         openingBalance: "9,50,000", // they owe us
@@ -377,7 +370,6 @@ describe("parties", () => {
       "/parties",
       {
         name: "EDDIGO DISTRIBUTOR",
-        branchId: fx.branches["105"],
         type: "VENDOR",
         openingBalance: "-2,00,000", // we owe them
       },
@@ -539,7 +531,6 @@ describe("updating banks and drawers", () => {
       "/bank-accounts",
       {
         bankId: bank.body.data.id,
-        branchId: fx.branches["105"]!,
         accountName: "Rename Test Current",
         accountNumber: "50100555444333",
         ifsc: "RTBK0001234",
@@ -568,7 +559,7 @@ describe("updating banks and drawers", () => {
   it("renames a cash drawer and its ledger account together", async () => {
     const drawer = await client.post<{ data: { id: string; ledgerAccountId: string } }>(
       "/cash-accounts",
-      { branchId: fx.branches["105"]!, name: "Old Drawer Name", openingBalance: "0" },
+      { name: "Old Drawer Name", openingBalance: "0" },
       { token: superToken },
     );
 
@@ -598,7 +589,6 @@ describe("updating banks and drawers", () => {
       "/bank-accounts",
       {
         bankId: bank.body.data.id,
-        branchId: fx.branches["105"]!,
         accountName: "Immutable Test Current",
         accountNumber: "50100777666555",
         ifsc: "ITBK0001234",

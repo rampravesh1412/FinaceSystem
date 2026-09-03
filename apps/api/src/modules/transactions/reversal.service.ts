@@ -1,4 +1,4 @@
-import { Types } from "mongoose";
+import { Types, type ClientSession } from "mongoose";
 import { REVERSAL_PREFIX, canTransition, fiscalYearOf, formatDocumentNumber } from "@amiri/shared";
 import {
   LedgerAccount,
@@ -43,11 +43,34 @@ export interface ReverseOptions {
 export async function reverseTransaction(
   transactionId: string,
   options: ReverseOptions,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<{ original: TransactionDoc; reversal: TransactionDoc }> {
-  return withTransaction(async (session) => {
-    const original = await Transaction.findOne({ _id: transactionId, ...scopeFilter }).session(session);
+  return withTransaction(
+    (session) => reverseWithin(transactionId, options, ctx, session),
+    { label: "transaction.reverse" },
+  );
+}
+
+/**
+ * The reversal itself, against a session the CALLER owns.
+ *
+ * Split out from `reverseTransaction` so an edit can reverse and repost inside ONE
+ * transaction. Doing it as two separate units of work would leave a window — and, if the
+ * repost failed, a reversed transaction with no replacement and an operator staring at a
+ * payment that has simply vanished.
+ *
+ * `withTransaction` cannot be nested: MongoDB has no sub-transactions, and starting a
+ * second session inside the first would commit independently of it. Passing the session
+ * down is the only way to keep the pair atomic.
+ */
+export async function reverseWithin(
+  transactionId: string,
+  options: ReverseOptions,
+  ctx: audit.AuditContext,
+  session: ClientSession,
+): Promise<{ original: TransactionDoc; reversal: TransactionDoc }> {
+  {
+    const original = await Transaction.findOne({ _id: transactionId }).session(session);
     if (!original) throw new NotFoundError("Transaction", transactionId);
 
     // ── What may be reversed ────────────────────────────────────────────────
@@ -117,7 +140,6 @@ export async function reverseTransaction(
       {
         type: original.type,
         date,
-        branchId: original.branchId ?? null,
         lines,
         grossAmount: original.grossAmount,
         chargeAmount: original.chargeAmount,
@@ -144,7 +166,7 @@ export async function reverseTransaction(
         allowOverdraft: true,
       },
       session,
-      { ...ctx, branchId: original.branchId ? String(original.branchId) : null },
+      ctx,
     );
 
     // ── Link the pair, both ways ────────────────────────────────────────────
@@ -155,7 +177,7 @@ export async function reverseTransaction(
     await original.save({ session });
 
     await audit.record(
-      { ...ctx, branchId: original.branchId ? String(original.branchId) : null },
+      ctx,
       {
         action: "REVERSE",
         entity: "Transaction",
@@ -172,7 +194,7 @@ export async function reverseTransaction(
     );
 
     return { original, reversal };
-  }, { label: "transaction.reverse" });
+  }
 }
 
 /**

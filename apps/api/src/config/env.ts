@@ -31,7 +31,20 @@ const schema = z
     JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
     JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
     JWT_ACCESS_TTL: z.string().default("15m"),
-    JWT_REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /**
+     * How long a signed-in session lasts before it must be re-authenticated.
+     *
+     * SIX HOURS: about one working day at a counter, so a clerk signs in once in the
+     * morning and is not interrupted, while a machine left unattended overnight is not
+     * still logged in the next day. The access token is far shorter (15m) and refreshes
+     * silently against this; when this expires, the refresh fails and the user signs in
+     * again.
+     *
+     * This bounds ONE session. It does not limit how many a user may hold at once —
+     * signing in on a second device issues a second, independent session, and the two do
+     * not disturb each other.
+     */
+    JWT_REFRESH_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(6),
 
     /** Comma-separated allowlist. No wildcard in production — credentials are sent. */
     CORS_ORIGINS: z.string().default("http://localhost:5173"),

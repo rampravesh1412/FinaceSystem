@@ -9,7 +9,6 @@ import {
   type SavingsTransactionInput,
 } from "@amiri/shared";
 import {
-  Branch,
   LedgerAccount,
   LedgerEntry,
   SavingsAccount,
@@ -47,20 +46,15 @@ export async function createAccount(
   input: CreateSavingsAccountInput,
   ctx: audit.AuditContext,
 ): Promise<SavingsAccountDoc> {
-  const branch = await Branch.findById(input.branchId).select("code status").lean();
-  if (!branch) throw new NotFoundError("Branch", input.branchId);
-  if (branch.status !== "ACTIVE") throw new BadRequestError("That branch is not active", "branchId");
-
   return withTransaction(async (session) => {
-    const seq = await nextSequence(`SAVINGS-${branch.code}`, 0, session);
-    const accountNo = `SB-${branch.code}-${String(seq).padStart(5, "0")}`;
+    const seq = await nextSequence("SAVINGS", 0, session);
+    const accountNo = `SB-${String(seq).padStart(5, "0")}`;
 
     const ledgerAccount = await ledger.createLedgerAccount(
       {
-        code: `SAV-${branch.code}-${String(seq).padStart(4, "0")}`,
+        code: `SAV-${String(seq).padStart(5, "0")}`,
         name: `${input.memberName} (${accountNo})`,
         kind: "SAVINGS",
-        branchId: input.branchId,
         refKind: "SavingsAccount",
         // A member's balance cannot go below zero — they can only withdraw what they have
         // deposited. Unlike a bank account there is no overdraft to grant.
@@ -77,7 +71,6 @@ export async function createAccount(
           memberName: input.memberName,
           partyId: input.partyId ?? null,
           mobile: input.mobile,
-          branchId: input.branchId,
           ledgerAccountId: ledgerAccount._id,
           interestRateBps: input.interestRateBps,
           notes: input.notes,
@@ -93,7 +86,7 @@ export async function createAccount(
     await LedgerAccount.updateOne({ _id: ledgerAccount._id }, { $set: { refId: account._id } }, { session });
 
     await audit.record(
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
       {
         action: "CREATE",
         entity: "SavingsAccount",
@@ -109,7 +102,6 @@ export async function createAccount(
     await ledger.postOpeningBalance(
       {
         ledgerAccountId: ledgerAccount._id,
-        branchId: input.branchId,
         // Expressed in the account's own terms: ₹10,000 means the member opens with
         // ₹10,000 to their name. `postOpeningBalance` picks the correct side from the
         // account class, so a credit-normal savings account is credited.
@@ -119,7 +111,7 @@ export async function createAccount(
         createdBy: ctx.userId!,
       },
       session,
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
     );
 
     return account;
@@ -143,8 +135,6 @@ export async function postSavingsTransaction(
     if (savings.status !== "ACTIVE") {
       throw new BadRequestError(`${savings.accountNo} is not active`, "savingsAccountId");
     }
-
-    const branchId = String(savings.branchId);
     const isCashMovement = input.operation === "DEPOSIT" || input.operation === "WITHDRAWAL";
 
     if (isCashMovement && !input.accountId) {
@@ -207,7 +197,6 @@ export async function postSavingsTransaction(
       {
         type: "SAVINGS",
         date: input.date,
-        branchId,
         lines,
         grossAmount: input.amount,
         paymentMode: input.paymentMode,
@@ -225,7 +214,7 @@ export async function postSavingsTransaction(
         },
       },
       session,
-      { ...ctx, branchId },
+      ctx,
     );
 
     return txn;
@@ -253,8 +242,7 @@ export function computeInterest(balance: number, rateBps: number, days: number):
  */
 export async function getAccountSummary(id: string): Promise<SavingsAccountSummary> {
   const { items } = await listAccounts(
-    { _id: new Types.ObjectId(id) },
-    {},
+    { id },
     { skip: 0, limit: 1, sort: { _id: 1 } } as never,
   );
   const found = items[0];
@@ -263,11 +251,11 @@ export async function getAccountSummary(id: string): Promise<SavingsAccountSumma
 }
 
 export async function listAccounts(
-  scopeFilter: Record<string, unknown>,
-  filters: { q?: string; status?: string },
+  filters: { q?: string; status?: string; id?: string },
   page: Paging,
 ): Promise<{ items: SavingsAccountSummary[]; total: number; summary: SavingsSummary }> {
-  const filter: FilterQuery<SavingsAccountDoc> = { ...scopeFilter };
+  const filter: FilterQuery<SavingsAccountDoc> = {};
+  if (filters.id) filter._id = new Types.ObjectId(filters.id);
   if (filters.status) filter.status = filters.status;
   if (filters.q?.trim()) {
     const rx = new RegExp(escapeRegex(filters.q.trim()), "i");
@@ -279,7 +267,6 @@ export async function listAccounts(
       .sort(page.sort)
       .skip(page.skip)
       .limit(page.limit)
-      .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
       .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
         "ledgerAccountId",
         "cachedBalance",
@@ -289,7 +276,7 @@ export async function listAccounts(
   ]);
 
   // Totals across the whole scoped set, not the page.
-  const allAccounts = await SavingsAccount.find({ ...scopeFilter }).select("ledgerAccountId status").lean();
+  const allAccounts = await SavingsAccount.find({}).select("ledgerAccountId status").lean();
   const allLedgerIds = allAccounts.map((a) => a.ledgerAccountId);
   const allBalances = await LedgerAccount.find({ _id: { $in: allLedgerIds } })
     .select("cachedBalance")
@@ -325,7 +312,6 @@ export async function listAccounts(
       accountNo: d.accountNo,
       memberName: d.memberName,
       mobile: d.mobile,
-      branch: { id: String(d.branchId._id), name: d.branchId.name, code: d.branchId.code },
       balance: d.ledgerAccountId?.cachedBalance ?? 0,
       interestRateBps: d.interestRateBps,
       ledgerAccountId: String(d.ledgerAccountId._id),
@@ -346,11 +332,9 @@ export async function listAccounts(
 
 export async function getPassbook(
   savingsAccountId: string,
-  scopeFilter: Record<string, unknown>,
   limit = 200,
 ) {
-  const account = await SavingsAccount.findOne({ _id: savingsAccountId, ...scopeFilter })
-    .populate<{ branchId: { name: string; code: string } }>("branchId", "name code")
+  const account = await SavingsAccount.findOne({ _id: savingsAccountId })
     .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
       "ledgerAccountId",
       "cachedBalance",
@@ -391,7 +375,6 @@ export async function getPassbook(
       accountNo: account.accountNo,
       memberName: account.memberName,
       mobile: account.mobile,
-      branch: account.branchId,
       balance: account.ledgerAccountId.cachedBalance,
       interestRateBps: account.interestRateBps,
       status: account.status,

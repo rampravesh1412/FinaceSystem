@@ -5,8 +5,8 @@ import { connectDatabase, disconnectDatabase } from "../config/db.js";
 /**
  * Make parties, bank accounts and cash drawers ORGANISATION-WIDE.
  *
- *   npx tsx src/scripts/migrate-global-masters.ts --dry-run
- *   npx tsx src/scripts/migrate-global-masters.ts
+ *   npm run migrate:global-masters                  DRY RUN — reports, writes nothing
+ *   npm run migrate:global-masters -- --apply       actually do it
  *
  * These three masters used to carry a `branchId`. They no longer do — a customer, a bank
  * account and a cash drawer each belong to the business rather than to one office, and
@@ -14,32 +14,60 @@ import { connectDatabase, disconnectDatabase } from "../config/db.js";
  * left the books: every ledger entry still records the branch that posted it, which is
  * where per-branch reporting reads it from.
  *
- * This script brings an existing database to that shape. It does FOUR things:
+ * THE API WILL NOT BOOT UNTIL THIS HAS RUN. Party codes and drawer names used to be unique
+ * only WITHIN a branch, so an existing database almost certainly holds a "Main Counter" in
+ * every branch and a `PTY-00001` in each of them too. The new schema declares those unique
+ * across the organisation, and Mongoose builds indexes on connect — so boot fails with
+ * `E11000 duplicate key` until the collisions are resolved. Resolving them is step 1 below.
  *
- *   1. drops the branch-scoped unique indexes, which would otherwise keep enforcing
- *      per-branch uniqueness and reject a genuinely global one
- *   2. reports any duplicate that would break the new global unique indexes, and STOPS
- *      without changing anything if it finds one
- *   3. unsets `branchId` on the masters and on their ledger accounts
- *   4. leaves `ledgerentries` and `transactions` completely untouched
+ * What this does, in order:
  *
- * WHY STEP 2 MATTERS: two branches could each hold a party coded PTY-00001, or a drawer
- * named "Main Counter". Those collide the moment the code is unique across the
- * organisation. The script will not guess which one to rename — it prints them and exits,
- * because merging two parties' histories is a decision with money attached.
+ *   1. renames colliding drawer names and party codes, keeping the oldest record's value
+ *      and suffixing the others with the branch they used to belong to
+ *   2. keeps exactly one default cash drawer
+ *   3. drops the old per-branch indexes
+ *   4. unsets `branchId` on the masters, on their ledger accounts, and on the records that
+ *      hang off them (tallies, reconciliations)
+ *   5. leaves `ledgerentries` and `transactions` COMPLETELY untouched
  *
- * It is IDEMPOTENT: running it twice is harmless, and running it on an already-migrated
- * database does nothing.
+ * WHY RENAME RATHER THAN REFUSE: two branches each holding a drawer called "Main Counter"
+ * are two real, distinct drawers that happen to share a label, and two parties coded
+ * `PTY-00001` are two distinct parties that happen to share a code. Neither is a merge —
+ * no balance moves, no history is combined, only the label changes. A party's NAME is left
+ * alone precisely because sameness of name might mean sameness of firm, and that IS a
+ * judgement with money attached; nothing in the new schema requires names to be unique, so
+ * nothing forces the question.
+ *
+ * It is IDEMPOTENT: running it twice is harmless.
  */
 
-const DRY_RUN = process.argv.includes("--dry-run");
+/**
+ * WRITES ONLY WITH `--apply`. Anything else is a dry run.
+ *
+ * Deliberately this way round rather than `--dry-run`, because the safe mode has to be the
+ * one you get by accident. `npm run` swallows a trailing `--dry-run` as an npm flag of its
+ * own and never passes it through, so an opt-OUT of writing was a flag that could silently
+ * fail to apply — and did. Requiring an explicit opt-IN cannot fail that way: a swallowed
+ * `--apply` leaves you with a dry run and a puzzled look, not a migrated database.
+ */
+const APPLY = process.argv.includes("--apply");
+const DRY_RUN = !APPLY;
 
-/** Indexes the old per-branch model created. Dropping a missing one is not an error. */
+/**
+ * Indexes the old per-branch model created. Dropping a missing one is not an error.
+ *
+ * `mobile_1` is here for a different reason from the rest: the name is unchanged, but the
+ * OPTIONS are. The old schema declared `index: true` on the field (non-sparse) alongside a
+ * compound `{mobile, branchId}`; the new one declares a single sparse `{mobile}`. MongoDB
+ * refuses to redefine an existing index under the same name with different options, so the
+ * old one has to go before Mongoose can build the new one.
+ */
 const OBSOLETE_INDEXES: Array<{ collection: string; index: string }> = [
   { collection: "parties", index: "branchId_1_code_1" },
   { collection: "parties", index: "branchId_1_status_1_name_1" },
   { collection: "parties", index: "branchId_1_type_1" },
   { collection: "parties", index: "mobile_1_branchId_1" },
+  { collection: "parties", index: "mobile_1" },
   { collection: "parties", index: "branchId_1" },
   { collection: "bankaccounts", index: "branchId_1_status_1" },
   { collection: "bankaccounts", index: "branchId_1" },
@@ -49,41 +77,95 @@ const OBSOLETE_INDEXES: Array<{ collection: string; index: string }> = [
   { collection: "dailycashtallies", index: "branchId_1_date_-1" },
 ];
 
-interface Duplicate {
-  collection: string;
-  field: string;
-  value: unknown;
-  count: number;
+const db = () => mongoose.connection.db!;
+
+/** Branch id → code, for labelling a renamed record with where it used to live. */
+async function branchCodes(): Promise<Map<string, string>> {
+  const branches = await db()
+    .collection("branches")
+    .find({})
+    .project({ _id: 1, code: 1 })
+    .toArray();
+  return new Map(branches.map((b) => [String(b._id), String(b.code ?? "")]));
 }
 
-/** Values that appear more than once once the branch is taken out of the key. */
-async function findDuplicates(collection: string, field: string): Promise<Duplicate[]> {
-  const db = mongoose.connection.db!;
-  const rows = await db
+/**
+ * Make a field unique across a collection by renaming the losers.
+ *
+ * The OLDEST record keeps the original value — it is the one most likely to be referenced
+ * on paperwork already printed. Everything else gets its old branch code appended, which
+ * is both a stable disambiguator and the label a human would have reached for anyway:
+ * "Main Counter" in branch 107 becomes "Main Counter (107)".
+ */
+async function deduplicate(
+  collection: string,
+  field: string,
+  format: (value: string, suffix: string) => string,
+): Promise<number> {
+  const codes = await branchCodes();
+
+  const clashes = await db()
     .collection(collection)
-    .aggregate<{ _id: unknown; count: number }>([
+    .aggregate<{ _id: unknown; ids: unknown[] }>([
       { $match: { [field]: { $ne: null } } },
-      { $group: { _id: `$${field}`, count: { $sum: 1 } } },
-      { $match: { count: { $gt: 1 } } },
-      { $sort: { count: -1 } },
+      { $sort: { createdAt: 1, _id: 1 } },
+      { $group: { _id: `$${field}`, ids: { $push: "$_id" }, branches: { $push: "$branchId" } } },
+      { $match: { $expr: { $gt: [{ $size: "$ids" }, 1] } } },
     ])
     .toArray();
 
-  return rows.map((r) => ({ collection, field, value: r._id, count: r.count }));
+  if (clashes.length === 0) {
+    logger.info({ collection, field }, "no duplicates");
+    return 0;
+  }
+
+  let renamed = 0;
+
+  for (const clash of clashes) {
+    // Skip the first — the oldest keeps the value it already has.
+    const losers = clash.ids.slice(1);
+
+    for (const [index, id] of losers.entries()) {
+      const doc = await db().collection(collection).findOne({ _id: id as never });
+      if (!doc) continue;
+
+      // The branch it used to belong to, or a plain counter if that is already gone.
+      const code = doc.branchId ? codes.get(String(doc.branchId)) : undefined;
+      let next = format(String(clash._id), code || String(index + 2));
+
+      // Vanishingly unlikely, but two branches could share a code in a broken dataset —
+      // and silently writing a value that collides again would leave the API still unable
+      // to boot, with the migration reporting success.
+      let attempt = 1;
+      while (await db().collection(collection).findOne({ [field]: next })) {
+        attempt += 1;
+        next = format(String(clash._id), `${code || index + 2}-${attempt}`);
+      }
+
+      logger.warn(
+        { collection, field, from: clash._id, to: next, id: String(id) },
+        DRY_RUN ? "would rename" : "renamed",
+      );
+
+      if (!DRY_RUN) {
+        await db().collection(collection).updateOne({ _id: id as never }, { $set: { [field]: next } });
+      }
+      renamed += 1;
+    }
+  }
+
+  return renamed;
 }
 
 async function dropIndexes(): Promise<void> {
-  const db = mongoose.connection.db!;
-
   for (const { collection, index } of OBSOLETE_INDEXES) {
     try {
-      const exists = await db.collection(collection).indexExists(index);
-      if (!exists) continue;
+      if (!(await db().collection(collection).indexExists(index))) continue;
       if (DRY_RUN) {
         logger.info({ collection, index }, "would drop index");
         continue;
       }
-      await db.collection(collection).dropIndex(index);
+      await db().collection(collection).dropIndex(index);
       logger.info({ collection, index }, "index dropped");
     } catch (err) {
       // A collection that does not exist yet, or an index already gone. Neither is a
@@ -94,79 +176,76 @@ async function dropIndexes(): Promise<void> {
 }
 
 /** Remove `branchId` from a collection, reporting how many rows still carried one. */
-async function unsetBranch(collection: string, filter: Record<string, unknown> = {}): Promise<number> {
-  const db = mongoose.connection.db!;
-  const query = { ...filter, branchId: { $exists: true, $ne: null } };
+async function unsetBranch(collection: string): Promise<number> {
+  const query = { branchId: { $exists: true, $ne: null } };
 
-  const count = await db.collection(collection).countDocuments(query);
-  if (count === 0 || DRY_RUN) {
-    logger.info({ collection, count }, DRY_RUN ? "would clear branchId" : "nothing to clear");
+  const count = await db().collection(collection).countDocuments(query);
+  if (count === 0) {
+    logger.info({ collection }, "branchId already clear");
+    return 0;
+  }
+  if (DRY_RUN) {
+    logger.info({ collection, count }, "would clear branchId");
     return count;
   }
 
-  const result = await db.collection(collection).updateMany(query, { $unset: { branchId: "" } });
+  const result = await db().collection(collection).updateMany(query, { $unset: { branchId: "" } });
   logger.info({ collection, modified: result.modifiedCount }, "branchId cleared");
   return result.modifiedCount;
 }
 
 async function main(): Promise<void> {
-  await connectDatabase();
-
-  logger.info(DRY_RUN ? "DRY RUN — nothing will be written" : "migrating to organisation-wide masters");
-
-  /* ── 1. Would anything collide? ───────────────────────────────────────── */
-
-  const duplicates = [
-    ...(await findDuplicates("parties", "code")),
-    ...(await findDuplicates("cashaccounts", "name")),
-  ];
-
-  if (duplicates.length > 0) {
-    logger.error(
-      { duplicates },
-      "REFUSING TO MIGRATE: these values are only unique per branch and would collide once " +
-        "the masters are organisation-wide. Rename or merge them first — the script will not " +
-        "choose for you, because merging two parties merges their money.",
-    );
-    for (const d of duplicates) {
-      logger.error(`  ${d.collection}.${d.field} = ${String(d.value)} appears ${d.count} times`);
-    }
-    await disconnectDatabase();
-    process.exit(1);
-  }
-
   /**
-   * More than one drawer may currently be flagged `isDefault` — the old rule was one per
-   * branch, the new one is one overall. Keeping the oldest is arbitrary but stable, and a
-   * default drawer only decides where an unspecified cash receipt lands.
+   * `prepareCollections: false` is REQUIRED here, and is the whole reason the option
+   * exists. A normal connect builds every index declared on the schemas — including the
+   * unique ones this script is about to make satisfiable. Connecting the ordinary way
+   * would throw the same E11000 that stops the API booting, before a single duplicate had
+   * been fixed.
    */
-  const db = mongoose.connection.db!;
-  const defaults = await db
+  await connectDatabase({ prepareCollections: false });
+
+  logger.info(
+    DRY_RUN
+      ? "DRY RUN — nothing will be written. Re-run with --apply to make these changes."
+      : "APPLYING — migrating to organisation-wide masters",
+  );
+
+  /* ── 1. Resolve the collisions the new unique indexes would hit ───────── */
+
+  const drawers = await deduplicate("cashaccounts", "name", (name, suffix) => `${name} (${suffix})`);
+  // Party codes are uppercase and match /^[A-Z0-9-]+$/, so the suffix joins with a hyphen.
+  const parties = await deduplicate("parties", "code", (code, suffix) =>
+    `${code}-${suffix}`.toUpperCase().slice(0, 24),
+  );
+
+  /* ── 2. One default drawer, not one per branch ────────────────────────── */
+
+  const defaults = await db()
     .collection("cashaccounts")
     .find({ isDefault: true })
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: 1, _id: 1 })
     .project({ _id: 1, name: 1 })
     .toArray();
 
   if (defaults.length > 1) {
     const keep = defaults[0]!;
-    const clear = defaults.slice(1).map((d) => d._id);
+    const clear = defaults.slice(1);
     logger.warn(
-      { keeping: keep.name, clearing: defaults.slice(1).map((d) => d.name) },
+      { keeping: keep.name, clearing: clear.map((d) => d.name) },
       "several default drawers — keeping the oldest, clearing the rest",
     );
     if (!DRY_RUN) {
-      await db
+      await db()
         .collection("cashaccounts")
-        .updateMany({ _id: { $in: clear } }, { $set: { isDefault: false } });
+        .updateMany({ _id: { $in: clear.map((d) => d._id) } }, { $set: { isDefault: false } });
     }
   }
 
-  /* ── 2. Drop the per-branch indexes ───────────────────────────────────── */
+  /* ── 3. Drop the per-branch indexes ───────────────────────────────────── */
 
   await dropIndexes();
 
-  /* ── 3. Clear the branch from the masters and their ledger accounts ───── */
+  /* ── 4. Clear the branch from the masters and what hangs off them ─────── */
 
   await unsetBranch("parties");
   await unsetBranch("bankaccounts");
@@ -181,25 +260,25 @@ async function main(): Promise<void> {
    * Only PARTY, BANK and CASH kinds. Expense and income heads keep whatever branch they
    * had, because this migration is not about them.
    */
-  const ledgerFilter = { kind: { $in: ["PARTY", "BANK", "CASH"] } };
-  const ledgerCount = await db
-    .collection("ledgeraccounts")
-    .countDocuments({ ...ledgerFilter, branchId: { $ne: null } });
+  const ledgerFilter = { kind: { $in: ["PARTY", "BANK", "CASH"] }, branchId: { $ne: null } };
+  const ledgerCount = await db().collection("ledgeraccounts").countDocuments(ledgerFilter);
 
-  if (DRY_RUN) {
+  if (ledgerCount === 0) {
+    logger.info("ledger accounts already organisation-wide");
+  } else if (DRY_RUN) {
     logger.info({ count: ledgerCount }, "would clear branchId on party/bank/cash ledger accounts");
-  } else if (ledgerCount > 0) {
-    const result = await db
+  } else {
+    const result = await db()
       .collection("ledgeraccounts")
-      .updateMany({ ...ledgerFilter, branchId: { $ne: null } }, { $set: { branchId: null } });
+      .updateMany(ledgerFilter, { $set: { branchId: null } });
     logger.info({ modified: result.modifiedCount }, "ledger accounts made organisation-wide");
   }
 
-  /* ── 4. What was deliberately NOT touched ─────────────────────────────── */
+  /* ── 5. What was deliberately NOT touched ─────────────────────────────── */
 
   logger.info(
-    "ledgerentries and transactions were not modified — every posting keeps the branch that " +
-      "made it, which is what the DayBook and every per-branch report read.",
+    "ledgerentries and transactions were not modified — every posting keeps the branch " +
+      "that made it, which is what the DayBook and every per-branch report read.",
   );
 
   /**
@@ -208,9 +287,10 @@ async function main(): Promise<void> {
    * same index, and they would drift.
    */
   logger.info(
+    { renamedDrawers: drawers, renamedPartyCodes: parties },
     DRY_RUN
-      ? "DRY RUN complete — re-run without --dry-run to apply"
-      : "migration complete. Restart the API so the new indexes are built.",
+      ? "DRY RUN complete — nothing was written. Re-run with --apply to make it so."
+      : "migration complete. Start the API; it will build the new indexes on boot.",
   );
 
   await disconnectDatabase();

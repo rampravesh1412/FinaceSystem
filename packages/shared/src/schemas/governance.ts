@@ -28,8 +28,8 @@ import {
  * A value band and who must sign it off.
  *
  * The brief's worked example:
- *   ₹0 – ₹50,000        → Branch Admin
- *   ₹50,001 – ₹5,00,000 → Branch Admin
+ *   ₹0 – ₹50,000        → Admin
+ *   ₹50,001 – ₹5,00,000 → Admin
  *   ₹5,00,000+          → Super Admin
  *
  * Configurable, because a threshold that cannot be changed as a business grows gets
@@ -102,7 +102,6 @@ export const rejectSchema = z.object({ reason: reasonSchema });
 export type RejectInput = z.infer<typeof rejectSchema>;
 
 export const approvalQuerySchema = listQuery.extend({
-  branchId: optionalObjectId,
   type: z.string().optional(),
   tier: z.nativeEnum(APPROVER_TIER).optional(),
 });
@@ -114,7 +113,6 @@ export interface PendingApproval {
   type: string;
   typeLabel: string;
   date: string;
-  branch: { id: string; name: string; code: string };
   party: { id: string; name: string } | null;
   accountLabel: string;
   grossAmount: number;
@@ -192,7 +190,6 @@ export const auditQuerySchema = listQuery
     entity: z.string().trim().max(60).optional(),
     entityId: z.string().trim().max(60).optional(),
     userId: optionalObjectId,
-    branchId: optionalObjectId,
     /** Only failures — the fast path to "who has been trying to get in". */
     failuresOnly: booleanFlag.optional(),
     minAmount: nonNegativeMoney.optional(),
@@ -211,7 +208,6 @@ export interface AuditRow {
   userName: string;
   userEmail?: string;
   roleName?: string;
-  branchId?: string;
 
   changedFields?: string[];
   oldValue?: unknown;

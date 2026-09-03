@@ -22,7 +22,6 @@ export interface NotificationDoc extends Document<Types.ObjectId> {
   /** Where clicking it should go. */
   link?: string;
   amount?: number;
-  branchId?: Types.ObjectId | null;
   entity?: string;
   entityId?: string;
   readAt?: Date | null;
@@ -38,7 +37,6 @@ const notificationSchema = new Schema<NotificationDoc>(
     body: { type: String, trim: true, maxlength: 600 },
     link: { type: String, trim: true, maxlength: 300 },
     amount: moneyField(),
-    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null },
     entity: { type: String, trim: true },
     entityId: { type: String, trim: true },
     readAt: { type: Date, default: null },

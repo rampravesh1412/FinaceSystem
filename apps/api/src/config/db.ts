@@ -19,8 +19,7 @@ import { logger } from "./logger.js";
  * It looks like the obvious NoSQL-injection defence, but it applies to every filter the
  * application builds, not just the untrusted ones. It rewrites `{ _id: { $in: [...] } }`
  * into `{ _id: { $eq: { $in: [...] } } }`, which then fails to cast. That would break
- * every `$in`, `$gte`, `$or` and aggregation match in the system — including
- * `{ branchId: { $in: allowedBranches } }`, the branch isolation filter itself.
+ * every `$in`, `$gte`, `$or` and aggregation match in the system.
  *
  * Untrusted input is sanitised where it actually arrives instead: `stripOperators` in
  * middleware/security.ts removes `$`-prefixed and dotted keys at the HTTP boundary, and
@@ -28,9 +27,23 @@ import { logger } from "./logger.js";
  * specific query ever does interpolate a raw user object into a filter, apply
  * `.setOptions({ sanitizeFilter: true })` to that query alone.
  */
-export async function connectDatabase(): Promise<typeof mongoose> {
+export interface ConnectOptions {
+  /**
+   * Create collections and build indexes on connect. On by default, and required before
+   * serving traffic — see `materialiseCollections`.
+   *
+   * A MIGRATION must pass `false`. Index builds are exactly what a migration is there to
+   * make possible: a script that fixes duplicate keys cannot get as far as fixing them if
+   * connecting already tried to build the unique index over the duplicates and threw.
+   */
+  prepareCollections?: boolean;
+}
+
+export async function connectDatabase(options: ConnectOptions = {}): Promise<typeof mongoose> {
+  const { prepareCollections = true } = options;
+
   mongoose.set("strictQuery", true);
-  mongoose.set("autoIndex", !env.isProd);
+  mongoose.set("autoIndex", !env.isProd && prepareCollections);
   mongoose.set("bufferCommands", false);
 
   if (env.LOG_LEVEL === "debug" || env.LOG_LEVEL === "trace") {
@@ -52,7 +65,7 @@ export async function connectDatabase(): Promise<typeof mongoose> {
   mongoose.connection.on("reconnected", () => logger.info("mongodb reconnected"));
 
   await assertTransactionSupport();
-  await materialiseCollections();
+  if (prepareCollections) await materialiseCollections();
 
   logger.info(
     { db: env.MONGODB_DB_NAME, host: conn.connection.host },

@@ -197,7 +197,6 @@ export async function createAdjustment(
       {
         type: "ADJUSTMENT",
         date: input.date,
-        branchId: input.branchId,
         lines,
         grossAmount: magnitude,
         narration: input.notes ?? `Adjustment — ${label}`,
@@ -213,14 +212,14 @@ export async function createAdjustment(
         },
       },
       session,
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
     );
 
     // A second, explicitly-labelled audit row. The POST row records the movement; this one
     // records that a human deliberately corrected a balance and why — which is the
     // question an auditor actually asks.
     await audit.record(
-      { ...ctx, branchId: String(input.branchId) },
+      ctx,
       {
         action: "BALANCE_ADJUSTED",
         entity: "Transaction",
@@ -339,8 +338,6 @@ async function ageParty(
 /**
  * Credit aging across the whole party master.
  *
- * No branch filter: parties are organisation-wide, so a party's outstanding balance is one
- * figure. Aging a slice of it would age a number nobody is actually owed.
  */
 export async function creditReport(
   options: { overLimit?: boolean; overdueOnly?: boolean; bucket?: AgingBucketKey; limit?: number } = {},

@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { authRouter } from "./modules/auth/auth.routes.js";
-import { branchRouter } from "./modules/branches/branch.routes.js";
 import { userRouter } from "./modules/users/user.routes.js";
 import { roleRouter } from "./modules/roles/role.routes.js";
 import { bankRouter, bankAccountRouter, cashAccountRouter } from "./modules/banking/banking.routes.js";
@@ -41,7 +40,6 @@ apiRouter.get("/", (_req, res) => {
 });
 
 apiRouter.use("/auth", authRouter);
-apiRouter.use("/branches", branchRouter);
 apiRouter.use("/users", userRouter);
 apiRouter.use("/roles", roleRouter);
 

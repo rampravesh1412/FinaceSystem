@@ -18,7 +18,6 @@ import {
 } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { useAuth } from "@/features/auth/auth-context";
-import { BranchRequired } from "@/components/branch-required";
 import { NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -83,9 +82,8 @@ function useAccountOptions() {
 }
 
 function CreateDialog({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [kind, setKind] = React.useState<"PARTY" | "BANK" | "BRANCH">("PARTY");
+  const [kind, setKind] = React.useState<"PARTY" | "BANK">("PARTY");
   const [formError, setFormError] = React.useState<string | null>(null);
   const accountOptions = useAccountOptions();
 
@@ -98,7 +96,6 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
     resolver: zodResolver(createSettlementSchema),
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      branchId: user?.activeBranchId ?? "",
       kind: "PARTY",
       amount: 0,
       manualCharge: 0,
@@ -114,12 +111,10 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
    * and is told at submit that it "belongs to a different branch" — with no way to tell
    * which parties would have been acceptable.
    */
-  const branchId = form.watch("branchId");
   const parties = useQuery({
-    queryKey: ["parties", "for-settlement", branchId],
+    queryKey: ["parties", "for-settlement"],
     queryFn: () =>
-      api.list<PartySummary>(`/parties${qs({ limit: 200, status: "ACTIVE", branchId })}`),
-    enabled: Boolean(branchId),
+      api.list<PartySummary>(`/parties${qs({ limit: 200, status: "ACTIVE" })}`),
   });
 
   const mutation = useMutation({
@@ -147,7 +142,7 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
     }
   }, [amountText]);
 
-  const setKindAndForm = (next: "PARTY" | "BANK" | "BRANCH") => {
+  const setKindAndForm = (next: "PARTY" | "BANK") => {
     setKind(next);
     form.setValue("kind", next, { shouldValidate: true });
   };
@@ -162,9 +157,6 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
           </DialogDescription>
         </DialogHeader>
 
-        {!user?.activeBranchId ? (
-          <BranchRequired action="A settlement" />
-        ) : (
         <form
           onSubmit={form.handleSubmit((values) => {
             setFormError(null);
@@ -177,7 +169,6 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
             <TabsList>
               <TabsTrigger value="PARTY">With a party</TabsTrigger>
               <TabsTrigger value="BANK">Between accounts</TabsTrigger>
-              <TabsTrigger value="BRANCH">Between branches</TabsTrigger>
             </TabsList>
 
             <TabsContent value="PARTY" className="space-y-4">
@@ -202,12 +193,6 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
               </div>
             </TabsContent>
 
-            <TabsContent value="BRANCH" className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <SelectField form={form} name="sourceAccountId" label="From" required options={accountOptions} />
-                <SelectField form={form} name="destinationAccountId" label="To" required options={accountOptions} />
-              </div>
-            </TabsContent>
           </Tabs>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -270,7 +255,6 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
             </Button>
           </DialogFooter>
         </form>
-        )}
       </DialogContent>
     </Dialog>
   );

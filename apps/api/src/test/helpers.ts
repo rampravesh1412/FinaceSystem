@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { DEFAULT_ROLE_PERMISSIONS, SYSTEM_ROLES } from "@amiri/shared";
-import { Branch, Role, User } from "../models/index.js";
+import { Role, User } from "../models/index.js";
 
 /**
  * Test fixtures.
@@ -11,7 +11,6 @@ import { Branch, Role, User } from "../models/index.js";
 
 export interface Fixtures {
   roles: Record<string, string>;
-  branches: Record<string, string>;
   users: Record<string, { id: string; email: string; password: string }>;
 }
 
@@ -24,27 +23,19 @@ export async function seedFixtures(): Promise<Fixtures> {
       name,
       label: name,
       permissions,
-      isUnscoped: name === SYSTEM_ROLES.SUPER_ADMIN,
+      isSuperAdmin: name === SYSTEM_ROLES.SUPER_ADMIN,
       isSystem: true,
     });
     roles[name] = String(role._id);
   }
 
-  const branches: Record<string, string> = {};
-  for (const code of ["101", "105", "107"]) {
-    const branch = await Branch.create({ code, name: `Branch ${code}`, status: "ACTIVE" });
-    branches[code] = String(branch._id);
-  }
-
   const users: Fixtures["users"] = {};
 
-  const make = async (key: string, email: string, roleName: string, branchIds: string[]) => {
+  const make = async (key: string, email: string, roleName: string) => {
     const user = new User({
       name: key,
       email,
       roleId: roles[roleName]!,
-      branchIds,
-      defaultBranchId: branchIds[0] ?? null,
       status: "ACTIVE",
       passwordHash: "placeholder",
     });
@@ -54,20 +45,19 @@ export async function seedFixtures(): Promise<Fixtures> {
     users[key] = { id: String(user._id), email, password: TEST_PASSWORD };
   };
 
-  await make("superAdmin", "super@test.co", "SUPER_ADMIN", [branches["101"]!]);
-  // Assigned to 105 only. Branch 107 exists but must be invisible to them everywhere.
-  await make("branchAdmin", "badmin@test.co", "BRANCH_ADMIN", [branches["105"]!]);
-  await make("accountant", "acct@test.co", "ACCOUNTANT", [branches["105"]!]);
-  await make("viewer", "viewer@test.co", "VIEWER", [branches["105"]!]);
+  await make("superAdmin", "super@test.co", "SUPER_ADMIN");
+  await make("branchAdmin", "badmin@test.co", "BRANCH_ADMIN");
+  await make("accountant", "acct@test.co", "ACCOUNTANT");
+  await make("viewer", "viewer@test.co", "VIEWER");
 
-  return { roles, branches, users };
+  return { roles, users };
 }
 
 export async function clearFixtures(): Promise<void> {
   const mongoose = (await import("mongoose")).default;
   const { Session } = await import("../models/index.js");
 
-  await Promise.all([User.deleteMany({}), Role.deleteMany({}), Branch.deleteMany({}), Session.deleteMany({})]);
+  await Promise.all([User.deleteMany({}), Role.deleteMany({}), Session.deleteMany({})]);
 
   /**
    * Audit logs are cleared through the raw driver, bypassing Mongoose middleware.

@@ -27,13 +27,8 @@ import { auditContextFrom } from "../../services/audit.service.js";
 import * as service from "./banking.service.js";
 
 /**
- * Banks, bank accounts and cash drawers are ORGANISATION-WIDE, so none of these routes
- * carries a branch guard.
- *
- * `requireBranchAccess` / `scopeOf` are absent by design, not by omission: these records
- * have no `branchId` to filter on. Access is governed by the `finance.bank.*` and
- * `finance.cash.*` permissions, and `finance.bank.viewFull` still decides whether the
- * account digits leave the server at all.
+ * Access here is governed by the `finance.bank.*` and `finance.cash.*` permissions, and
+ * `finance.bank.viewFull` decides whether the account digits leave the server at all.
  */
 export const bankRouter: Router = Router();
 export const bankAccountRouter: Router = Router();

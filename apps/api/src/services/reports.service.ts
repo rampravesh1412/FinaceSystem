@@ -24,7 +24,7 @@ import { LedgerAccount, LedgerEntry } from "../models/index.js";
  *   `cashFlow`        — movement in BANK and CASH accounts. What is in the drawer.
  *   `profitAndLoss`   — INCOME less EXPENSE accounts. What the business earned.
  *
- * A branch can push ₹10,00,000 through its accounts in a day and lose money; it can bank
+ * A business can push ₹10,00,000 through its accounts in a day and lose money; it can bank
  * nothing all week and be profitable. The P&L reports cash movement ALONGSIDE the profit
  * figure — never inside it — precisely so the gap between the two is visible on the page.
  *
@@ -49,7 +49,6 @@ interface AccountTotal {
 async function totalsByAccount(options: {
   from?: Date;
   to?: Date;
-  branchId?: string | Types.ObjectId;
   kinds?: AccountKind[];
 }): Promise<AccountTotal[]> {
   const match: Record<string, unknown> = {};
@@ -60,7 +59,6 @@ async function totalsByAccount(options: {
       ...(options.to ? { $lte: endOfDay(options.to) } : {}),
     };
   }
-  if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
 
   return LedgerEntry.aggregate<AccountTotal>([
     { $match: match },
@@ -101,12 +99,10 @@ async function totalsByAccount(options: {
 export async function profitAndLoss(options: {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<ProfitAndLoss> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
-    branchId: options.branchId,
     kinds: ["INCOME", "EXPENSE", "CHARGE"],
   });
 
@@ -153,12 +149,11 @@ export async function profitAndLoss(options: {
   const netProfit = totalIncome - totalExpenses;
 
   // Computed separately, reported alongside, never added in (§21).
-  const cash = await cashMovement({ from: options.from, to: options.to, branchId: options.branchId });
+  const cash = await cashMovement({ from: options.from, to: options.to });
 
   return {
     from: options.from.toISOString(),
     to: options.to.toISOString(),
-    branchId: options.branchId ?? null,
     income,
     totalIncome,
     expenses,
@@ -190,9 +185,8 @@ export async function profitAndLoss(options: {
  */
 export async function balanceSheet(options: {
   asOf: Date;
-  branchId?: string;
 }): Promise<BalanceSheet> {
-  const totals = await totalsByAccount({ to: options.asOf, branchId: options.branchId });
+  const totals = await totalsByAccount({ to: options.asOf });
 
   const assets: BalanceSheet["assets"] = [];
   const liabilities: BalanceSheet["liabilities"] = [];
@@ -256,7 +250,6 @@ export async function balanceSheet(options: {
 
   return {
     asOf: options.asOf.toISOString(),
-    branchId: options.branchId ?? null,
     assets,
     totalAssets,
     liabilities,
@@ -280,12 +273,10 @@ export async function balanceSheet(options: {
 export async function cashMovement(options: {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<{ in: number; out: number; net: number }> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
-    branchId: options.branchId,
     kinds: ["BANK", "CASH"],
   });
 
@@ -334,13 +325,11 @@ interface MonthlyBucket {
 export async function monthlyHistory(options: {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<MonthlyHistory> {
   const from = startOfDay(options.from);
   const to = endOfDay(options.to);
 
   const match: Record<string, unknown> = { date: { $gte: from, $lte: to } };
-  if (options.branchId) match.branchId = new Types.ObjectId(String(options.branchId));
 
   const buckets = await LedgerEntry.aggregate<MonthlyBucket>([
     { $match: match },
@@ -386,7 +375,6 @@ export async function monthlyHistory(options: {
    */
   const openingRows = await totalsByAccount({
     to: new Date(from.getTime() - 1),
-    branchId: options.branchId,
     kinds: ["PARTY"],
   });
   let partyRunning = openingRows.reduce((sum, r) => sum + (r.debit - r.credit), 0);
@@ -458,7 +446,6 @@ export async function monthlyHistory(options: {
   return {
     from: from.toISOString(),
     to: to.toISOString(),
-    branchId: options.branchId ?? null,
     months,
     totals: {
       income: totalIncome,
@@ -486,7 +473,6 @@ export async function monthlyHistory(options: {
 export async function cashFlow(options: {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<CashFlowReport> {
   const cashAccounts = await LedgerAccount.find({ kind: { $in: ["BANK", "CASH"] } })
     .select("_id")
@@ -494,23 +480,10 @@ export async function cashFlow(options: {
 
   const ids = cashAccounts.map((a) => a._id);
 
-  /**
-   * The branch narrows the ENTRIES, not the accounts.
-   *
-   * Cash and bank accounts are organisation-wide, so there is no set of accounts that
-   * belongs to one branch — filtering the account list by branch would return nothing at
-   * all. What a branch does own is its own postings, so a branch cash flow is the movement
-   * that branch put through the shared accounts.
-   */
-  const branchMatch = options.branchId
-    ? { branchId: new Types.ObjectId(options.branchId) }
-    : {};
-
   const [openingAgg] = await LedgerEntry.aggregate<{ debit: number; credit: number }>([
     {
       $match: {
         ledgerAccountId: { $in: ids },
-        ...branchMatch,
         date: { $lt: startOfDay(options.from) },
       },
     },
@@ -529,7 +502,6 @@ export async function cashFlow(options: {
     {
       $match: {
         ledgerAccountId: { $in: ids },
-        ...branchMatch,
         date: { $gte: startOfDay(options.from), $lte: endOfDay(options.to) },
       },
     },
@@ -559,7 +531,6 @@ export async function cashFlow(options: {
   return {
     from: options.from.toISOString(),
     to: options.to.toISOString(),
-    branchId: options.branchId ?? null,
     openingBalance,
     totalIn: rows.reduce((s, r) => s + r.moneyIn, 0),
     totalOut: rows.reduce((s, r) => s + r.moneyOut, 0),
@@ -577,12 +548,10 @@ export async function cashFlow(options: {
 export async function profitFor(options: {
   from: Date;
   to: Date;
-  branchId?: string;
 }): Promise<{ income: number; expenses: number; profit: number }> {
   const totals = await totalsByAccount({
     from: options.from,
     to: options.to,
-    branchId: options.branchId,
     kinds: ["INCOME", "EXPENSE", "CHARGE"],
   });
 
@@ -596,56 +565,18 @@ export async function profitFor(options: {
   return { income, expenses, profit: income - expenses };
 }
 
-/**
- * Current balance across a set of account kinds.
- *
- * With no branch this is the organisation's position, read from the cached balances.
- *
- * WITH a branch it is that branch's CONTRIBUTION to the position — the net of the entries
- * that branch posted. Accounts are organisation-wide, so no branch holds a balance of its
- * own; the honest per-branch figure is "how much of this did we put here", and it is the
- * one that adds up across branches. It is computed from entries because the cache is a
- * per-account number with no branch dimension to read.
- */
-export async function balanceByKind(
-  kinds: AccountKind[],
-  branchId?: string,
-): Promise<number> {
-  if (!branchId) {
-    const accounts = await LedgerAccount.find({ kind: { $in: kinds } })
-      .select("cachedBalance")
-      .lean();
-    return accounts.reduce((sum, a) => sum + a.cachedBalance, 0);
-  }
-
-  const totals = await totalsByAccount({ branchId, kinds });
-  // Signed against each account's normal side, so an asset (BANK, CASH) and a liability
-  // (SAVINGS) both come out positive when they hold what they are supposed to.
-  return totals.reduce((sum, row) => {
-    const normal = signFor(row.account.accountClass as AccountClass, "DEBIT");
-    return sum + (normal === 1 ? row.debit - row.credit : row.credit - row.debit);
-  }, 0);
+/** Current balance across a set of account kinds, read from the cached balances. */
+export async function balanceByKind(kinds: AccountKind[]): Promise<number> {
+  const accounts = await LedgerAccount.find({ kind: { $in: kinds } })
+    .select("cachedBalance")
+    .lean();
+  return accounts.reduce((sum, a) => sum + a.cachedBalance, 0);
 }
 
-/**
- * Receivable and payable, split from the same party balances (§10).
- *
- * Organisation-wide with no branch. With a branch, the split is taken over that branch's
- * contribution to each party's balance rather than over the party's whole position — the
- * party is shared, so its total belongs to the business, not to one office.
- */
-export async function partyPositions(
-  branchId?: string,
-): Promise<{ receivable: number; payable: number }> {
-  let balances: number[];
-
-  if (branchId) {
-    const totals = await totalsByAccount({ branchId, kinds: ["PARTY"] });
-    balances = totals.map((row) => row.debit - row.credit);
-  } else {
-    const accounts = await LedgerAccount.find({ kind: "PARTY" }).select("cachedBalance").lean();
-    balances = accounts.map((a) => a.cachedBalance);
-  }
+/** Receivable and payable, split from the same party balances (§10). */
+export async function partyPositions(): Promise<{ receivable: number; payable: number }> {
+  const accounts = await LedgerAccount.find({ kind: "PARTY" }).select("cachedBalance").lean();
+  const balances = accounts.map((a) => a.cachedBalance);
 
   let receivable = 0;
   let payable = 0;
