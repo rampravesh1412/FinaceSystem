@@ -21,17 +21,20 @@ import {
 } from "@amiri/shared";
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import {
-  assertBranchInScope,
-  requireAuth,
-  requireBranchAccess,
-  requirePermission,
-  scopeOf,
-} from "../../middleware/auth.js";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import * as service from "./banking.service.js";
 
+/**
+ * Banks, bank accounts and cash drawers are ORGANISATION-WIDE, so none of these routes
+ * carries a branch guard.
+ *
+ * `requireBranchAccess` / `scopeOf` are absent by design, not by omission: these records
+ * have no `branchId` to filter on. Access is governed by the `finance.bank.*` and
+ * `finance.cash.*` permissions, and `finance.bank.viewFull` still decides whether the
+ * account digits leave the server at all.
+ */
 export const bankRouter: Router = Router();
 export const bankAccountRouter: Router = Router();
 export const cashAccountRouter: Router = Router();
@@ -47,19 +50,11 @@ const idParam = z.object({ id: objectId });
 bankRouter.get(
   "/",
   requirePermission("finance.bank.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
     const page = paging(query, { name: 1 }, ["name", "createdAt"]);
-    const { items, total } = await service.listBanks(
-      {
-        q: query.q,
-        // Account counts and totals are computed only over branches the caller holds.
-        scopeIds: req.scope!.isUnscoped ? null : req.scope!.branchIds,
-      },
-      page,
-    );
+    const { items, total } = await service.listBanks({ q: query.q }, page);
     return paginated(res, items, total, page.page, page.limit);
   }),
 );
@@ -94,7 +89,6 @@ bankRouter.patch(
 bankAccountRouter.get(
   "/",
   requirePermission("finance.bank.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: bankAccountQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as BankAccountQuery;
@@ -106,8 +100,6 @@ bankAccountRouter.get(
         bankId: query.bankId,
         accountType: query.accountType,
         status: query.status,
-        // The branch scope is server-derived and cannot be widened by the request.
-        scopeFilter: scopeOf(req),
       },
       page,
       // Full account numbers require their own permission; everyone else gets
@@ -122,15 +114,10 @@ bankAccountRouter.get(
 bankAccountRouter.post(
   "/",
   requirePermission("finance.bank.create"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createBankAccountSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateBankAccountInput;
-    // The branch arrives in the BODY here, so `requireBranchAccess` (which reads the
-    // query) is not enough on its own — this is the write-path check.
-    assertBranchInScope(req, input.branchId);
-
     const account = await service.createBankAccount(input, auditContextFrom(req));
     // The list's shape, so the caller gets the posted opening balance back — and the
     // account number masked unless they hold `finance.bank.viewFull`.
@@ -145,7 +132,6 @@ bankAccountRouter.post(
 bankAccountRouter.patch(
   "/:id",
   requirePermission("finance.bank.edit"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: updateBankAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -153,7 +139,6 @@ bankAccountRouter.patch(
     const account = await service.updateBankAccount(
       id,
       req.valid.body as UpdateBankAccountInput,
-      scopeOf(req),
       auditContextFrom(req),
     );
     return ok(res, account, "Bank account updated");
@@ -165,12 +150,11 @@ bankAccountRouter.patch(
 cashAccountRouter.get(
   "/",
   requirePermission("finance.cash.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
     const page = paging(query, { name: 1 }, ["name", "createdAt"]);
-    const { items, total, totalBalance } = await service.listCashAccounts(scopeOf(req), page);
+    const { items, total, totalBalance } = await service.listCashAccounts(page);
     return paginated(res, items, total, page.page, page.limit, { totalBalance });
   }),
 );
@@ -178,12 +162,10 @@ cashAccountRouter.get(
 cashAccountRouter.post(
   "/",
   requirePermission("finance.cash.manage"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: createCashAccountSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateCashAccountInput;
-    assertBranchInScope(req, input.branchId);
     const account = await service.createCashAccount(input, auditContextFrom(req));
     return created(
       res,
@@ -196,7 +178,6 @@ cashAccountRouter.post(
 cashAccountRouter.patch(
   "/:id",
   requirePermission("finance.bank.edit"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: updateCashAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -204,7 +185,6 @@ cashAccountRouter.patch(
     const account = await service.updateCashAccount(
       id,
       req.valid.body as UpdateCashAccountInput,
-      scopeOf(req),
       auditContextFrom(req),
     );
     return ok(res, await service.getCashAccountSummary(String(account._id)), `${account.name} updated`);

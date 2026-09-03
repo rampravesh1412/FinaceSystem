@@ -80,16 +80,18 @@ describe("adjustment form", () => {
     expect(screen.getAllByText(/balance correction/i).length).toBeGreaterThan(0);
   });
 
-  it("scopes the party list to the chosen branch", async () => {
+  it("offers every active party, since parties have no branch", async () => {
     await openForm();
 
     await waitFor(() => expect(api.list).toHaveBeenCalled());
     const partyCall = api.list.mock.calls.find(([path]) => String(path).startsWith("/parties"));
 
     expect(partyCall).toBeDefined();
-    // Without this the operator picks a party the server will refuse, having filled in
-    // the whole form, and is told only that it "belongs to a different branch".
-    expect(String(partyCall![0])).toContain(BRANCH_ID);
+    // Parties are organisation-wide, so narrowing by branch would hide valid choices and
+    // the server has nothing to refuse. The branch on this form is where the CORRECTION
+    // is booked, which is a separate question from who it is about.
+    expect(String(partyCall![0])).not.toContain(BRANCH_ID);
+    expect(String(partyCall![0])).toContain("status=ACTIVE");
   });
 
   it("requires a reason of at least ten characters, matching the server", async () => {

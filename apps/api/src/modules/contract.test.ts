@@ -76,7 +76,8 @@ describe("every create route answers in its list's shape", () => {
     cases.push(
       {
         name: "POST /parties",
-        require: ["id", "name", "balance", "direction", "branch", "ledgerAccountId"],
+        // No "branch": the party master is organisation-wide.
+        require: ["id", "name", "balance", "direction", "ledgerAccountId"],
         create: () =>
           client.post(
             "/parties",
@@ -92,7 +93,7 @@ describe("every create route answers in its list's shape", () => {
       },
       {
         name: "POST /bank-accounts",
-        require: ["id", "accountName", "balance", "availableBalance", "bank", "branch", "accountNumberMasked"],
+        require: ["id", "accountName", "balance", "availableBalance", "bank", "accountNumberMasked"],
         create: () =>
           client.post(
             "/bank-accounts",
@@ -109,7 +110,7 @@ describe("every create route answers in its list's shape", () => {
       },
       {
         name: "POST /cash-accounts",
-        require: ["id", "name", "balance", "branch", "isDefault", "ledgerAccountId"],
+        require: ["id", "name", "balance", "isDefault", "ledgerAccountId"],
         create: () =>
           client.post(
             "/cash-accounts",

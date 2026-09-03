@@ -183,6 +183,12 @@ export async function previewCharge(chargeRuleId: string, amount: number): Promi
   return {
     gross: amount,
     charge: computed.amount,
+    /**
+     * The calculator has no transaction type, so it reports the DEDUCTED reading: what
+     * the counterparty is left with when the charge comes out of the amount. Whether a
+     * self-borne charge is instead paid on top is decided per posting by `chargeEffect`,
+     * because it depends on which way the money is going.
+     */
     net: amount - computed.amount,
     bearer: computed.bearer,
     ruleName: computed.ruleName,

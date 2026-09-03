@@ -163,18 +163,16 @@ reportRouter.get(
 tallyRouter.get(
   "/targets",
   requirePermission("finance.cash.view"),
-  requireBranchAccess({ optional: true }),
-  asyncHandler(async (req, res) => ok(res, await tally.tallyTargets(scopeOf(req)))),
+  asyncHandler(async (_req, res) => ok(res, await tally.tallyTargets())),
 );
 
 tallyRouter.get(
   "/",
   requirePermission("finance.cash.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: z.object({ date: z.coerce.date().optional(), cashAccountId: objectId }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { date?: Date; cashAccountId: string };
-    return ok(res, await tally.getTally(query.date ?? new Date(), query.cashAccountId, scopeOf(req)));
+    return ok(res, await tally.getTally(query.date ?? new Date(), query.cashAccountId));
   }),
 );
 
@@ -187,14 +185,11 @@ tallyRouter.get(
 tallyRouter.post(
   "/",
   requirePermission("finance.cash.tally"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: recordTallySchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as RecordTallyInput;
-    assertBranchInScope(req, input.branchId);
-
-    const result = await tally.recordTally(input, auditContextFrom(req), scopeOf(req));
+    const result = await tally.recordTally(input, auditContextFrom(req));
 
     const message =
       result.status === "MATCHED"
@@ -208,10 +203,9 @@ tallyRouter.post(
 tallyRouter.get(
   "/history",
   requirePermission("finance.cash.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: z.object({ cashAccountId: objectId, limit: z.coerce.number().min(1).max(180).default(60) }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { cashAccountId: string; limit: number };
-    return ok(res, await tally.listTallies(query.cashAccountId, scopeOf(req), query.limit));
+    return ok(res, await tally.listTallies(query.cashAccountId, query.limit));
   }),
 );

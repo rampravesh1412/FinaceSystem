@@ -172,7 +172,6 @@ function KhataStatementView({ partyId }: { partyId: string }) {
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-mono">{k.party.code}</span>
             <Badge variant="outline">{k.party.type.charAt(0) + k.party.type.slice(1).toLowerCase()}</Badge>
-            <Badge variant="outline" className="font-mono">{k.party.branch.code}</Badge>
             {k.party.mobile ? <span className="text-muted-foreground">{k.party.mobile}</span> : null}
           </span>
         }

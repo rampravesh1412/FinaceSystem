@@ -131,17 +131,14 @@ export function TransactionFormDialog({
   const { options: allAccounts, isPending: accountsPending } = useAccounts();
 
   /**
-   * Accounts are filtered to the posting branch, and deliberately still are.
+   * Every account, whichever branch is posting.
    *
-   * A party may be settled from anywhere — they walk into whichever office is nearest —
-   * but a till or a bank account IS the branch's own asset. Offering 107's account for a
-   * receipt booked in 105 would move 107's balance on a transaction that never appears in
-   * 107's books, which is the point at which a branch stops being able to reconcile.
+   * Accounts are organisation-wide: one bank account is one real account that every
+   * counter pays into and draws on. Both legs of the posting are still stamped with the
+   * branch chosen above, so each branch's own books continue to balance — what has gone
+   * is the pretence that a branch owns a share of the company's bank balance.
    */
-  const accounts = React.useMemo(
-    () => allAccounts.filter((a) => !branchId || a.branchId === branchId),
-    [allAccounts, branchId],
-  );
+  const accounts = allAccounts;
   const parties = useParties();
   const categories = useExpenseCategories();
   const incomeHeads = useIncomeHeads();
@@ -269,18 +266,14 @@ export function TransactionFormDialog({
                     onChange={(v) => form.setValue("partyId", v, { shouldValidate: true })}
                     placeholder="Choose a party"
                     /**
-                     * Every party, including those whose home branch is not the one being
-                     * posted into — a customer may pay at whichever office is nearest.
-                     * The branch code is appended when it differs, because "settling a
-                     * Gaya account through the Patna till" is a decision the operator
-                     * should make knowingly rather than discover in a report later.
+                     * The whole party master. Parties are organisation-wide, so there is
+                     * no longer a "belongs to another branch" case to warn about — a
+                     * customer settles at whichever office is nearest and it is the same
+                     * account either way.
                      */
                     options={(parties.data?.items ?? []).map((p) => ({
                       value: p.id,
-                      label:
-                        !p.branch || p.branch.id === branchId
-                          ? `${p.name} (${p.code})`
-                          : `${p.name} (${p.code}) · ${p.branch.code}`,
+                      label: `${p.name} (${p.code})`,
                       hint: p.balance !== 0 ? formatINR(Math.abs(p.balance)) : undefined,
                     }))}
                   />

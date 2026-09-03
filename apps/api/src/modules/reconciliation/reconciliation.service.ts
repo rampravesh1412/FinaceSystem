@@ -36,24 +36,17 @@ import * as audit from "../../services/audit.service.js";
  */
 
 /**
- * Load a reconciliation, or behave as though it does not exist.
+ * Load an open reconciliation, or behave as though it does not exist.
  *
- * Every entry point below goes through this rather than a bare `findById`. A reconciliation
- * id is guessable-adjacent — it appears in URLs, exports and audit rows — and
- * `finance.bank.reconcile` is a branch-level permission, so without the scope filter in the
- * QUERY a branch admin holding an id from anywhere could read, match and close another
- * branch's reconciliation. §3: isolation is enforced at the query, not by the caller
- * remembering to check.
+ * Reconciliations are organisation-wide, because the account they reconcile is: the bank
+ * issues one statement covering every counter's activity, so there is no per-branch share
+ * of it that could tie. Access is governed by `finance.bank.reconcile` alone.
  *
- * The failure is NotFound rather than Forbidden on purpose: confirming that an id exists
- * but belongs to someone else is itself a disclosure.
+ * Still routed through one loader rather than a bare `findById` at each call site, so the
+ * NotFound behaviour and the open/closed checks stay in one place.
  */
-async function loadScoped(
-  reconciliationId: string,
-  scopeFilter: Record<string, unknown>,
-  session?: ClientSession,
-) {
-  const query = Reconciliation.findOne({ _id: reconciliationId, ...scopeFilter });
+async function loadScoped(reconciliationId: string, session?: ClientSession) {
+  const query = Reconciliation.findOne({ _id: reconciliationId });
   if (session) query.session(session);
   const recon = await query;
   if (!recon) throw new NotFoundError("Reconciliation", reconciliationId);
@@ -62,10 +55,9 @@ async function loadScoped(
 
 export async function start(
   input: StartReconciliationInput,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<ReconciliationDoc> {
-  const account = await BankAccount.findOne({ _id: input.bankAccountId, ...scopeFilter })
+  const account = await BankAccount.findById(input.bankAccountId)
     .populate<{ bankId: { name: string; shortName?: string } }>("bankId", "name shortName")
     .lean();
 
@@ -97,7 +89,6 @@ export async function start(
         {
           bankAccountId: account._id,
           ledgerAccountId: account.ledgerAccountId,
-          branchId: account.branchId,
           from: input.from,
           to: input.to,
           statementBalance: input.statementBalance,
@@ -113,7 +104,7 @@ export async function start(
     if (!recon) throw new Error("Reconciliation creation returned no document");
 
     await audit.record(
-      { ...ctx, branchId: String(account.branchId) },
+      ctx,
       {
         action: "CREATE",
         entity: "Reconciliation",
@@ -144,10 +135,9 @@ export async function start(
 export async function importStatement(
   reconciliationId: string,
   input: ImportStatementInput,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<{ imported: number; autoMatched: number }> {
-  const recon = await loadScoped(reconciliationId, scopeFilter);
+  const recon = await loadScoped(reconciliationId);
   if (recon.status !== "IN_PROGRESS") {
     throw new ConflictError("This reconciliation is no longer open");
   }
@@ -234,7 +224,7 @@ export async function importStatement(
   }
 
   await audit.recordSafe(
-    { ...ctx, branchId: String(recon.branchId) },
+    ctx,
     {
       action: "IMPORT",
       entity: "Reconciliation",
@@ -251,7 +241,6 @@ export async function importStatement(
 export async function setLineStatus(
   lineId: string,
   update: { ledgerEntryId?: string | null; status?: string },
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<void> {
   const line = await ReconciliationLine.findById(lineId);
@@ -259,7 +248,7 @@ export async function setLineStatus(
 
   // Scoped through the PARENT: the line carries no branch of its own, so its owner is
   // whichever reconciliation it belongs to — and that lookup is where isolation applies.
-  const recon = await loadScoped(String(line.reconciliationId), scopeFilter);
+  const recon = await loadScoped(String(line.reconciliationId));
   if (recon.status !== "IN_PROGRESS") {
     throw new ConflictError("This reconciliation is no longer open");
   }
@@ -304,9 +293,8 @@ export async function setLineStatus(
 
 export async function getSummary(
   reconciliationId: string,
-  scopeFilter: Record<string, unknown>,
 ): Promise<ReconciliationSummary> {
-  const recon = await Reconciliation.findOne({ _id: reconciliationId, ...scopeFilter })
+  const recon = await Reconciliation.findOne({ _id: reconciliationId })
     .populate<{
       bankAccountId: {
         _id: Types.ObjectId;
@@ -360,11 +348,10 @@ export async function getSummary(
  * closed-with-a-difference reconciliation look identical to a clean one.
  */
 export async function list(
-  scopeFilter: Record<string, unknown>,
   filters: { bankAccountId?: string; status?: string },
   page: { skip: number; limit: number; sort: Record<string, 1 | -1> },
 ): Promise<{ items: ReconciliationSummary[]; total: number }> {
-  const filter: Record<string, unknown> = { ...scopeFilter };
+  const filter: Record<string, unknown> = {};
   if (filters.bankAccountId) filter.bankAccountId = new Types.ObjectId(filters.bankAccountId);
   if (filters.status) filter.status = filters.status;
 
@@ -377,16 +364,15 @@ export async function list(
   // The page limit keeps this bounded; a single $lookup pipeline would be faster and would
   // duplicate the summary shape in a second place, which is how the two drift apart.
   return {
-    items: await Promise.all(docs.map((d) => getSummary(String(d._id), scopeFilter))),
+    items: await Promise.all(docs.map((d) => getSummary(String(d._id)))),
     total,
   };
 }
 
 export async function getLines(
   reconciliationId: string,
-  scopeFilter: Record<string, unknown>,
 ): Promise<ReconciliationLineRow[]> {
-  const recon = await Reconciliation.findOne({ _id: reconciliationId, ...scopeFilter }).lean();
+  const recon = await Reconciliation.findOne({ _id: reconciliationId }).lean();
   if (!recon) throw new NotFoundError("Reconciliation", reconciliationId);
 
   const lines = await ReconciliationLine.find({ reconciliationId: recon._id })
@@ -454,11 +440,10 @@ export async function getLines(
 export async function complete(
   reconciliationId: string,
   options: { notes?: string; acknowledgeDifference?: boolean },
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<ReconciliationDoc> {
   return withTransaction(async (session) => {
-    const recon = await loadScoped(reconciliationId, scopeFilter, session);
+    const recon = await loadScoped(reconciliationId, session);
     if (recon.status !== "IN_PROGRESS") throw new ConflictError("This reconciliation is already closed");
 
     const unresolved = await ReconciliationLine.countDocuments({
@@ -487,7 +472,7 @@ export async function complete(
     await recon.save({ session });
 
     await audit.record(
-      { ...ctx, branchId: String(recon.branchId) },
+      ctx,
       {
         action: "RECONCILED",
         entity: "Reconciliation",

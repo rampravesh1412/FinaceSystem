@@ -10,12 +10,10 @@ import {
   formatINR,
   parseAmount,
   type BankSummary,
-  type BranchSummary,
   type CreateBankAccountInput,
   type CreateCashAccountInput,
 } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
-import { useAuth } from "@/features/auth/auth-context";
 import { AmountField, NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { FormError } from "./bank-form";
 import { Button } from "@/components/ui/button";
@@ -85,29 +83,10 @@ function AccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
   );
 }
 
-/* ── Shared option sources ───────────────────────────────────────────────── */
-
-function useBranchOptions() {
-  const query = useQuery({
-    queryKey: ["branches", "for-account-form"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
-  });
-  return {
-    loading: query.isPending,
-    options: (query.data?.items ?? []).map((b) => ({
-      value: b.id,
-      label: `${b.code} — ${b.name}`,
-      detail: b.city,
-    })),
-  };
-}
-
 /* ── Bank account ────────────────────────────────────────────────────────── */
 
 function BankAccountForm({ onDone }: { onDone: () => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const branches = useBranchOptions();
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const banks = useQuery({
@@ -118,7 +97,7 @@ function BankAccountForm({ onDone }: { onDone: () => void }) {
   const form = useForm<CreateBankAccountInput>({
     resolver: zodResolver(createBankAccountSchema),
     defaultValues: {
-      bankId: "", branchId: user?.activeBranchId ?? "",
+      bankId: "",
       accountName: "", accountNumber: "", ifsc: "", bankBranchName: "",
       accountType: "CURRENT",
       openingBalance: 0, overdraftLimit: 0, lowBalanceThreshold: 0,
@@ -155,28 +134,18 @@ function BankAccountForm({ onDone }: { onDone: () => void }) {
       className="space-y-4"
       noValidate
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <SelectField
-          form={form}
-          name="bankId"
-          label="Bank"
-          required
-          placeholder={banks.isPending ? "Loading…" : "Choose a bank"}
-          options={(banks.data?.items ?? []).map((b) => ({
-            value: b.id,
-            label: b.name,
-            detail: b.shortName,
-          }))}
-        />
-        <SelectField
-          form={form}
-          name="branchId"
-          label="Our branch"
-          required
-          placeholder={branches.loading ? "Loading…" : "Choose a branch"}
-          options={branches.options}
-        />
-      </div>
+      <SelectField
+        form={form}
+        name="bankId"
+        label="Bank"
+        required
+        placeholder={banks.isPending ? "Loading…" : "Choose a bank"}
+        options={(banks.data?.items ?? []).map((b) => ({
+          value: b.id,
+          label: b.name,
+          detail: b.shortName,
+        }))}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <TextField form={form} name="accountName" label="Account name" required placeholder="HDFC Current" />
@@ -287,15 +256,12 @@ function BankAccountForm({ onDone }: { onDone: () => void }) {
 /* ── Cash drawer ─────────────────────────────────────────────────────────── */
 
 function CashAccountForm({ onDone }: { onDone: () => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const branches = useBranchOptions();
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const form = useForm<CreateCashAccountInput>({
     resolver: zodResolver(createCashAccountSchema),
     defaultValues: {
-      branchId: user?.activeBranchId ?? "",
       name: "", code: "", openingBalance: 0, status: "ACTIVE", notes: "",
     } as never,
   });
@@ -330,24 +296,16 @@ function CashAccountForm({ onDone }: { onDone: () => void }) {
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <TextField form={form} name="name" label="Drawer name" required placeholder="Main Counter" />
-        <SelectField
-          form={form}
-          name="branchId"
-          label="Branch"
-          required
-          placeholder={branches.loading ? "Loading…" : "Choose a branch"}
-          options={branches.options}
-        />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
         <TextField
           form={form}
           name="code"
           label="Code"
-          hint="Optional, for a branch with several drawers."
+          hint="Optional, for telling several drawers apart."
           className="font-mono uppercase"
         />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
         <AmountField
           form={form}
           name="openingBalance"

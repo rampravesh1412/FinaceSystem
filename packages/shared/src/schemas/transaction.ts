@@ -232,7 +232,12 @@ export interface TransactionRow {
   type: string;
   typeLabel: string;
   date: string;
-  branch: { id: string; name: string; code: string };
+  /**
+   * The branch that transacted. Null on an organisation-level posting — the opening
+   * balance of a party or an account, which belongs to the business rather than to any
+   * one office.
+   */
+  branch: { id: string; name: string; code: string } | null;
   party: { id: string; name: string; code: string } | null;
   /** Human name of the counter account: "HDFC ••7890", "Cash — Main Counter". */
   accountLabel: string;

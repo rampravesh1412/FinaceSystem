@@ -57,8 +57,6 @@ describe("account form", () => {
 
     await user.click(screen.getByRole("combobox", { name: /^bank/i }));
     await user.click(await screen.findByRole("option", { name: /hdfc/i }));
-    await user.click(screen.getByRole("combobox", { name: /our branch/i }));
-    await user.click(await screen.findByRole("option", { name: /head office/i }));
 
     const opening = screen.getByLabelText(/opening balance/i);
     await user.clear(opening);
@@ -102,8 +100,6 @@ describe("account form", () => {
     await user.click(screen.getByRole("tab", { name: /cash drawer/i }));
 
     await user.type(screen.getByLabelText(/drawer name/i), "Counter 2");
-    await user.click(screen.getByRole("combobox", { name: /^branch/i }));
-    await user.click(await screen.findByRole("option", { name: /head office/i }));
 
     const opening = screen.getByLabelText(/opening cash/i);
     await user.clear(opening);

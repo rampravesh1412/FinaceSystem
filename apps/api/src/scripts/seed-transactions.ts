@@ -94,14 +94,14 @@ export async function seedTransactions(
   if (!branchId) return;
 
   const [hdfc, icici] = await Promise.all([
-    BankAccount.findOne({ branchId, accountNumber: "50100234567890" }).lean(),
-    BankAccount.findOne({ branchId, accountNumber: "002105001234" }).lean(),
+    BankAccount.findOne({ accountNumber: "50100234567890" }).lean(),
+    BankAccount.findOne({ accountNumber: "002105001234" }).lean(),
   ]);
-  const cash = await CashAccount.findOne({ branchId }).lean();
-  const ramanuj = await Party.findOne({ branchId, name: "RAMANUJ PUNB" }).lean();
-  const eddigo = await Party.findOne({ branchId, name: "EDDIGO DISTRIBUTOR" }).lean();
-  const sharma = await Party.findOne({ branchId, name: "Sharma Traders" }).lean();
-  const panelVendor = await Party.findOne({ branchId, name: "Bihar Panel Services" }).lean();
+  const cash = await CashAccount.findOne({ isDefault: true }).lean();
+  const ramanuj = await Party.findOne({ name: "RAMANUJ PUNB" }).lean();
+  const eddigo = await Party.findOne({ name: "EDDIGO DISTRIBUTOR" }).lean();
+  const sharma = await Party.findOne({ name: "Sharma Traders" }).lean();
+  const panelVendor = await Party.findOne({ name: "Bihar Panel Services" }).lean();
 
   if (!hdfc || !icici || !cash || !ramanuj || !eddigo || !sharma || !panelVendor) {
     logger.warn("master data missing — skipping sample transactions");

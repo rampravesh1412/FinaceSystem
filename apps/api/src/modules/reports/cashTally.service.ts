@@ -7,7 +7,6 @@ import {
   type RecordTallyInput,
 } from "@amiri/shared";
 import {
-  Branch,
   CashAccount,
   DailyCashTally,
   LedgerAccount,
@@ -50,20 +49,13 @@ import * as notifications from "../notifications/notification.service.js";
  * Everything except `actualClosing` is derived, so opening this screen twice cannot
  * produce two different expectations.
  */
-export async function getTally(
-  date: Date,
-  cashAccountId: string,
-  scopeFilter: Record<string, unknown>,
-): Promise<CashTally> {
-  const cashAccount = await CashAccount.findOne({ _id: cashAccountId, ...scopeFilter })
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
-    .lean();
+export async function getTally(date: Date, cashAccountId: string): Promise<CashTally> {
+  const cashAccount = await CashAccount.findById(cashAccountId).lean();
 
   if (!cashAccount) throw new NotFoundError("Cash account", cashAccountId);
 
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
-  const branchId = String(cashAccount.branchId._id);
 
   // Opening: the drawer's position at the instant before the day began.
   const [openingAgg] = await LedgerEntry.aggregate<{ debit: number; credit: number }>([
@@ -118,9 +110,9 @@ export async function getTally(
 
   /* ── Context, as the AMIRI workbook presents it ──────────────────────────── */
 
-  const partyAccounts = await LedgerAccount.find({ kind: "PARTY", branchId: cashAccount.branchId._id })
-    .select("_id")
-    .lean();
+  // Every party account, because parties are organisation-wide — the drawer is counted
+  // against the whole day's party movement, not a branch's slice of it.
+  const partyAccounts = await LedgerAccount.find({ kind: "PARTY" }).select("_id").lean();
 
   const [partyMovement] = await LedgerEntry.aggregate<{ given: number; taken: number }>([
     {
@@ -143,7 +135,7 @@ export async function getTally(
 
   // Profit for the day — computed by the P&L engine, NOT from the cash movement above.
   // §21: a day with heavy cash turnover can still be a loss.
-  const profit = await reports.profitFor({ from: dayStart, to: dayEnd, branchId });
+  const profit = await reports.profitFor({ from: dayStart, to: dayEnd });
 
   const existing = await DailyCashTally.findOne({
     cashAccountId: cashAccount._id,
@@ -158,11 +150,6 @@ export async function getTally(
   return {
     id: existing ? String(existing._id) : null,
     date: dayStart.toISOString(),
-    branch: {
-      id: branchId,
-      name: cashAccount.branchId.name,
-      code: cashAccount.branchId.code,
-    },
     cashAccount: { id: String(cashAccount._id), name: cashAccount.name },
 
     openingCash,
@@ -202,9 +189,8 @@ export async function getTally(
 export async function recordTally(
   input: RecordTallyInput,
   ctx: audit.AuditContext,
-  scopeFilter: Record<string, unknown>,
 ): Promise<CashTally> {
-  const computed = await getTally(input.date, input.cashAccountId, scopeFilter);
+  const computed = await getTally(input.date, input.cashAccountId);
   const difference = input.actualClosing - computed.expectedClosing;
   const status = tallyStatus(difference);
 
@@ -213,7 +199,6 @@ export async function recordTally(
       { cashAccountId: input.cashAccountId, date: startOfDay(input.date) },
       {
         $set: {
-          branchId: input.branchId,
           expectedClosing: computed.expectedClosing,
           openingCash: computed.openingCash,
           cashReceived: computed.cashReceived,
@@ -231,7 +216,7 @@ export async function recordTally(
     );
 
     await audit.record(
-      { ...ctx, branchId: input.branchId },
+      ctx,
       {
         action: status === "MATCHED" ? "CREATE" : "BALANCE_ADJUSTED",
         entity: "DailyCashTally",
@@ -258,8 +243,7 @@ export async function recordTally(
   // A mismatch is worth telling somebody about; a clean tally is not.
   if (status !== "MATCHED") {
     await notifications.notifyCashTallyMismatch({
-      branchId: input.branchId,
-      drawer: `${computed.branch.code} — ${computed.cashAccount.name}`,
+      drawer: computed.cashAccount.name,
       difference,
       status,
       countedBy: ctx.userName,
@@ -272,10 +256,9 @@ export async function recordTally(
 /** Tally history for a cash account, newest first. */
 export async function listTallies(
   cashAccountId: string,
-  scopeFilter: Record<string, unknown>,
   limit = 60,
 ): Promise<DailyCashTallyDoc[]> {
-  const cashAccount = await CashAccount.findOne({ _id: cashAccountId, ...scopeFilter }).lean();
+  const cashAccount = await CashAccount.findById(cashAccountId).lean();
   if (!cashAccount) throw new NotFoundError("Cash account", cashAccountId);
 
   return DailyCashTally.find({ cashAccountId: cashAccount._id })
@@ -285,24 +268,14 @@ export async function listTallies(
     .lean() as never;
 }
 
-/** Every branch's default drawer, for the tally picker. */
-export async function tallyTargets(scopeFilter: Record<string, unknown>) {
-  const accounts = await CashAccount.find({ ...scopeFilter, status: "ACTIVE" })
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
-    .sort({ name: 1 })
-    .lean();
-
-  const branches = await Branch.find({ status: "ACTIVE" }).select("code name").lean();
-  const branchByC = new Map(branches.map((b) => [String(b._id), b]));
+/** Every drawer, for the tally picker. */
+export async function tallyTargets() {
+  const accounts = await CashAccount.find({ status: "ACTIVE" }).sort({ name: 1 }).lean();
 
   return accounts.map((a) => ({
     id: String(a._id),
     name: a.name,
-    branch: {
-      id: String(a.branchId._id),
-      code: a.branchId.code ?? branchByC.get(String(a.branchId._id))?.code ?? "",
-      name: a.branchId.name,
-    },
+    code: a.code,
     isDefault: a.isDefault,
   }));
 }

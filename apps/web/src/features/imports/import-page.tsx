@@ -1,12 +1,11 @@
 import * as React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   CheckCircle2, CircleAlert, Copy, Download, FileUp, TriangleAlert, Upload, Users,
 } from "lucide-react";
-import type { BranchSummary, ImportPreview, ImportResult } from "@amiri/shared";
-import { ApiError, api, qs } from "@/lib/api";
-import { useAuth } from "@/features/auth/auth-context";
+import type { ImportPreview, ImportResult } from "@amiri/shared";
+import { ApiError, api } from "@/lib/api";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
@@ -16,7 +15,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
@@ -35,17 +33,10 @@ import { cn } from "@/lib/utils";
  *     data-entry slip; only the operator knows which, so duplicates are reported and left.
  */
 export function ImportPage() {
-  const { user } = useAuth();
-  const [branchId, setBranchId] = React.useState(user?.activeBranchId ?? "");
   const [text, setText] = React.useState("");
   const [preview, setPreview] = React.useState<ImportPreview | null>(null);
   const [result, setResult] = React.useState<ImportResult | null>(null);
   const queryClient = useQueryClient();
-
-  const branches = useQuery({
-    queryKey: ["branches", "for-import"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
-  });
 
   const parsed = React.useMemo(() => parseSheet(text), [text]);
 
@@ -54,11 +45,11 @@ export function ImportPage() {
   React.useEffect(() => {
     setPreview(null);
     setResult(null);
-  }, [text, branchId]);
+  }, [text]);
 
   const previewMutation = useMutation({
     mutationFn: () =>
-      api.post<ImportPreview>("/import/parties/preview", { branchId, rows: parsed.rows }),
+      api.post<ImportPreview>("/import/parties/preview", { rows: parsed.rows }),
     onSuccess: (data) => {
       setPreview(data);
       if (data.valid === 0) {
@@ -74,7 +65,7 @@ export function ImportPage() {
 
   const commitMutation = useMutation({
     mutationFn: () =>
-      api.post<ImportResult>("/import/parties/commit", { branchId, rows: parsed.rows }),
+      api.post<ImportResult>("/import/parties/commit", { rows: parsed.rows }),
     onSuccess: async (data) => {
       setResult(data);
       toast.success(`${data.imported} parties imported`, {
@@ -102,7 +93,7 @@ export function ImportPage() {
   });
 
   const busy = previewMutation.isPending || commitMutation.isPending;
-  const canPreview = Boolean(branchId) && parsed.rows.length > 0 && parsed.errors.length === 0;
+  const canPreview = parsed.rows.length > 0 && parsed.errors.length === 0;
 
   return (
     <div className="space-y-5">
@@ -120,26 +111,6 @@ export function ImportPage() {
       {/* ── Step 1: what and where ─────────────────────────────────────── */}
       <Card className="space-y-4 p-4">
         <StepHeading n={1} title="Paste the file" done={parsed.rows.length > 0 && parsed.errors.length === 0} />
-
-        <div className="space-y-1.5">
-          <Label htmlFor="import-branch">Import into</Label>
-          <Select value={branchId} onValueChange={setBranchId}>
-            <SelectTrigger id="import-branch" className="w-full max-w-sm">
-              <SelectValue placeholder={branches.isPending ? "Loading…" : "Choose a branch"} />
-            </SelectTrigger>
-            <SelectContent>
-              {(branches.data?.items ?? []).map((b) => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.code} — {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Parties belong to one branch. Importing into the wrong one is not something the
-            wizard can undo for you.
-          </p>
-        </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="import-text">Rows</Label>

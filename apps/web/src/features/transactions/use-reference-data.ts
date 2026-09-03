@@ -10,10 +10,9 @@ import { api, qs } from "@/lib/api";
 /**
  * Reference data for the entry forms.
  *
- * All of it is branch-scoped on the SERVER, so a form can only ever offer accounts and
- * parties the signed-in user may actually post against. The dropdown is not the control —
- * the API would refuse an out-of-scope id anyway — but it means the interface never
- * presents a choice that will be rejected.
+ * Accounts and parties are organisation-wide masters, so these lists are not narrowed by
+ * branch — every option offered here is one the server will accept. The branch is chosen
+ * separately on the form and lands on the POSTING, which is the only place it belongs.
  */
 
 export interface AccountOption {
@@ -21,7 +20,6 @@ export interface AccountOption {
   label: string;
   kind: "BANK" | "CASH";
   balance: number;
-  branchId: string;
 }
 
 /** Bank and cash accounts in one list, since a payment can settle through either. */
@@ -42,14 +40,12 @@ export function useAccounts() {
       label: `${a.bank.shortName ?? a.bank.name} — ${a.accountName}`,
       kind: "BANK" as const,
       balance: a.balance,
-      branchId: a.branch.id,
     })),
     ...(cash.data?.items ?? []).map((a) => ({
       id: a.id,
       label: `Cash — ${a.name}`,
       kind: "CASH" as const,
       balance: a.balance,
-      branchId: a.branch.id,
     })),
   ];
 

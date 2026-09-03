@@ -502,6 +502,16 @@ describe("monthly history", () => {
     return res.body.data;
   }
 
+  /** The same report with no branch — the organisation's own books. */
+  async function organisationHistory() {
+    const res = await client.get<{ data: MonthlyHistory }>(
+      `/reports/monthly-history?${RANGE}`,
+      { token },
+    );
+    expect(res.status).toBe(200);
+    return res.body.data;
+  }
+
   it("returns every month in the range, including ones with no trading at all", async () => {
     const data = await history();
 
@@ -555,18 +565,35 @@ describe("monthly history", () => {
    * mislabelled as a balance, which is the bug this assertion exists to catch.
    */
   it("carries the party balance forward month to month", async () => {
-    const data = await history();
-
-    for (let i = 1; i < data.months.length; i += 1) {
-      const previous = data.months[i - 1]!;
-      const current = data.months[i]!;
-      expect(current.partyClosing).toBe(
-        previous.partyClosing + current.partyPaid - current.partyReceived,
-      );
+    for (const data of [await history(), await organisationHistory()]) {
+      for (let i = 1; i < data.months.length; i += 1) {
+        const previous = data.months[i - 1]!;
+        const current = data.months[i]!;
+        expect(current.partyClosing).toBe(
+          previous.partyClosing + current.partyPaid - current.partyReceived,
+        );
+      }
     }
+  });
 
-    // The opening balance was posted on 2026-04-01, so April must already carry it.
-    expect(data.months[0]!.partyClosing).not.toBe(0);
+  /**
+   * A party's opening balance is an ORGANISATION-level posting.
+   *
+   * Parties are organisation-wide, so what they owed on day one is not something any one
+   * office traded — the posting carries no branch, and both its legs are excluded together
+   * from a branch-filtered report, which is why that report still ties. The organisation's
+   * own history is where the opening position shows up.
+   *
+   * This is the visible consequence of the shared master, so it is asserted rather than
+   * left to be discovered in a report somebody does not trust.
+   */
+  it("shows the party opening balance on the organisation's books, not a branch's", async () => {
+    const organisation = await organisationHistory();
+    // The opening balances were posted on 2026-04-01, so April already carries them.
+    expect(organisation.months[0]!.partyClosing).not.toBe(0);
+
+    const branch = await history();
+    expect(branch.months[0]!.partyClosing).toBe(0);
   });
 
   it("ranks the best and worst months only among those that traded", async () => {

@@ -3,8 +3,7 @@ import {
   createPartySchema, parseAmount,
   type ImportPreview, type ImportResult, type ImportRowIssue,
 } from "@amiri/shared";
-import { Branch, Party } from "../../models/index.js";
-import { BadRequestError } from "../../lib/errors.js";
+import { Party } from "../../models/index.js";
 import * as parties from "../parties/party.service.js";
 import * as audit from "../../services/audit.service.js";
 
@@ -94,16 +93,14 @@ function mapRow(raw: Record<string, unknown>, headerMap: Record<string, string>)
 
 export async function previewParties(
   rows: Array<Record<string, unknown>>,
-  branchId: string,
 ): Promise<ImportPreview> {
-  const branch = await Branch.findById(branchId).select("code status").lean();
-  if (!branch) throw new BadRequestError("That branch does not exist", "branchId");
 
   const issues: ImportRowIssue[] = [];
   const sample: Array<Record<string, unknown>> = [];
 
   // Existing codes and names, so a duplicate is reported rather than discovered on insert.
-  const existing = await Party.find({ branchId }).select("code name").lean();
+  // The whole master, because party codes and names are unique across the organisation.
+  const existing = await Party.find({}).select("code name").lean();
   const existingCodes = new Set(existing.map((p) => p.code.toUpperCase()));
   const existingNames = new Set(existing.map((p) => p.name.toLowerCase()));
 
@@ -171,7 +168,7 @@ export async function previewParties(
         field: "name",
         // A warning, not an error: two genuinely different firms can share a name, so
         // the operator decides rather than the importer.
-        message: `A party named "${row.name}" already exists in this branch — this row will be skipped`,
+        message: `A party named "" already exists — this row will be skipped`,
         severity: "warning",
       });
       return;
@@ -224,12 +221,11 @@ export async function previewParties(
  */
 export async function commitParties(
   rows: Array<Record<string, unknown>>,
-  branchId: string,
   ctx: audit.AuditContext,
 ): Promise<ImportResult> {
-  const preview = await previewParties(rows, branchId);
+  const preview = await previewParties(rows);
 
-  const existing = await Party.find({ branchId }).select("code name").lean();
+  const existing = await Party.find({}).select("code name").lean();
   const existingCodes = new Set(existing.map((p) => p.code.toUpperCase()));
   const existingNames = new Set(existing.map((p) => p.name.toLowerCase()));
 
@@ -251,7 +247,6 @@ export async function commitParties(
         name: row.name,
         code,
         type: row.type,
-        branchId,
         mobile: row.mobile,
         email: row.email,
         city: row.city,

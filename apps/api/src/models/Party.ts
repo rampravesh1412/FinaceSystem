@@ -9,6 +9,15 @@ import { actorField, baseSchemaOptions, moneyField } from "./fields.js";
  * account each. A business that both buys from and sells to you should show ONE net
  * position, not two rows with opposite signs that somebody has to mentally offset.
  *
+ * ORGANISATION-WIDE — there is no `branchId` here.
+ *
+ * The same reasoning that gives a party one ledger account gives them one master record:
+ * a customer who pays at whichever counter is nearest must not become three part-parties
+ * with three part-balances that only add up if somebody adds them up. The branch has not
+ * disappeared from the books, it has moved to where it belongs — every LedgerEntry
+ * carries the branch that posted it, so the DayBook, the branch trial balance and the
+ * per-branch P&L are computed exactly as before and still tie.
+ *
  * As everywhere else: no stored balance. The party's position is the signed sum of their
  * ledger entries, cached on their LedgerAccount. The sign convention is the Khata's:
  *
@@ -20,7 +29,6 @@ export interface PartyDoc extends Document<Types.ObjectId> {
   name: string;
   code: string;
   type: PartyType;
-  branchId: Types.ObjectId;
   ledgerAccountId: Types.ObjectId;
 
   mobile?: string;
@@ -55,27 +63,18 @@ const partySchema = new Schema<PartyDoc>(
   {
     name: { type: String, required: true, trim: true, maxlength: 140 },
 
-    /** Generated as PTY-000123 when not supplied. Unique per branch, not globally —
-     *  two branches may legitimately run their own numbering. */
+    /** Generated as PTY-00123 when not supplied. Unique across the organisation — one
+     *  party, one code, whichever office deals with them. */
     code: { type: String, required: true, uppercase: true, trim: true, maxlength: 24 },
 
     type: { type: String, enum: Object.values(PARTY_TYPE), default: PARTY_TYPE.CUSTOMER, index: true },
 
-    /**
-     * Immutable. Moving a party between branches would strand their historical ledger
-     * entries in the branch that posted them, so that branch's trial balance would
-     * reference an account it no longer owns.
-     */
-    branchId: {
-      type: Schema.Types.ObjectId,
-      ref: "Branch",
-      required: true,
-      index: true,
-      immutable: true,
-    },
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true, index: true },
 
-    mobile: { type: String, trim: true, index: true },
+    // NOT `index: true` here — the sparse index is declared explicitly below. Declaring
+    // both auto-generates the same name `mobile_1` twice with different options, and the
+    // second build fails with "An existing index has the same name as the requested index".
+    mobile: { type: String, trim: true },
     altMobile: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     address: { type: String, trim: true, maxlength: 300 },
@@ -98,15 +97,15 @@ const partySchema = new Schema<PartyDoc>(
   baseSchemaOptions(),
 );
 
-partySchema.index({ branchId: 1, code: 1 }, { unique: true });
-partySchema.index({ branchId: 1, status: 1, name: 1 });
-partySchema.index({ branchId: 1, type: 1 });
+partySchema.index({ code: 1 }, { unique: true });
+partySchema.index({ status: 1, name: 1 });
+partySchema.index({ type: 1, status: 1 });
 /**
  * A mobile number is the fastest way a counter clerk finds a party. Sparse and
  * non-unique on purpose: the same number can legitimately belong to two parties (a
  * proprietor with two firms), and refusing that would block real data entry.
  */
-partySchema.index({ mobile: 1, branchId: 1 }, { sparse: true });
+partySchema.index({ mobile: 1 }, { sparse: true });
 partySchema.index({ name: "text", code: "text", mobile: "text" }, { name: "party_search" });
 
 export const Party = model<PartyDoc>("Party", partySchema);

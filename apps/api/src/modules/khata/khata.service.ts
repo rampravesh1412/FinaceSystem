@@ -43,11 +43,8 @@ import * as audit from "../../services/audit.service.js";
 export async function getStatement(
   partyId: string,
   options: { from?: Date; to?: Date; limit?: number },
-  scopeFilter: Record<string, unknown>,
 ): Promise<KhataStatement> {
-  const party = await Party.findOne({ _id: partyId, ...scopeFilter })
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
-    .lean();
+  const party = await Party.findById(partyId).lean();
 
   if (!party) throw new NotFoundError("Party", partyId);
 
@@ -121,7 +118,6 @@ export async function getStatement(
       code: party.code,
       type: party.type,
       mobile: party.mobile,
-      branch: { id: String(party.branchId._id), name: party.branchId.name, code: party.branchId.code },
     },
     openingBalance: opening,
     openingDirection: khataDirection(opening),
@@ -167,11 +163,11 @@ export async function createAdjustment(
     let label: string;
 
     if (input.partyId) {
-      const party = await accounts.resolveParty(input.partyId, input.branchId, session);
+      const party = await accounts.resolveParty(input.partyId, session);
       targetLedgerId = party.ledgerAccountId;
       label = `${party.name} (${party.code})`;
     } else if (input.accountId) {
-      const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
+      const account = await accounts.resolveAccount(input.accountId, session);
       targetLedgerId = account.ledgerAccountId;
       label = account.label;
     } else {
@@ -256,7 +252,7 @@ export async function createAdjustment(
  * Only a POSITIVE balance ages. If we owe them, there is nothing to collect.
  */
 async function ageParty(
-  party: PartyDoc & { branchId: { _id: Types.ObjectId; code: string } },
+  party: PartyDoc,
   balance: number,
   asOf: Date,
 ): Promise<{ buckets: Record<AgingBucketKey, number>; daysOverdue: number; overdueAmount: number; dueDate: string | null; last: Date | null }> {
@@ -340,13 +336,16 @@ async function ageParty(
   };
 }
 
+/**
+ * Credit aging across the whole party master.
+ *
+ * No branch filter: parties are organisation-wide, so a party's outstanding balance is one
+ * figure. Aging a slice of it would age a number nobody is actually owed.
+ */
 export async function creditReport(
-  scopeFilter: Record<string, unknown>,
   options: { overLimit?: boolean; overdueOnly?: boolean; bucket?: AgingBucketKey; limit?: number } = {},
 ): Promise<{ rows: AgingRow[]; summary: CreditSummary }> {
-  const parties = await Party.find({ ...scopeFilter, status: "ACTIVE" })
-    .populate<{ branchId: { _id: Types.ObjectId; code: string } }>("branchId", "code")
-    .lean();
+  const parties = await Party.find({ status: "ACTIVE" }).lean();
 
   const ledgerIds = parties.map((p) => p.ledgerAccountId);
   const balances = await LedgerAccount.find({ _id: { $in: ledgerIds } })
@@ -368,7 +367,6 @@ export async function creditReport(
       code: party.code,
       type: party.type,
       mobile: party.mobile,
-      branch: { id: String(party.branchId._id), code: party.branchId.code },
       balance,
       creditLimit: party.creditLimit,
       creditDays: party.creditDays,

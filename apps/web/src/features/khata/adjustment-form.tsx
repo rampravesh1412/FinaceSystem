@@ -108,19 +108,15 @@ function AdjustmentDialog({ partyId, onClose }: { partyId?: string; onClose: () 
   });
 
   /**
-   * Scoped to the chosen branch.
+   * Every active party.
    *
-   * A party belongs to one branch and the server refuses a cross-branch reference outright.
-   * Offering every party in the dropdown means an operator picks one, fills the whole form,
-   * and is told at submit that it "belongs to a different branch" — with no way to tell
-   * which parties would have been acceptable.
+   * Parties are organisation-wide, so there is no branch to narrow by and no cross-branch
+   * reference for the server to refuse. The branch on this form is the branch the
+   * CORRECTION is booked in, which is a separate choice from who it is about.
    */
-  const branchId = form.watch("branchId");
   const parties = useQuery({
-    queryKey: ["parties", "for-adjustment", branchId],
-    queryFn: () =>
-      api.list<PartySummary>(`/parties${qs({ limit: 200, status: "ACTIVE", branchId })}`),
-    enabled: Boolean(branchId),
+    queryKey: ["parties", "for-adjustment"],
+    queryFn: () => api.list<PartySummary>(`/parties${qs({ limit: 200, status: "ACTIVE" })}`),
   });
 
   const mutation = useMutation({

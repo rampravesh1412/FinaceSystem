@@ -1,5 +1,7 @@
 import type { ClientSession } from "mongoose";
 import {
+  chargeEffect,
+  settlementNet,
   type CreateBankTransferInput,
   type CreatePaymentInInput,
   type CreatePaymentOutInput,
@@ -42,7 +44,7 @@ async function postOrSubmit(
   const tier = await approvals.requiredTier(input.grossAmount, input.type);
 
   if (!tier) {
-    return ledger.postTransaction(input, session, { ...ctx, branchId: String(input.branchId) });
+    return ledger.postTransaction(input, session, { ...ctx, branchId: input.branchId ? String(input.branchId) : null });
   }
 
   // Held: the lines are stored and NOTHING touches a balance until somebody approves.
@@ -85,12 +87,10 @@ export async function createPaymentIn(
     // advance the transaction number under itself, and the second lands as
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
-    const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
-    // A receipt or payment may involve a party whose home branch is elsewhere — see
-    // `resolveParty`. The posting branch still governs both ledger legs.
-    const party = await accounts.resolveParty(input.partyId, input.branchId, session, {
-      allowCrossBranch: true,
-    });
+    const account = await accounts.resolveAccount(input.accountId, session);
+    // Parties are organisation-wide, so there is no home branch to cross. Both ledger
+    // legs are still stamped with the posting branch.
+    const party = await accounts.resolveParty(input.partyId, session);
 
     const charge = await charges.resolveCharge(
       {
@@ -142,6 +142,14 @@ export async function createPaymentIn(
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
+        // A charge on money coming in always reduces what reaches us, whoever bears it:
+        // a party-borne commission is kept out of what we credit them, and a bank's
+        // collection fee is taken out of what lands in the account.
+        netAmount: settlementNet(
+          input.amount,
+          charge.amount,
+          chargeEffect("PAYMENT_IN", charge.bearer),
+        ),
         paymentMode: input.paymentMode,
         referenceNo: input.referenceNo,
         narration: input.narration ?? `Payment received from ${party.name}`,
@@ -189,12 +197,10 @@ export async function createPaymentOut(
     // advance the transaction number under itself, and the second lands as
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
-    const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
-    // A receipt or payment may involve a party whose home branch is elsewhere — see
-    // `resolveParty`. The posting branch still governs both ledger legs.
-    const party = await accounts.resolveParty(input.partyId, input.branchId, session, {
-      allowCrossBranch: true,
-    });
+    const account = await accounts.resolveAccount(input.accountId, session);
+    // Parties are organisation-wide, so there is no home branch to cross. Both ledger
+    // legs are still stamped with the posting branch.
+    const party = await accounts.resolveParty(input.partyId, session);
 
     const charge = await charges.resolveCharge(
       {
@@ -263,6 +269,17 @@ export async function createPaymentOut(
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
+        /**
+         * A party-borne charge is deducted from what they receive (₹49,250 leaves); a
+         * charge we bear is paid ON TOP of it (₹50,750 leaves, the party still gets the
+         * full ₹50,000). Both figures are already in `lines` above — this makes the header
+         * agree with them instead of always claiming `gross − charge`.
+         */
+        netAmount: settlementNet(
+          input.amount,
+          charge.amount,
+          chargeEffect("PAYMENT_OUT", charge.bearer),
+        ),
         paymentMode: input.paymentMode,
         referenceNo: input.referenceNo,
         narration: input.narration ?? `Payment made to ${party.name}`,
@@ -314,12 +331,8 @@ export async function createBankTransfer(
     // advance the transaction number under itself, and the second lands as
     // "Given transaction number N does not match any in-progress transactions".
     // The transaction then aborts — intermittently, and only under concurrency.
-    const source = await accounts.resolveAccount(input.sourceAccountId, input.branchId, session);
-    const destination = await accounts.resolveAccount(
-      input.destinationAccountId,
-      input.branchId,
-      session,
-    );
+    const source = await accounts.resolveAccount(input.sourceAccountId, session);
+    const destination = await accounts.resolveAccount(input.destinationAccountId, session);
 
     const charge = await charges.resolveCharge(
       {
@@ -354,6 +367,9 @@ export async function createBankTransfer(
         lines,
         grossAmount: input.amount,
         chargeAmount: charge.amount,
+        // The destination always receives the full gross, so a transfer fee is money that
+        // leaves the source ON TOP of it — ₹50,000 arrives, ₹50,750 left.
+        netAmount: settlementNet(input.amount, charge.amount, chargeEffect("BANK_TRANSFER", "SELF")),
         paymentMode: input.paymentMode,
         referenceNo: input.referenceNo,
         narration:

@@ -1,9 +1,15 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { BANK_ACCOUNT_TYPE, RECORD_STATUS, type BankAccountType, type RecordStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField, moneyField } from "./fields.js";
+import { actorField, baseSchemaOptions, moneyField } from "./fields.js";
 
 /**
- * A real bank account, owned by exactly one branch.
+ * A real bank account, owned by the organisation.
+ *
+ * NOT branch-scoped. One HDFC current account is one account: every counter pays into it
+ * and draws on it, and the bank prints one statement for it. Filing a copy per branch
+ * would split that single real balance across several ledgers, and none of them would
+ * reconcile against the statement. The branch that transacted is recorded on each posting
+ * instead, which is what per-branch reporting reads.
  *
  * Note what is NOT here: no `currentBalance`, no `availableBalance`. The balance is the
  * signed sum of this account's ledger entries, cached on its LedgerAccount row. Storing a
@@ -15,7 +21,6 @@ import { actorField, baseSchemaOptions, branchField, moneyField } from "./fields
  */
 export interface BankAccountDoc extends Document<Types.ObjectId> {
   bankId: Types.ObjectId;
-  branchId: Types.ObjectId;
   ledgerAccountId: Types.ObjectId;
 
   accountName: string;
@@ -39,7 +44,6 @@ export interface BankAccountDoc extends Document<Types.ObjectId> {
 const bankAccountSchema = new Schema<BankAccountDoc>(
   {
     bankId: { type: Schema.Types.ObjectId, ref: "Bank", required: true, index: true, immutable: true },
-    branchId: branchField(true),
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true, index: true },
 
     accountName: { type: String, required: true, trim: true, maxlength: 120 },
@@ -80,7 +84,7 @@ const bankAccountSchema = new Schema<BankAccountDoc>(
  * twice would split one balance across two ledgers and neither would reconcile.
  */
 bankAccountSchema.index({ bankId: 1, accountNumber: 1 }, { unique: true });
-bankAccountSchema.index({ branchId: 1, status: 1 });
+bankAccountSchema.index({ status: 1, accountName: 1 });
 bankAccountSchema.index({ accountName: "text", accountNumber: "text" }, { name: "bank_account_search" });
 
 export const BankAccount = model<BankAccountDoc>("BankAccount", bankAccountSchema);

@@ -1,23 +1,25 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { RECORD_STATUS, type RecordStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField } from "./fields.js";
+import { actorField, baseSchemaOptions } from "./fields.js";
 
 /**
- * The physical cash drawer for a branch.
+ * A physical cash drawer.
  *
  * Its ledger account is created with `enforceBalance: true` and no overdraft: you cannot
  * pay out cash that is not in the drawer. That is the one hard difference from a bank
  * account, which may have a sanctioned overdraft facility.
  *
- * Most branches have one, but several are supported for a business running separate
- * counters that tally independently at end of day.
+ * NOT branch-scoped, for the same reason as a bank account: a drawer is a named thing
+ * counted on its own, and its tally is per drawer per day. Several are supported for a
+ * business running separate counters that tally independently — they are told apart by
+ * name, not by which office they sit in. The branch that transacted is recorded on each
+ * posting, so a branch's cash movement is still reportable.
  */
 export interface CashAccountDoc extends Document<Types.ObjectId> {
-  branchId: Types.ObjectId;
   ledgerAccountId: Types.ObjectId;
   name: string;
   code?: string;
-  /** The branch's primary drawer — the default target for a cash payment. */
+  /** The primary drawer — the default target for a cash payment. */
   isDefault: boolean;
   status: RecordStatus;
   notes?: string;
@@ -29,7 +31,6 @@ export interface CashAccountDoc extends Document<Types.ObjectId> {
 
 const cashAccountSchema = new Schema<CashAccountDoc>(
   {
-    branchId: branchField(true),
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true, index: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     code: { type: String, trim: true, uppercase: true, maxlength: 20 },
@@ -42,12 +43,10 @@ const cashAccountSchema = new Schema<CashAccountDoc>(
   baseSchemaOptions(),
 );
 
-cashAccountSchema.index({ branchId: 1, name: 1 }, { unique: true });
-/** At most one default drawer per branch, enforced by a partial unique index rather than
- *  by application logic that two concurrent writes could both pass. */
-cashAccountSchema.index(
-  { branchId: 1, isDefault: 1 },
-  { unique: true, partialFilterExpression: { isDefault: true } },
-);
+/** Two drawers cannot share a name — the name is how an operator picks one. */
+cashAccountSchema.index({ name: 1 }, { unique: true });
+/** At most one default drawer, enforced by a partial unique index rather than by
+ *  application logic that two concurrent writes could both pass. */
+cashAccountSchema.index({ isDefault: 1 }, { unique: true, partialFilterExpression: { isDefault: true } });
 
 export const CashAccount = model<CashAccountDoc>("CashAccount", cashAccountSchema);

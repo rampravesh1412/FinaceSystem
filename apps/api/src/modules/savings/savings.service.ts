@@ -155,7 +155,7 @@ export async function postSavingsTransaction(
     }
 
     const settlement = input.accountId
-      ? await accounts.resolveAccount(input.accountId, branchId, session)
+      ? await accounts.resolveAccount(input.accountId, session)
       : null;
 
     const lines: ledger.PostingLine[] = [];

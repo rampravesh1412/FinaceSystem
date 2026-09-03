@@ -13,7 +13,6 @@ import {
 import {
   Bank,
   BankAccount,
-  Branch,
   CashAccount,
   LedgerAccount,
   nextSequence,
@@ -29,6 +28,10 @@ import * as audit from "../../services/audit.service.js";
 
 /**
  * Banks, bank accounts and cash accounts.
+ *
+ * All three are ORGANISATION-WIDE masters — see the model files for why. Nothing in this
+ * file filters by branch, and none of these records carries one. The branch is recorded on
+ * every posting instead, which is where per-branch reporting reads it from.
  *
  * Every creation here does the same three things inside ONE database transaction:
  *
@@ -46,7 +49,7 @@ import * as audit from "../../services/audit.service.js";
 /* -------------------------------------------------------------------------- */
 
 export async function listBanks(
-  filters: { q?: string; status?: string; scopeIds: Types.ObjectId[] | null },
+  filters: { q?: string; status?: string },
   page: Paging,
 ) {
   const filter: FilterQuery<BankDoc> = {};
@@ -62,15 +65,14 @@ export async function listBanks(
   ]);
 
   /**
-   * Per-bank account counts and totals, scoped to the caller's branches.
+   * Per-bank account counts and totals.
    *
-   * A branch admin must see "HDFC — 2 accounts, ₹4,20,000" meaning THEIR two accounts,
-   * not the organisation's twelve. The scope is applied inside the aggregation, so the
-   * figure is computed from permitted rows only rather than filtered afterwards.
+   * Accounts are organisation-wide, so "HDFC — 2 accounts, ₹4,20,000" is the business's
+   * whole position with that institution. That is the figure the bank itself would quote,
+   * and the only one that can be checked against a statement.
    */
   const bankIds = banks.map((b) => b._id);
   const accountMatch: Record<string, unknown> = { bankId: { $in: bankIds }, status: "ACTIVE" };
-  if (filters.scopeIds) accountMatch.branchId = { $in: filters.scopeIds };
 
   const stats = await BankAccount.aggregate<{ _id: Types.ObjectId; count: number; balance: number }>([
     { $match: accountMatch },
@@ -129,29 +131,20 @@ export async function createBank(input: CreateBankInput, ctx: audit.AuditContext
 /* Bank account                                                               */
 /* -------------------------------------------------------------------------- */
 
-/** Next sequence for a ledger account code, e.g. `BANK-105-0007`. */
-async function ledgerCode(
-  prefix: string,
-  branchCode: string,
-  session: ClientSession,
-): Promise<string> {
-  const seq = await nextSequence(`LEDGER-${prefix}-${branchCode}`, 0, session);
-  return `${prefix}-${branchCode}-${String(seq).padStart(4, "0")}`;
+/** Next sequence for a ledger account code, e.g. `BANK-0007`. */
+async function ledgerCode(prefix: string, session: ClientSession): Promise<string> {
+  const seq = await nextSequence(`LEDGER-${prefix}`, 0, session);
+  return `${prefix}-${String(seq).padStart(5, "0")}`;
 }
 
 export async function createBankAccount(
   input: CreateBankAccountInput,
   ctx: audit.AuditContext,
 ): Promise<BankAccountDoc> {
-  const [bank, branch] = await Promise.all([
-    Bank.findById(input.bankId).select("name shortName ifscPrefix status").lean(),
-    Branch.findById(input.branchId).select("code name status").lean(),
-  ]);
+  const bank = await Bank.findById(input.bankId).select("name shortName ifscPrefix status").lean();
 
   if (!bank) throw new NotFoundError("Bank", input.bankId);
-  if (!branch) throw new NotFoundError("Branch", input.branchId);
   if (bank.status !== "ACTIVE") throw new BadRequestError("That bank is not active", "bankId");
-  if (branch.status !== "ACTIVE") throw new BadRequestError("That branch is not active", "branchId");
 
   /**
    * The IFSC must belong to the bank it is being filed under.
@@ -168,7 +161,7 @@ export async function createBankAccount(
 
   return withTransaction(async (session) => {
     try {
-      const code = await ledgerCode("BANK", branch.code, session);
+      const code = await ledgerCode("BANK", session);
       const label = `${bank.shortName ?? bank.name} ••${input.accountNumber.slice(-4)}`;
 
       const ledgerAccount = await ledger.createLedgerAccount(
@@ -176,7 +169,8 @@ export async function createBankAccount(
           code,
           name: `${label} — ${input.accountName}`,
           kind: "BANK",
-          branchId: input.branchId,
+          // Organisation-wide. The branch lives on the entries, not on the account.
+          branchId: null,
           refKind: "BankAccount",
           overdraftLimit: input.overdraftLimit,
           // A bank account cannot be taken below its sanctioned overdraft. For a plain
@@ -191,7 +185,6 @@ export async function createBankAccount(
         [
           {
             bankId: input.bankId,
-            branchId: input.branchId,
             ledgerAccountId: ledgerAccount._id,
             accountName: input.accountName,
             accountNumber: input.accountNumber,
@@ -214,7 +207,7 @@ export async function createBankAccount(
       await LedgerAccount.updateOne({ _id: ledgerAccount._id }, { $set: { refId: account._id } }, { session });
 
       await audit.record(
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
         {
           action: "CREATE",
           entity: "BankAccount",
@@ -235,18 +228,20 @@ export async function createBankAccount(
         session,
       );
 
-      // The opening balance becomes a real double-entry posting against equity.
+      // The opening balance becomes a real double-entry posting against equity. It has no
+      // branch: what the account held on day one is the organisation's position, not any
+      // one office's trade.
       await ledger.postOpeningBalance(
         {
           ledgerAccountId: ledgerAccount._id,
-          branchId: input.branchId,
+          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
           label,
           createdBy: ctx.userId!,
         },
         session,
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
       );
 
       return account;
@@ -266,20 +261,23 @@ export async function createBankAccount(
 export interface BankAccountListFilters {
   q?: string;
   bankId?: string;
-  branchId?: string;
   accountType?: string;
   status?: string;
-  /** From req.scope — null for an unscoped caller. */
-  scopeFilter: Record<string, unknown>;
 }
 
+/**
+ * The bank account list.
+ *
+ * Unfiltered by branch, because accounts are organisation-wide: a caller holding
+ * `finance.bank.view` sees every account and its full balance. The footer total is
+ * therefore the business's real bank position rather than a partial sum.
+ */
 export async function listBankAccounts(
   filters: BankAccountListFilters,
   page: Paging,
   canSeeFullNumbers: boolean,
 ): Promise<{ items: BankAccountSummary[]; total: number; totalBalance: number }> {
-  // The scope filter goes in FIRST and is never overridden by anything from the request.
-  const filter: FilterQuery<BankAccountDoc> = { ...filters.scopeFilter };
+  const filter: FilterQuery<BankAccountDoc> = {};
 
   if (filters.bankId) filter.bankId = new Types.ObjectId(filters.bankId);
   if (filters.accountType) filter.accountType = filters.accountType;
@@ -295,7 +293,6 @@ export async function listBankAccounts(
       .skip(page.skip)
       .limit(page.limit)
       .populate<{ bankId: { _id: Types.ObjectId; name: string; shortName?: string } }>("bankId", "name shortName")
-      .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
       .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
         "ledgerAccountId",
         "cachedBalance",
@@ -330,7 +327,6 @@ function toBankAccountSummary(
   d: {
     _id: unknown;
     bankId: { _id: unknown; name: string; shortName?: string };
-    branchId: { _id: unknown; name: string; code: string };
     accountName: string;
     accountNumber: string;
     ifsc: string;
@@ -353,7 +349,6 @@ function toBankAccountSummary(
         name: d.bankId.name,
         shortName: d.bankId.shortName,
       },
-      branch: { id: String(d.branchId._id), name: d.branchId.name, code: d.branchId.code },
       accountName: d.accountName,
       // Masked on the SERVER. An unauthorised caller never receives the digits at all —
       // masking in the browser would mean shipping them and hiding them with CSS.
@@ -388,7 +383,6 @@ export async function getBankAccountSummary(
 ): Promise<BankAccountSummary> {
   const doc = await BankAccount.findById(id)
     .populate<{ bankId: { _id: Types.ObjectId; name: string; shortName?: string } }>("bankId", "name shortName")
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
     .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>("ledgerAccountId", "cachedBalance")
     .lean();
 
@@ -461,10 +455,9 @@ export async function updateBank(
 export async function updateCashAccount(
   id: string,
   input: UpdateCashAccountInput,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<CashAccountDoc> {
-  const account = await CashAccount.findOne({ _id: id, ...scopeFilter });
+  const account = await CashAccount.findById(id);
   if (!account) throw new NotFoundError("Cash account", id);
 
   const before = { name: account.name, code: account.code, status: account.status };
@@ -480,7 +473,7 @@ export async function updateCashAccount(
   }
 
   await audit.record(
-    { ...ctx, branchId: String(account.branchId) },
+    ctx,
     {
       action: "UPDATE",
       entity: "CashAccount",
@@ -497,11 +490,10 @@ export async function updateCashAccount(
 export async function updateBankAccount(
   id: string,
   input: UpdateBankAccountInput,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<BankAccountDoc> {
   return withTransaction(async (session) => {
-    const account = await BankAccount.findOne({ _id: id, ...scopeFilter }).session(session);
+    const account = await BankAccount.findById(id).session(session);
     if (!account) throw new NotFoundError("Bank account", id);
 
     const before = {
@@ -525,7 +517,7 @@ export async function updateBankAccount(
     }
 
     await audit.record(
-      { ...ctx, branchId: String(account.branchId) },
+      ctx,
       {
         action: "UPDATE",
         entity: "BankAccount",
@@ -554,21 +546,19 @@ export async function createCashAccount(
   input: CreateCashAccountInput,
   ctx: audit.AuditContext,
 ): Promise<CashAccountDoc> {
-  const branch = await Branch.findById(input.branchId).select("code name status").lean();
-  if (!branch) throw new NotFoundError("Branch", input.branchId);
-  if (branch.status !== "ACTIVE") throw new BadRequestError("That branch is not active", "branchId");
-
   return withTransaction(async (session) => {
     try {
-      const code = await ledgerCode("CASH", branch.code, session);
-      const existing = await CashAccount.countDocuments({ branchId: input.branchId }).session(session);
+      const code = await ledgerCode("CASH", session);
+      // The first drawer opened becomes the default one.
+      const existing = await CashAccount.countDocuments({}).session(session);
 
       const ledgerAccount = await ledger.createLedgerAccount(
         {
           code,
-          name: `Cash — ${branch.code} ${input.name}`,
+          name: `Cash — ${input.name}`,
           kind: "CASH",
-          branchId: input.branchId,
+          // Organisation-wide. The branch lives on the entries, not on the account.
+          branchId: null,
           refKind: "CashAccount",
           overdraftLimit: 0,
           // Hard zero floor. You cannot hand over notes that are not in the drawer, so
@@ -582,7 +572,6 @@ export async function createCashAccount(
       const [account] = await CashAccount.create(
         [
           {
-            branchId: input.branchId,
             ledgerAccountId: ledgerAccount._id,
             name: input.name,
             code: input.code,
@@ -600,12 +589,12 @@ export async function createCashAccount(
       await LedgerAccount.updateOne({ _id: ledgerAccount._id }, { $set: { refId: account._id } }, { session });
 
       await audit.record(
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
         {
           action: "CREATE",
           entity: "CashAccount",
           entityId: String(account._id),
-          entityLabel: `${branch.code} ${input.name}`,
+          entityLabel: input.name,
           amount: input.openingBalance,
           newValue: { name: input.name, openingBalance: input.openingBalance },
         },
@@ -615,14 +604,14 @@ export async function createCashAccount(
       await ledger.postOpeningBalance(
         {
           ledgerAccountId: ledgerAccount._id,
-          branchId: input.branchId,
+          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
-          label: `Cash ${branch.code} — ${input.name}`,
+          label: `Cash — ${input.name}`,
           createdBy: ctx.userId!,
         },
         session,
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
       );
 
       return account;
@@ -635,17 +624,15 @@ export async function createCashAccount(
 }
 
 export async function listCashAccounts(
-  scopeFilter: Record<string, unknown>,
   page: Paging,
 ): Promise<{ items: CashAccountSummary[]; total: number; totalBalance: number }> {
-  const filter: FilterQuery<CashAccountDoc> = { ...scopeFilter };
+  const filter: FilterQuery<CashAccountDoc> = {};
 
   const [docs, total] = await Promise.all([
     CashAccount.find(filter)
       .sort(page.sort)
       .skip(page.skip)
       .limit(page.limit)
-      .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
       .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
         "ledgerAccountId",
         "cachedBalance",
@@ -658,7 +645,6 @@ export async function listCashAccounts(
     id: String(d._id),
     name: d.name,
     code: d.code,
-    branch: { id: String(d.branchId._id), name: d.branchId.name, code: d.branchId.code },
     balance: d.ledgerAccountId?.cachedBalance ?? 0,
     isDefault: d.isDefault,
     status: d.status,
@@ -672,7 +658,6 @@ export async function listCashAccounts(
 /** One cash drawer in the same shape the list returns — used by the create route. */
 export async function getCashAccountSummary(id: string): Promise<CashAccountSummary> {
   const d = await CashAccount.findById(id)
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
     .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
       "ledgerAccountId",
       "cachedBalance",
@@ -685,7 +670,6 @@ export async function getCashAccountSummary(id: string): Promise<CashAccountSumm
     id: String(d._id),
     name: d.name,
     code: d.code,
-    branch: { id: String(d.branchId._id), name: d.branchId.name, code: d.branchId.code },
     balance: d.ledgerAccountId?.cachedBalance ?? 0,
     isDefault: d.isDefault,
     status: d.status,

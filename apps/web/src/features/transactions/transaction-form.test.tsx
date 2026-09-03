@@ -20,7 +20,6 @@ const BRANCH_ID = "6501aa000000000000000003";
 const PARTY_ID = "6501aa000000000000000005";
 const ACCOUNT_ID = "6501aa000000000000000006";
 const HEAD_ID = "6501aa000000000000000007";
-const OTHER_BRANCH_ID = "6501aa000000000000000008";
 const OTHER_ACCOUNT_ID = "6501aa000000000000000009";
 
 vi.mock("@/features/auth/auth-context", () => ({
@@ -56,21 +55,18 @@ describe("transaction form", () => {
       const items = String(path).startsWith("/parties")
         ? [{
             id: PARTY_ID, name: "Sharma Traders", code: "PTY-001",
-            branch: { id: BRANCH_ID, name: "Head Office", code: "101" },
             balance: 5000000, direction: "LENA",
           }]
         : String(path).startsWith("/bank-accounts")
           ? [{
               id: ACCOUNT_ID, accountName: "HDFC Current", accountNumber: "••7890",
               bank: { id: "b", name: "HDFC Bank", shortName: "HDFC" },
-              branch: { id: BRANCH_ID, name: "Head Office", code: "101" },
               balance: 20000000, availableBalance: 20000000, overdraftLimit: 0,
             }, {
-              // Another branch's account. The server would refuse it for a transaction
-              // posted here, so the form must not offer it in the first place.
+              // A second account. Accounts are organisation-wide, so it is selectable
+              // from any posting branch.
               id: OTHER_ACCOUNT_ID, accountName: "ICICI Current", accountNumber: "••1234",
               bank: { id: "b2", name: "ICICI Bank", shortName: "ICICI" },
-              branch: { id: OTHER_BRANCH_ID, name: "Gaya Branch", code: "107" },
               balance: 5000000, availableBalance: 5000000, overdraftLimit: 0,
             }]
           : [];
@@ -140,18 +136,17 @@ describe("transaction form", () => {
   });
 
   /**
-   * A party may belong to any branch, but a till or bank account is the branch's own
-   * asset. Offering another branch's account would move a balance on a transaction that
-   * never appears in that branch's books.
+   * Accounts are organisation-wide, so every one of them is selectable whichever branch is
+   * posting. This assertion used to be its opposite; the branch has not disappeared, it has
+   * moved onto the POSTING, where both legs still carry it so each branch's books balance.
    */
-  it("offers only accounts belonging to the posting branch", async () => {
+  it("offers every account, whichever branch is posting", async () => {
     const user = await openForm("PAYMENT_IN", "Payment In");
 
     await user.click(screen.getByRole("combobox", { name: /received into/i }));
 
     expect(await screen.findByRole("option", { name: /hdfc/i })).toBeInTheDocument();
-    // Seeded in the mock under a different branch — it must not be selectable here.
-    expect(screen.queryByRole("option", { name: /icici/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /icici/i })).toBeInTheDocument();
   });
 
   it("posts Income to /income with an income head, not an expense head", async () => {

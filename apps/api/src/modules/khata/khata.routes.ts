@@ -54,18 +54,13 @@ const idParam = z.object({ id: objectId });
 khataRouter.get(
   "/:id",
   requirePermission("finance.khata.view"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam, query: khataQuerySchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
     const query = req.valid.query as { from?: Date; to?: Date; limit: number };
     return ok(
       res,
-      await khata.getStatement(
-        id,
-        { from: query.from, to: query.to, limit: query.limit },
-        scopeOf(req),
-      ),
+      await khata.getStatement(id, { from: query.from, to: query.to, limit: query.limit }),
     );
   }),
 );
@@ -91,11 +86,10 @@ adjustmentRouter.post(
 creditRouter.get(
   "/",
   requirePermission("finance.party.view"),
-  requireBranchAccess({ optional: true }),
   validate({ query: creditQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as CreditQuery;
-    const { rows, summary } = await khata.creditReport(scopeOf(req), {
+    const { rows, summary } = await khata.creditReport({
       overLimit: query.overLimit,
       overdueOnly: query.overdueOnly,
       bucket: query.bucket,
@@ -173,26 +167,25 @@ savingsRouter.post(
 reconciliationRouter.post(
   "/",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ body: startReconciliationSchema }),
   asyncHandler(async (req, res) => {
     const input = req.valid.body as StartReconciliationInput;
-    const doc = await recon.start(input, scopeOf(req), auditContextFrom(req));
-    return created(res, await recon.getSummary(String(doc._id), scopeOf(req)), "Reconciliation opened");
+    const doc = await recon.start(input, auditContextFrom(req));
+    return created(res, await recon.getSummary(String(doc._id)), "Reconciliation opened");
   }),
 );
 
 /**
- * Every reconciliation in scope.
+ * Every reconciliation.
  *
- * `requireBranchAccess` is mandatory here, not optional: without `req.scope.filter` this
- * would list every branch's reconciliations to anyone holding the permission.
+ * No branch guard: the bank accounts these reconcile are organisation-wide, so there is
+ * no per-branch share of a bank statement to isolate. `finance.bank.reconcile` is the
+ * control.
  */
 reconciliationRouter.get(
   "/",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   validate({
     query: listQuery.extend({ bankAccountId: objectId.optional(), status: z.string().optional() }),
   }),
@@ -202,7 +195,6 @@ reconciliationRouter.get(
     };
     const page = paging(query, { createdAt: -1 }, ["createdAt", "to", "difference"]);
     const { items, total } = await recon.list(
-      scopeOf(req),
       { bankAccountId: query.bankAccountId, status: query.status },
       page,
     );
@@ -213,29 +205,26 @@ reconciliationRouter.get(
 reconciliationRouter.get(
   "/:id",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    return ok(res, await recon.getSummary(id, scopeOf(req)));
+    return ok(res, await recon.getSummary(id));
   }),
 );
 
 reconciliationRouter.get(
   "/:id/lines",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    return ok(res, await recon.getLines(id, scopeOf(req)));
+    return ok(res, await recon.getLines(id));
   }),
 );
 
 reconciliationRouter.post(
   "/:id/statement",
   requirePermission("finance.bank.statement.import"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ params: idParam, body: importStatementSchema }),
   asyncHandler(async (req, res) => {
@@ -243,7 +232,6 @@ reconciliationRouter.post(
     const result = await recon.importStatement(
       id,
       req.valid.body as ImportStatementInput,
-      scopeOf(req),
       auditContextFrom(req),
     );
     return ok(
@@ -257,12 +245,11 @@ reconciliationRouter.post(
 reconciliationRouter.post(
   "/lines/:id/match",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({ params: idParam, body: matchLineSchema.omit({ lineId: true }) }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    await recon.setLineStatus(id, req.valid.body as never, scopeOf(req), auditContextFrom(req));
+    await recon.setLineStatus(id, req.valid.body as never, auditContextFrom(req));
     return ok(res, { matched: true }, "Line updated");
   }),
 );
@@ -270,7 +257,6 @@ reconciliationRouter.post(
 reconciliationRouter.post(
   "/:id/complete",
   requirePermission("finance.bank.reconcile"),
-  requireBranchAccess({ optional: true }),
   mutationLimiter,
   validate({
     params: idParam,
@@ -283,8 +269,8 @@ reconciliationRouter.post(
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
     const body = req.valid.body as { notes?: string; acknowledgeDifference: boolean };
-    await recon.complete(id, body, scopeOf(req), auditContextFrom(req));
-    return ok(res, await recon.getSummary(id, scopeOf(req)), "Reconciliation closed");
+    await recon.complete(id, body, auditContextFrom(req));
+    return ok(res, await recon.getSummary(id), "Reconciliation closed");
   }),
 );
 

@@ -117,10 +117,14 @@ export async function reverseTransaction(
       {
         type: original.type,
         date,
-        branchId: original.branchId,
+        branchId: original.branchId ?? null,
         lines,
         grossAmount: original.grossAmount,
         chargeAmount: original.chargeAmount,
+        // The mirror settles for exactly what the original settled, whichever way its
+        // charge went. Recomputing it here would give the reversal a different net from
+        // the entry it cancels.
+        netAmount: original.netAmount,
         paymentMode: original.paymentMode,
         referenceNo: original.referenceNo,
         narration: `Reversal of ${original.txnNo} — ${options.reason}`,
@@ -140,7 +144,7 @@ export async function reverseTransaction(
         allowOverdraft: true,
       },
       session,
-      { ...ctx, branchId: String(original.branchId) },
+      { ...ctx, branchId: original.branchId ? String(original.branchId) : null },
     );
 
     // ── Link the pair, both ways ────────────────────────────────────────────
@@ -151,7 +155,7 @@ export async function reverseTransaction(
     await original.save({ session });
 
     await audit.record(
-      { ...ctx, branchId: String(original.branchId) },
+      { ...ctx, branchId: original.branchId ? String(original.branchId) : null },
       {
         action: "REVERSE",
         entity: "Transaction",

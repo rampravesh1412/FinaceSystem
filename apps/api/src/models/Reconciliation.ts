@@ -1,12 +1,16 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { RECON_LINE_STATUS, type ReconLineStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField, businessDateField, moneyField } from "./fields.js";
+import { actorField, baseSchemaOptions, businessDateField, moneyField } from "./fields.js";
 
 /**
  * Bank reconciliation (§23).
  *
  * Compares what the BANK says against what our LEDGER says, for one account over one
  * window, and lists every line that does not agree.
+ *
+ * It carries no branch: the account it reconciles is organisation-wide, and the statement
+ * the bank issues covers every counter's activity at once. Reconciling only one branch's
+ * share of an account would never tie against that statement.
  *
  * The `difference` field is the whole point of the module, and it is never auto-corrected.
  * §62 is explicit: if expected is ₹10,00,000 and actual is ₹9,80,000, the system reports
@@ -16,7 +20,6 @@ import { actorField, baseSchemaOptions, branchField, businessDateField, moneyFie
 export interface ReconciliationDoc extends Document<Types.ObjectId> {
   bankAccountId: Types.ObjectId;
   ledgerAccountId: Types.ObjectId;
-  branchId: Types.ObjectId;
   from: Date;
   to: Date;
   statementBalance: number;
@@ -36,7 +39,6 @@ const reconciliationSchema = new Schema<ReconciliationDoc>(
   {
     bankAccountId: { type: Schema.Types.ObjectId, ref: "BankAccount", required: true, index: true },
     ledgerAccountId: { type: Schema.Types.ObjectId, ref: "LedgerAccount", required: true },
-    branchId: branchField(true),
     from: businessDateField(true),
     to: businessDateField(true),
     statementBalance: moneyField({ required: true }),

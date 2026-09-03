@@ -217,7 +217,6 @@ export interface CashFlowReport {
  */
 export const recordTallySchema = z.object({
   date: businessDate,
-  branchId: objectId,
   cashAccountId: objectId,
   /** What was physically counted in the drawer. */
   actualClosing: money.refine((v) => v >= 0, "A counted amount cannot be negative"),
@@ -228,7 +227,6 @@ export type RecordTallyInput = z.infer<typeof recordTallySchema>;
 export interface CashTally {
   id: string | null;
   date: string;
-  branch: { id: string; name: string; code: string };
   cashAccount: { id: string; name: string };
 
   /** Everything up to this line is DERIVED from the ledger — nobody types it in. */
@@ -308,6 +306,16 @@ export interface DashboardTrendPoint {
   moneyOut: number;
 }
 
+/**
+ * One branch's line in the comparison table (§31).
+ *
+ * Accounts and parties are organisation-wide, so no branch OWNS a balance. `balance` and
+ * `receivable` are therefore that branch's CONTRIBUTION — the net movement its own
+ * postings put through cash/bank and party accounts. They sum across branches to the
+ * organisation's position (less anything posted at organisation level, such as opening
+ * balances), which is the only reading that stays arithmetically honest once the
+ * underlying accounts are shared.
+ */
 export interface BranchPerformance {
   branchId: string;
   code: string;

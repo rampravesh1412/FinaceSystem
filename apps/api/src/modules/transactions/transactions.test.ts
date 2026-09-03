@@ -35,6 +35,7 @@ let hdfcId: string;
 let iciciId: string;
 let cashId: string;
 let ramanujId: string;
+let eddigoId: string;
 let vendorId: string;
 let panelHeadId: string;
 let commissionHeadId: string;
@@ -100,6 +101,15 @@ beforeAll(async () => {
     { token: superToken },
   );
   ramanujId = ramanuj.body.data.id;
+
+  // A distributor we OWE, with no credit limit — payment-out cases settle against them
+  // without tripping the credit check, which is a different rule under test elsewhere.
+  const eddigo = await client.post<{ data: { id: string } }>(
+    "/parties",
+    { name: "EDDIGO DISTRIBUTOR", branchId, type: "DISTRIBUTOR", openingBalance: "-2,40,000" },
+    { token: superToken },
+  );
+  eddigoId = eddigo.body.data.id;
 
   const vendor = await client.post<{ data: { id: string } }>(
     "/parties",
@@ -208,6 +218,104 @@ describe("charge engine (§18)", () => {
     expect(res.body.data.gross).toBe(100_000_00);
     expect(res.body.data.charge).toBe(1_750_00);
     expect(res.body.data.net).toBe(98_250_00);
+  });
+
+  /**
+   * §18: `net` is WHAT ACTUALLY SETTLES, and it must equal a real line in the posting.
+   *
+   * This is a regression test for a bug that shipped: `net` was computed as
+   * `gross − charge` for every transaction, which is only right when the charge comes OUT
+   * of the amount. A ₹50,000 payment out with a ₹750 fee WE bear takes ₹50,750 out of the
+   * bank and still discharges the party's full ₹50,000 — yet the header read ₹49,250, a
+   * figure that appeared nowhere in its own ledger entries. Anyone reconciling the voucher
+   * against the bank statement found three numbers and no explanation.
+   */
+  it("adds a charge we bear to the settlement rather than deducting it", async () => {
+    const rule = await ChargeRule.create({
+      name: "Payout fee", code: "PAYOUTFEE", type: "PERCENTAGE", rateBps: 150,
+      minCharge: 0, maxCharge: 0, bearer: "SELF", appliesTo: ["PAYMENT_OUT"],
+      partyTypes: [], status: "ACTIVE",
+    });
+
+    const bankBefore = await balanceOfAccount(hdfcId);
+    const partyBefore = await balanceOfParty(eddigoId);
+
+    const res = await client.post<{
+      data: { id: string; grossAmount: number; chargeAmount: number; netAmount: number };
+    }>(
+      "/payment-out",
+      {
+        date: "2026-08-19", branchId, partyId: eddigoId, accountId: hdfcId,
+        amount: "50,000", paymentMode: "CASH", chargeRuleId: String(rule._id),
+      },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(201);
+
+    const txn = (await Transaction.findById(res.body.data.id).lean())!;
+    expect(txn.grossAmount).toBe(50_000_00);
+    expect(txn.chargeAmount).toBe(750_00);
+    // ADDED, not deducted: ₹50,750 left the bank.
+    expect(txn.netAmount).toBe(50_750_00);
+
+    // And the header agrees with the entries, which is the whole point.
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - txn.netAmount);
+    // The party is discharged of the full gross — the fee was ours, not theirs.
+    expect(await balanceOfParty(eddigoId)).toBe(partyBefore + 50_000_00);
+  });
+
+  /** The mirror case: a charge the PARTY bears comes out of what they receive. */
+  it("deducts a charge the party bears from the settlement", async () => {
+    const rule = await ChargeRule.create({
+      name: "Payout commission", code: "PAYOUTCOMM", type: "PERCENTAGE", rateBps: 150,
+      minCharge: 0, maxCharge: 0, bearer: "PARTY", appliesTo: ["PAYMENT_OUT"],
+      partyTypes: [], status: "ACTIVE",
+    });
+
+    const bankBefore = await balanceOfAccount(hdfcId);
+
+    const res = await client.post<{ data: { id: string } }>(
+      "/payment-out",
+      {
+        date: "2026-08-19", branchId, partyId: eddigoId, accountId: hdfcId,
+        amount: "50,000", paymentMode: "CASH", chargeRuleId: String(rule._id),
+      },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(201);
+
+    const txn = (await Transaction.findById(res.body.data.id).lean())!;
+    expect(txn.netAmount).toBe(49_250_00);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 49_250_00);
+  });
+
+  /**
+   * A transfer fee is always ours and always on top: the destination must receive the
+   * full gross or the receiving bank's statement will not reconcile.
+   */
+  it("charges a transfer fee on top of what arrives", async () => {
+    const sourceBefore = await balanceOfAccount(hdfcId);
+    const destinationBefore = await balanceOfAccount(iciciId);
+
+    const res = await client.post<{ data: { id: string } }>(
+      "/bank-transfers",
+      {
+        date: "2026-08-19", branchId,
+        sourceAccountId: hdfcId, destinationAccountId: iciciId,
+        amount: "1,00,000", manualCharge: "500", paymentMode: "NEFT",
+      },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(201);
+
+    const txn = (await Transaction.findById(res.body.data.id).lean())!;
+    expect(txn.netAmount).toBe(1_00_500_00);
+
+    expect(await balanceOfAccount(hdfcId)).toBe(sourceBefore - 1_00_500_00);
+    expect(await balanceOfAccount(iciciId)).toBe(destinationBefore + 1_00_000_00);
   });
 
   it("refuses to apply a rule to a transaction type it is not meant for", async () => {
@@ -331,18 +439,21 @@ describe("payment in (§14)", () => {
   });
 
   /**
-   * The relaxation is scoped to receipts and payments. An expense is a reconciliation
-   * instrument, and booking one against a party the branch does not own would let a cost
-   * escape the branch that incurred it.
+   * There is no longer a "cross-branch party" to refuse.
+   *
+   * Parties are organisation-wide, so any branch may book an expense against any vendor —
+   * which is what actually happens when one office pays a bill for a supplier the whole
+   * business uses. The COST still lands in the branch that incurred it, because both legs
+   * of the posting carry the posting branch.
    */
-  it("still refuses a cross-branch party on an expense", async () => {
+  it("books an expense against any party, and keeps the cost in the posting branch", async () => {
     const other = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Other Branch Vendor", branchId: fx.branches["107"], type: "VENDOR", openingBalance: 0 },
+      { name: "Shared Vendor", type: "VENDOR", openingBalance: 0 },
       { token: superToken },
     );
 
-    const res = await client.post<{ error: { field: string } }>(
+    const res = await client.post<{ data: { id: string } }>(
       "/expenses",
       {
         date: "2026-08-19", branchId, categoryId: panelHeadId,
@@ -351,8 +462,12 @@ describe("payment in (§14)", () => {
       { token: superToken },
     );
 
-    expect(res.status).toBe(400);
-    expect(res.body.error.field).toBe("partyId");
+    expect(res.status).toBe(201);
+
+    // Every entry the posting produced is stamped with the branch that booked it.
+    const entries = await LedgerEntry.find({ transactionId: res.body.data.id }).lean();
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.every((e) => String(e.branchId) === branchId)).toBe(true);
   });
 });
 
@@ -488,6 +603,11 @@ describe("bank transfer (§8)", () => {
 describe("expenses (§16)", () => {
   it("records an itemised expense paid from a bank account", async () => {
     const bankBefore = await balanceOfAccount(hdfcId);
+    // Measured as a DELTA, not an absolute: other cases in this file book against the
+    // same head, and an absolute assertion would break whenever one is added.
+    const head = await ExpenseCategory.findById(panelHeadId).lean();
+    const headBefore =
+      (await LedgerAccount.findById(head!.ledgerAccountId).select("cachedBalance").lean())!.cachedBalance;
 
     const res = await client.post<{ data: { id: string; txnNo: string } }>(
       "/expenses",
@@ -506,10 +626,9 @@ describe("expenses (§16)", () => {
     expect(res.body.data.txnNo).toMatch(/^EXP-2026-\d{6}$/);
     expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 12_000_00);
 
-    const head = await ExpenseCategory.findById(panelHeadId).lean();
-    const headBalance =
+    const headAfter =
       (await LedgerAccount.findById(head!.ledgerAccountId).select("cachedBalance").lean())!.cachedBalance;
-    expect(headBalance).toBe(12_000_00);
+    expect(headAfter - headBefore).toBe(12_000_00);
   });
 
   it("rejects an expense whose items do not sum to the total", async () => {

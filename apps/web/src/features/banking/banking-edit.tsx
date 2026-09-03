@@ -276,8 +276,7 @@ function EditBankAccountDialog({
                 <span className="font-mono font-medium text-foreground">{account.accountNumber}</span>
                 {account.accountNumberMasked ? " (masked)" : null}, IFSC{" "}
                 <span className="font-mono font-medium text-foreground">{account.ifsc}</span>, bank{" "}
-                <span className="font-medium text-foreground">{account.bank.name}</span>, branch{" "}
-                <span className="font-medium text-foreground">{account.branch.code}</span>.
+                <span className="font-medium text-foreground">{account.bank.name}</span>.
               </span>
             </p>
             <p className="pl-5 text-muted-foreground">
@@ -359,7 +358,7 @@ function EditCashAccountDialog({
         <DialogHeader>
           <DialogTitle>Edit {account.name}</DialogTitle>
           <DialogDescription>
-            Holding {formatINR(account.balance)}, in {account.branch.code} — {account.branch.name}.
+            Holding {formatINR(account.balance)}.
           </DialogDescription>
         </DialogHeader>
 

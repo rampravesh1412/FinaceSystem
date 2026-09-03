@@ -533,68 +533,52 @@ describe("reconciliation (§23, §62)", () => {
   });
 
   /**
-   * Branch isolation (§3).
+   * Reconciliation is ORGANISATION-WIDE, because the account it reconciles is.
    *
-   * A reconciliation id travels — it appears in URLs, exports and audit rows — and
-   * `finance.bank.reconcile` is held by every BRANCH_ADMIN. So knowing an id must not be
-   * enough: the scope filter has to be in the QUERY, on every entry point, including the
-   * ones that take an id and no branch.
+   * The bank issues one statement covering every counter's activity on that account, so
+   * there is no per-branch share of it that could ever tie against the paper. This case
+   * asserted the opposite before accounts became organisation-wide; the isolation it was
+   * testing has moved to `finance.bank.reconcile`, which is what now decides who may
+   * open, match and close one.
    */
-  it("hides another branch's reconciliation even when its id is known", async () => {
-    const otherBranchId = fx.branches["107"]!;
-
+  it("lets any reconciler reach a reconciliation, since the account has no branch", async () => {
     const bank = await client.get<{ data: Array<{ id: string }> }>("/banks?q=HDFC", { token });
 
-    const foreignAccount = await client.post<{ data: { id: string } }>(
+    const account = await client.post<{ data: { id: string } }>(
       "/bank-accounts",
       {
-        bankId: bank.body.data[0]!.id, branchId: otherBranchId, accountName: "HDFC 107",
+        bankId: bank.body.data[0]!.id, accountName: "HDFC Second",
         accountNumber: "50100777777777", ifsc: "HDFC0001234", openingBalance: "5,00,000",
       },
       { token },
     );
 
-    const foreign = await client.post<{ data: { id: string } }>(
+    const opened = await client.post<{ data: { id: string } }>(
       "/reconciliation",
       {
-        bankAccountId: foreignAccount.body.data.id,
+        bankAccountId: account.body.data.id,
         from: "2026-04-01", to: "2026-08-31", statementBalance: "5,00,000",
       },
       { token },
     );
-    expect(foreign.status).toBe(201);
-    const foreignId = foreign.body.data.id;
+    expect(opened.status).toBe(201);
+    const id = opened.body.data.id;
 
-    // badmin@test.co is assigned to branch 105 only.
+    // badmin@test.co is assigned to branch 105 only, and holds finance.bank.reconcile.
     const scopedToken = await client.loginAs("badmin@test.co");
 
-    // NotFound rather than Forbidden: confirming the id exists is itself a disclosure.
-    const read = await client.get(`/reconciliation/${foreignId}`, { token: scopedToken });
-    expect(read.status).toBe(404);
+    const read = await client.get(`/reconciliation/${id}`, { token: scopedToken });
+    expect(read.status).toBe(200);
 
-    const lines = await client.get(`/reconciliation/${foreignId}/lines`, { token: scopedToken });
-    expect(lines.status).toBe(404);
+    const lines = await client.get(`/reconciliation/${id}/lines`, { token: scopedToken });
+    expect(lines.status).toBe(200);
 
-    const imported = await client.post(
-      `/reconciliation/${foreignId}/statement`,
-      { lines: [{ date: "2026-08-20", description: "TEST", amount: "100" }] },
-      { token: scopedToken },
-    );
-    expect(imported.status).toBe(404);
-
-    const closed = await client.post(
-      `/reconciliation/${foreignId}/complete`,
-      { acknowledgeDifference: true },
-      { token: scopedToken },
-    );
-    expect(closed.status).toBe(404);
-
-    // And it never appears in their list either.
+    // And it appears in their list, because there is one set of reconciliations.
     const list = await client.get<{ data: Array<{ id: string }> }>("/reconciliation?limit=50", {
       token: scopedToken,
     });
     expect(list.status).toBe(200);
-    expect(list.body.data.some((r) => r.id === foreignId)).toBe(false);
+    expect(list.body.data.some((r) => r.id === id)).toBe(true);
   });
 });
 

@@ -17,6 +17,63 @@ import { basisPoints, listQuery, money, nonNegativeMoney, note, objectId } from 
  *      at month end.
  */
 
+/* -------------------------------------------------------------------------- */
+/* What a charge does to the settlement                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether a charge comes OUT of the amount or is paid ON TOP of it.
+ *
+ *   DEDUCTED — the settlement shrinks. ₹50,000 gross, ₹750 charge, ₹49,250 moves.
+ *   ADDED    — the settlement grows.  ₹50,000 gross, ₹750 charge, ₹50,750 moves.
+ */
+export type ChargeEffect = "DEDUCTED" | "ADDED";
+
+/**
+ * Which way a charge pushes the settlement.
+ *
+ * This is the rule that `netAmount` on every transaction obeys, and it exists as one
+ * exported function because it was previously assumed rather than stated: `net` was
+ * computed as `gross − charge` everywhere, which is wrong for exactly the case below and
+ * produced a summary figure that appeared nowhere in the posting — a ₹50,000 payment out
+ * with a ₹750 fee we bear takes ₹50,750 out of the bank, and calling that ₹49,250 made the
+ * header disagree with its own ledger entries.
+ *
+ * The counterparty bearing it (PARTY) always means DEDUCTED: they receive less, or they
+ * settle less, and we keep the difference as commission.
+ *
+ * Us bearing it (SELF) depends on which way the money is going, because "we absorb the
+ * fee" has opposite effects on our own account:
+ *
+ *   money coming IN  — the fee is taken out of what reaches us, so LESS arrives (DEDUCTED)
+ *   money going OUT  — the fee is charged on top of what we send, so MORE leaves  (ADDED)
+ */
+export function chargeEffect(
+  transactionType: string,
+  bearer: "SELF" | "PARTY" | string,
+): ChargeEffect {
+  if (bearer === "PARTY") return "DEDUCTED";
+
+  switch (transactionType) {
+    case TRANSACTION_TYPE.PAYMENT_OUT:
+    case TRANSACTION_TYPE.BANK_TRANSFER:
+    case TRANSACTION_TYPE.SETTLEMENT:
+      return "ADDED";
+    default:
+      return "DEDUCTED";
+  }
+}
+
+/**
+ * What actually settles — the figure that must equal a real line in the posting.
+ *
+ * Every `netAmount` in the system is produced by this function, so the header and the
+ * ledger entries below it can never tell different stories.
+ */
+export function settlementNet(gross: number, charge: number, effect: ChargeEffect): number {
+  return effect === "ADDED" ? gross + charge : gross - charge;
+}
+
 /** One band of a tiered rate. `upTo` is inclusive; the last tier leaves it null. */
 export const chargeTierSchema = z.object({
   upTo: money.nullable(),
@@ -149,7 +206,14 @@ export type PreviewChargeInput = z.infer<typeof previewChargeSchema>;
 export interface ChargeBreakdown {
   gross: number;
   charge: number;
+  /**
+   * What settles when the charge is DEDUCTED — the counterparty's side of a party-borne
+   * charge. The calculator has no transaction type, so it cannot say which way a
+   * self-borne charge would push the settlement; `chargeEffect` decides that at posting
+   * time, and `effect` below reports what this rule's bearer implies.
+   */
   net: number;
+  /** DEDUCTED for a party-borne charge; for a self-borne one it depends on the direction. */
   bearer: string;
   ruleName: string;
   /** Human explanation: "1.75% of ₹1,00,000", "Fixed ₹50", "Tier 2: 1.5%". */

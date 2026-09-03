@@ -1,7 +1,9 @@
 import { Types, type FilterQuery } from "mongoose";
 import {
+  chargeEffect,
   fiscalYearOf,
   formatDocumentNumber,
+  settlementNet,
   type CreateSettlementInput,
   type SettlementRow,
 } from "@amiri/shared";
@@ -53,7 +55,7 @@ export async function createSettlement(
     let partyId: Types.ObjectId | null = null;
 
     if (input.kind === "PARTY") {
-      const party = await accounts.resolveParty(input.partyId!, input.branchId, session);
+      const party = await accounts.resolveParty(input.partyId!, session);
       partyId = party.id;
       destinationLabel = `${party.name} (${party.code})`;
 
@@ -72,16 +74,12 @@ export async function createSettlement(
       }
 
       if (input.sourceAccountId) {
-        const account = await accounts.resolveAccount(input.sourceAccountId, input.branchId, session);
+        const account = await accounts.resolveAccount(input.sourceAccountId, session);
         sourceLabel = account.label;
       }
     } else {
-      const source = await accounts.resolveAccount(input.sourceAccountId!, input.branchId, session);
-      const destination = await accounts.resolveAccount(
-        input.destinationAccountId!,
-        input.branchId,
-        session,
-      );
+      const source = await accounts.resolveAccount(input.sourceAccountId!, session);
+      const destination = await accounts.resolveAccount(input.destinationAccountId!, session);
       sourceLabel = source.label;
       destinationLabel = destination.label;
     }
@@ -100,7 +98,14 @@ export async function createSettlement(
           destinationLabel,
           amount: input.amount,
           charges: charge.amount,
-          netAmount: input.amount - charge.amount,
+          // Same rule as a posting: a charge the counterparty bears comes out of the
+          // amount, one we bear is paid on top of it. Settling ₹2,40,000 with a ₹500 fee
+          // we absorb still discharges ₹2,40,000 of the obligation and costs us ₹2,40,500.
+          netAmount: settlementNet(
+            input.amount,
+            charge.amount,
+            chargeEffect("SETTLEMENT", charge.bearer),
+          ),
           settledAmount: 0,
           transactionIds: [],
           status: "PENDING",

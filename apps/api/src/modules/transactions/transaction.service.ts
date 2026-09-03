@@ -101,8 +101,10 @@ function moneyDirection(txn: TransactionDoc): { moneyIn: number; moneyOut: numbe
   }
 }
 
-type PopulatedTxn = TransactionDoc & {
-  branchId: { _id: Types.ObjectId; name: string; code: string };
+type PopulatedTxn = Omit<TransactionDoc, "branchId" | "partyId"> & {
+  // Null on an organisation-level posting — the opening balance of a shared account or
+  // party, which no branch transacted.
+  branchId: { _id: Types.ObjectId; name: string; code: string } | null;
   partyId: { _id: Types.ObjectId; name: string; code: string } | null;
   createdBy: { _id: Types.ObjectId; name: string } | null;
   accountLabel?: string;
@@ -119,7 +121,9 @@ function toRow(txn: PopulatedTxn): TransactionRow {
     type: txn.type,
     typeLabel: TRANSACTION_TYPE_LABEL[txn.type] ?? txn.type,
     date: txn.date.toISOString(),
-    branch: { id: String(txn.branchId._id), name: txn.branchId.name, code: txn.branchId.code },
+    branch: txn.branchId
+      ? { id: String(txn.branchId._id), name: txn.branchId.name, code: txn.branchId.code }
+      : null,
     party: txn.partyId
       ? { id: String(txn.partyId._id), name: txn.partyId.name, code: txn.partyId.code }
       : null,

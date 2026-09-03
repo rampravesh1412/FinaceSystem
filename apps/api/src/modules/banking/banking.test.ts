@@ -174,14 +174,19 @@ describe("bank accounts", () => {
     expect(await LedgerAccount.findOne({ name: /Will Fail/ }).lean()).toBeNull();
   });
 
-  it("stops a scoped user creating an account in another branch", async () => {
+  /**
+   * Accounts are ORGANISATION-WIDE, so a branch-scoped user opens one on the same terms as
+   * anyone else. What still gates the action is `finance.bank.create`, not which branch
+   * they happen to be assigned to — there is no branch on the account for them to get
+   * wrong.
+   */
+  it("lets a branch-scoped user open an account, since accounts have no branch", async () => {
     const badminToken = await client.loginAs("badmin@test.co");
-    const res = await client.post<{ error: { code: string } }>(
+    const res = await client.post<{ data: { id: string } }>(
       "/bank-accounts",
       {
         bankId,
-        branchId: fx.branches["107"], // the branch admin holds 105 only
-        accountName: "Cross Branch",
+        accountName: "Opened By Branch Admin",
         accountNumber: "111122223333",
         ifsc: "ICIC0001234",
         openingBalance: 0,
@@ -189,17 +194,23 @@ describe("bank accounts", () => {
       { token: badminToken },
     );
 
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe("BRANCH_ACCESS_DENIED");
+    expect(res.status).toBe(201);
   });
 
-  it("hides another branch's accounts from the list", async () => {
+  /**
+   * Every account, to every caller who may see accounts.
+   *
+   * This assertion used to be its exact opposite. It changed deliberately: one HDFC
+   * current account is one real account with one balance that the bank prints one
+   * statement for, so showing a branch only "its" share of it produced a figure that
+   * could never be reconciled against anything.
+   */
+  it("shows every account to every caller, with an organisation-wide total", async () => {
     await client.post(
       "/bank-accounts",
       {
         bankId,
-        branchId: fx.branches["107"],
-        accountName: "Branch 107 Account",
+        accountName: "Second Account",
         accountNumber: "707070707070",
         ifsc: "ICIC0007070",
         openingBalance: "2,00,000",
@@ -213,14 +224,14 @@ describe("bank accounts", () => {
     );
 
     const names = scoped.body.data.map((a) => a.accountName);
-    expect(names).not.toContain("Branch 107 Account");
-
-    // The footer total must describe the caller's permitted set, not the organisation's.
-    expect(scoped.body.meta.totalBalance).toBe(500_000_00);
+    expect(names).toContain("Second Account");
 
     const unscoped = await client.get<{ meta: { totalBalance: number } }>("/bank-accounts", {
       token: superToken,
     });
+
+    // Both callers see the same books, because there is only one set of them.
+    expect(scoped.body.meta.totalBalance).toBe(unscoped.body.meta.totalBalance);
     expect(unscoped.body.meta.totalBalance).toBe(700_000_00);
   });
 });
@@ -263,7 +274,8 @@ describe("create returns the list's shape", () => {
     expect(body.balance).toBe(3_00_000_00);
     expect(body.availableBalance).toBe(4_00_000_00);
     expect(body.bank).toMatchObject({ shortName: "STB" });
-    expect(body.branch).toHaveProperty("code");
+    // No `branch` — an account belongs to the organisation, not to an office.
+    expect(body).not.toHaveProperty("branch");
 
     // The super admin holds finance.bank.viewFull, so the digits come through here; the
     // point is that the field is masked-aware at all, which the raw document was not.
@@ -303,15 +315,13 @@ describe("create returns the list's shape", () => {
   it("returns a cash account summary with its balance and default flag", async () => {
     const res = await client.post<{ data: Record<string, unknown> }>(
       "/cash-accounts",
-      // Branch 101, not 105: the "first drawer becomes the default" case below asserts on
-      // 105, and opening one here first would quietly take that position from it.
-      { branchId: fx.branches["101"]!, name: "Shape Test Drawer", openingBalance: "12,000" },
+      { name: "Shape Test Drawer", openingBalance: "12,000" },
       { token: superToken },
     );
 
     expect(res.status).toBe(201);
     expect(res.body.data.balance).toBe(12_000_00);
-    expect(res.body.data.branch).toHaveProperty("code");
+    expect(res.body.data).not.toHaveProperty("branch");
     expect(res.body.data).toHaveProperty("isDefault");
   });
 });
@@ -320,13 +330,14 @@ describe("cash accounts", () => {
   it("creates a drawer that cannot be overdrawn", async () => {
     const res = await client.post<{ data: { id: string; ledgerAccountId: string; isDefault: boolean } }>(
       "/cash-accounts",
-      { branchId: fx.branches["105"], name: "Counter 1", openingBalance: "25,000" },
+      { name: "Counter 1", openingBalance: "25,000" },
       { token: superToken },
     );
 
     expect(res.status).toBe(201);
-    // The first drawer in a branch becomes its default automatically.
-    expect(res.body.data.isDefault).toBe(true);
+    // Only the FIRST drawer opened becomes the default, and "Shape Test Drawer" above
+    // already took that position. One default overall, not one per branch.
+    expect(res.body.data.isDefault).toBe(false);
 
     const ledgerAccount = await LedgerAccount.findById(res.body.data.ledgerAccountId).lean();
     expect(ledgerAccount!.kind).toBe("CASH");
@@ -430,20 +441,27 @@ describe("parties", () => {
     expect(res.body.data.totalTaken).toBe(0);
   });
 
-  it("keeps another branch's parties invisible, by list and by id", async () => {
+  /**
+   * Parties are ORGANISATION-WIDE, so every caller who may see parties sees all of them.
+   *
+   * The inverse of what this suite used to assert, and the change is the point: a customer
+   * who pays at whichever counter is nearest has ONE balance, and a branch-scoped view of
+   * it showed a number nobody was actually owed.
+   */
+  it("shows every party to every caller, by list and by id", async () => {
     const other = await client.post<{ data: { id: string } }>(
       "/parties",
-      { name: "Branch 107 Party", branchId: fx.branches["107"], openingBalance: 0 },
+      { name: "Second Office Party", openingBalance: 0 },
       { token: superToken },
     );
 
     const list = await client.get<{ data: Array<{ name: string }> }>("/parties", {
       token: accountantToken,
     });
-    expect(list.body.data.map((p) => p.name)).not.toContain("Branch 107 Party");
+    expect(list.body.data.map((p) => p.name)).toContain("Second Office Party");
 
     const direct = await client.get(`/parties/${other.body.data.id}`, { token: accountantToken });
-    expect(direct.status).toBe(404);
+    expect(direct.status).toBe(200);
   });
 });
 
@@ -475,12 +493,17 @@ describe("ledger reads", () => {
     expect(res.body.data.totalDebit).toBe(res.body.data.totalCredit);
   });
 
-  it("hides another branch's ledger account even when its id is known", async () => {
-    const other = await BankAccount.findOne({ accountName: "Branch 107 Account" }).lean();
+  /**
+   * A bank account's ledger account carries no branch, so it is readable by anyone holding
+   * `finance.ledger.view`. The branch check in the ledger routes is still there and still
+   * applies to accounts that DO have a branch — an expense head opened for one office.
+   */
+  it("lets any ledger reader open an organisation-wide account's statement", async () => {
+    const other = await BankAccount.findOne({ accountName: "Second Account" }).lean();
     const res = await client.get(`/ledger/accounts/${String(other!.ledgerAccountId)}/entries`, {
       token: accountantToken,
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
   });
 
   it("confirms every cached balance agrees with a full replay of the entries", async () => {
@@ -598,20 +621,25 @@ describe("updating banks and drawers", () => {
     expect(doc!.ifsc).toBe("ITBK0001234");
   });
 
-  it("refuses a drawer in a branch the caller does not hold", async () => {
+  /**
+   * Drawers are organisation-wide, so editing one is gated by `finance.bank.edit` alone.
+   * This replaces a branch-ownership check that no longer has a branch to check.
+   */
+  it("gates editing a drawer on the permission, not on a branch", async () => {
     const drawer = await client.post<{ data: { id: string } }>(
       "/cash-accounts",
-      { branchId: fx.branches["107"]!, name: "Foreign Drawer", openingBalance: "0" },
+      { name: "Another Drawer", openingBalance: "0" },
       { token: superToken },
     );
 
-    // The accountant holds 105 only.
     const res = await client.patch(
       `/cash-accounts/${drawer.body.data.id}`,
-      { name: "Should Not Work" },
+      { name: "Renamed Drawer" },
       { token: accountantToken },
     );
 
-    expect([403, 404]).toContain(res.status);
+    // The accountant either holds finance.bank.edit and succeeds, or is refused for
+    // lacking it. What must not happen is a refusal on branch grounds.
+    expect([200, 403]).toContain(res.status);
   });
 });

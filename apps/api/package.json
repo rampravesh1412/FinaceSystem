@@ -12,6 +12,7 @@
     "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts",
     "create:superadmin": "tsx src/scripts/create-superadmin.ts",
     "create:globaladmin": "tsx src/scripts/create-global-admin.ts",
+    "migrate:global-masters": "tsx src/scripts/migrate-global-masters.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

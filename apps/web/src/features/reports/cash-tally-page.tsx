@@ -38,7 +38,7 @@ export function CashTallyPage() {
 
   const targets = useQuery({
     queryKey: ["tally-targets"],
-    queryFn: () => api.get<Array<{ id: string; name: string; branch: { id: string; code: string } }>>("/cash-tally/targets"),
+    queryFn: () => api.get<Array<{ id: string; name: string; code?: string }>>("/cash-tally/targets"),
   });
 
   React.useEffect(() => {
@@ -55,7 +55,6 @@ export function CashTallyPage() {
     mutationFn: () =>
       api.post<CashTally>("/cash-tally", {
         date,
-        branchId: tally.data!.branch.id,
         cashAccountId,
         actualClosing: counted,
         notes: notes || undefined,
@@ -91,7 +90,7 @@ export function CashTallyPage() {
               <SelectContent>
                 {(targets.data ?? []).map((target) => (
                   <SelectItem key={target.id} value={target.id}>
-                    {target.branch.code} — {target.name}
+                    {target.code ? ` — ` : ""}{target.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -240,7 +239,7 @@ export function CashTallyPage() {
             </Card>
 
             <Badge variant="outline" className="w-full justify-center py-1.5">
-              {t.branch.code} — {t.cashAccount.name} · {formatDate(t.date)}
+              {t.cashAccount.name} · {formatDate(t.date)}
             </Badge>
           </div>
         </div>

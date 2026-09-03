@@ -7,7 +7,6 @@ import {
   type UpdatePartyInput,
 } from "@amiri/shared";
 import {
-  Branch,
   LedgerAccount,
   LedgerEntry,
   Party,
@@ -15,7 +14,7 @@ import {
   nextSequence,
   type PartyDoc,
 } from "../../models/index.js";
-import { BadRequestError, NotFoundError, translateDuplicate } from "../../lib/errors.js";
+import { NotFoundError, translateDuplicate } from "../../lib/errors.js";
 import { escapeRegex, type Paging } from "../../lib/http.js";
 import { withTransaction } from "../../lib/unitOfWork.js";
 import * as ledger from "../../services/ledger.service.js";
@@ -38,25 +37,22 @@ export async function createParty(
   input: CreatePartyInput,
   ctx: audit.AuditContext,
 ): Promise<PartyDoc> {
-  const branch = await Branch.findById(input.branchId).select("code name status").lean();
-  if (!branch) throw new NotFoundError("Branch", input.branchId);
-  if (branch.status !== "ACTIVE") throw new BadRequestError("That branch is not active", "branchId");
-
   return withTransaction(async (session) => {
     try {
-      // Auto-numbered per branch when no code was given. Inside the session, so a rolled
-      // back party does not consume a code.
+      // Auto-numbered across the organisation when no code was given. Inside the session,
+      // so a rolled back party does not consume a code.
       const code =
-        input.code ??
-        `PTY-${String(await nextSequence(`PARTY-${branch.code}`, 0, session)).padStart(5, "0")}`;
+        input.code ?? `PTY-${String(await nextSequence("PARTY", 0, session)).padStart(5, "0")}`;
 
-      const ledgerSeq = await nextSequence(`LEDGER-PARTY-${branch.code}`, 0, session);
+      const ledgerSeq = await nextSequence("LEDGER-PARTY", 0, session);
       const ledgerAccount = await ledger.createLedgerAccount(
         {
-          code: `PARTY-${branch.code}-${String(ledgerSeq).padStart(4, "0")}`,
+          code: `PARTY-${String(ledgerSeq).padStart(5, "0")}`,
           name: `${input.name} (${code})`,
           kind: "PARTY",
-          branchId: input.branchId,
+          // Organisation-wide, like the party it belongs to. The branch lives on the
+          // entries posted against this account, not on the account itself.
+          branchId: null,
           refKind: "Party",
           // A party balance legitimately swings either way — they owe us, or we owe them.
           // Enforcing a floor here would block recording a genuine payable.
@@ -72,7 +68,6 @@ export async function createParty(
             name: input.name,
             code,
             type: input.type,
-            branchId: input.branchId,
             ledgerAccountId: ledgerAccount._id,
             mobile: input.mobile,
             altMobile: input.altMobile,
@@ -98,7 +93,7 @@ export async function createParty(
       await LedgerAccount.updateOne({ _id: ledgerAccount._id }, { $set: { refId: party._id } }, { session });
 
       await audit.record(
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
         {
           action: "CREATE",
           entity: "Party",
@@ -119,14 +114,16 @@ export async function createParty(
       await ledger.postOpeningBalance(
         {
           ledgerAccountId: ledgerAccount._id,
-          branchId: input.branchId,
+          // No branch: what a party owed on day one is an organisation-level fact, not
+          // something any one office traded.
+          branchId: null,
           amount: input.openingBalance,
           date: input.openingDate ?? new Date(),
           label: `${input.name} (${code})`,
           createdBy: ctx.userId!,
         },
         session,
-        { ...ctx, branchId: String(input.branchId) },
+        ctx,
       );
 
       return party;
@@ -144,14 +141,21 @@ export interface PartyListFilters {
   status?: string;
   balance: "all" | "lena" | "dena" | "clear";
   overLimit?: boolean;
-  scopeFilter: Record<string, unknown>;
 }
 
+/**
+ * The party list.
+ *
+ * There is no branch filter. Parties are organisation-wide, so every caller who holds
+ * `finance.party.view` sees the whole master and one balance per party — which is the
+ * point of a shared master, and the only reading under which the receivable and payable
+ * totals in the header describe the business rather than a slice of it.
+ */
 export async function listParties(
   filters: PartyListFilters,
   page: Paging,
 ): Promise<{ items: PartySummary[]; total: number; totals: { lena: number; dena: number } }> {
-  const filter: FilterQuery<PartyDoc> = { ...filters.scopeFilter };
+  const filter: FilterQuery<PartyDoc> = {};
 
   if (filters.type) filter.type = filters.type;
   if (filters.status) filter.status = filters.status;
@@ -196,28 +200,14 @@ export async function listParties(
   // `$facet` gets the page, the count and the receivable/payable totals in ONE round trip
   // instead of three passes over the same matched set.
   const [result] = await Party.aggregate<{
-    items: Array<PartyDoc & { balance: number; branch: { _id: Types.ObjectId; name: string; code: string } }>;
+    items: Array<PartyDoc & { balance: number }>;
     count: Array<{ total: number }>;
     totals: Array<{ lena: number; dena: number }>;
   }>([
     ...pipeline,
     {
       $facet: {
-        items: [
-          { $sort: page.sort },
-          { $skip: page.skip },
-          { $limit: page.limit },
-          {
-            $lookup: {
-              from: "branches",
-              localField: "branchId",
-              foreignField: "_id",
-              as: "branch",
-              pipeline: [{ $project: { name: 1, code: 1 } }],
-            },
-          },
-          { $unwind: "$branch" },
-        ],
+        items: [{ $sort: page.sort }, { $skip: page.skip }, { $limit: page.limit }],
         count: [{ $count: "total" }],
         totals: [
           {
@@ -242,10 +232,7 @@ export async function listParties(
 }
 
 /** The row shape the list aggregation produces, and the only place it becomes a summary. */
-type PartyRow = PartyDoc & {
-  balance: number;
-  branch: { _id: Types.ObjectId; name: string; code: string };
-};
+type PartyRow = PartyDoc & { balance: number };
 
 function toPartySummary(p: PartyRow): PartySummary {
   {
@@ -257,7 +244,6 @@ function toPartySummary(p: PartyRow): PartySummary {
       name: p.name,
       code: p.code,
       type: p.type,
-      branch: { id: String(p.branch._id), name: p.branch.name, code: p.branch.code },
       mobile: p.mobile,
       email: p.email,
       city: p.city,
@@ -297,16 +283,6 @@ export async function getPartySummary(id: string): Promise<PartySummary> {
     },
     { $unwind: "$ledger" },
     { $addFields: { balance: "$ledger.cachedBalance" } },
-    {
-      $lookup: {
-        from: "branches",
-        localField: "branchId",
-        foreignField: "_id",
-        as: "branch",
-        pipeline: [{ $project: { name: 1, code: 1 } }],
-      },
-    },
-    { $unwind: "$branch" },
   ]);
 
   if (!row) throw new NotFoundError("Party", id);
@@ -321,12 +297,8 @@ export async function getPartySummary(id: string): Promise<PartySummary> {
  * different questions: turnover says how much business flows through this party, the
  * balance says where they stand today.
  */
-export async function getPartyProfile(
-  id: string,
-  scopeFilter: Record<string, unknown>,
-): Promise<PartyProfile> {
-  const party = await Party.findOne({ _id: id, ...scopeFilter })
-    .populate<{ branchId: { _id: Types.ObjectId; name: string; code: string } }>("branchId", "name code")
+export async function getPartyProfile(id: string): Promise<PartyProfile> {
+  const party = await Party.findById(id)
     .populate<{ ledgerAccountId: { _id: Types.ObjectId; cachedBalance: number } }>(
       "ledgerAccountId",
       "cachedBalance",
@@ -373,7 +345,6 @@ export async function getPartyProfile(
     name: party.name,
     code: party.code,
     type: party.type,
-    branch: { id: String(party.branchId._id), name: party.branchId.name, code: party.branchId.code },
     mobile: party.mobile,
     altMobile: party.altMobile,
     email: party.email,
@@ -414,11 +385,10 @@ export async function getPartyProfile(
 export async function updateParty(
   id: string,
   input: UpdatePartyInput,
-  scopeFilter: Record<string, unknown>,
   ctx: audit.AuditContext,
 ): Promise<PartyDoc> {
   return withTransaction(async (session) => {
-    const party = await Party.findOne({ _id: id, ...scopeFilter }).session(session);
+    const party = await Party.findById(id).session(session);
     if (!party) throw new NotFoundError("Party", id);
 
     const before = {
@@ -444,7 +414,7 @@ export async function updateParty(
     }
 
     await audit.record(
-      { ...ctx, branchId: String(party.branchId) },
+      ctx,
       {
         action: "UPDATE",
         entity: "Party",

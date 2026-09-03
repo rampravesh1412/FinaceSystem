@@ -10,7 +10,7 @@ import {
   type TransactionType,
 } from "@amiri/shared";
 import {
-  actorField, attachmentSchema, baseSchemaOptions, branchField,
+  actorField, attachmentSchema, baseSchemaOptions,
   businessDateField, moneyField, noteSchema,
 } from "./fields.js";
 
@@ -30,7 +30,14 @@ export interface TransactionDoc extends Document<Types.ObjectId> {
   txnNo: string;
   type: TransactionType;
   date: Date;
-  branchId: Types.ObjectId;
+  /**
+   * The branch that transacted.
+   *
+   * Null on an organisation-level posting — the opening balance of a shared account or
+   * party. Those belong to the business, not to an office, and stamping one with an
+   * arbitrary branch would put a figure nobody at that branch recognises on its books.
+   */
+  branchId?: Types.ObjectId | null;
   status: TransactionStatus;
 
   /**
@@ -123,7 +130,7 @@ const transactionSchema = new Schema<TransactionDoc>(
     txnNo: { type: String, required: true, unique: true, uppercase: true, trim: true },
     type: { type: String, enum: Object.values(TRANSACTION_TYPE), required: true, index: true },
     date: businessDateField(true),
-    branchId: branchField(true),
+    branchId: { type: Schema.Types.ObjectId, ref: "Branch", default: null, index: true },
 
     status: {
       type: String,
@@ -186,16 +193,25 @@ const transactionSchema = new Schema<TransactionDoc>(
 /**
  * Arithmetic invariant, enforced at the model layer.
  *
- * `net = gross - charge` for every transaction, checked on save regardless of which
- * service built the document. A service that computes the charge wrongly fails here
- * rather than writing a transaction whose own three numbers disagree.
+ * The net must differ from the gross by EXACTLY the charge, in one direction or the
+ * other — because a charge either comes out of the amount or is paid on top of it:
+ *
+ *     net = gross − charge     the charge is DEDUCTED (the counterparty gets less)
+ *     net = gross + charge     the charge is ADDED    (we pay the fee on top)
+ *
+ * The check used to demand `gross − charge` unconditionally, which silently accepted a
+ * wrong header on the second shape: a ₹50,000 payment out with a ₹750 fee we bear moves
+ * ₹50,750 through the bank, yet the transaction recorded ₹49,250 as its net — a number
+ * that matched none of its own ledger entries. `chargeEffect` in @amiri/shared decides the
+ * direction; this is the guard that stops a service getting it wrong again.
  */
 transactionSchema.pre("validate", function checkAmounts(next) {
-  if (this.netAmount !== this.grossAmount - this.chargeAmount) {
+  if (Math.abs(this.netAmount - this.grossAmount) !== this.chargeAmount) {
     next(
       new Error(
-        `Transaction amounts do not reconcile: net (${this.netAmount}) must equal ` +
-          `gross (${this.grossAmount}) minus charge (${this.chargeAmount}).`,
+        `Transaction amounts do not reconcile: net (${this.netAmount}) must be gross ` +
+          `(${this.grossAmount}) either minus or plus the charge (${this.chargeAmount}), ` +
+          `depending on whether the charge is deducted from the amount or paid on top of it.`,
       ),
     );
     return;

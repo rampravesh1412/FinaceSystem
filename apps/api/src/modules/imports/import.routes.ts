@@ -3,7 +3,7 @@ import { z } from "zod";
 import { objectId } from "@amiri/shared";
 import { asyncHandler, ok } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { assertBranchInScope, requireAuth, requireBranchAccess, requirePermission } from "../../middleware/auth.js";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { exportLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import * as importer from "./import.service.js";
@@ -21,8 +21,8 @@ notificationRouter.use(requireAuth);
  * single-shot import, because an operator who has not seen the validation errors first has
  * no way to know what a 500-row file is about to do to their party master.
  */
+// No `branchId`: the party master is organisation-wide, so an import lands in it whole.
 const importBody = z.object({
-  branchId: objectId,
   // Rows as the client parsed them from the spreadsheet, headers included. Header names
   // are normalised server-side, so "Party Name", "party_name" and "PARTY NAME" all work.
   rows: z.array(z.record(z.unknown())).min(1, "The file has no rows").max(5000, "Import at most 5,000 rows at a time"),
@@ -31,28 +31,23 @@ const importBody = z.object({
 importRouter.post(
   "/parties/preview",
   requirePermission("import.run"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ body: importBody }),
   asyncHandler(async (req, res) => {
-    const { branchId, rows } = req.valid.body as z.infer<typeof importBody>;
-    assertBranchInScope(req, branchId);
+    const { rows } = req.valid.body as z.infer<typeof importBody>;
     // Nothing is written by this call.
-    return ok(res, await importer.previewParties(rows, branchId));
+    return ok(res, await importer.previewParties(rows));
   }),
 );
 
 importRouter.post(
   "/parties/commit",
   requirePermission("import.run"),
-  requireBranchAccess({ optional: true }),
   exportLimiter,
   validate({ body: importBody }),
   asyncHandler(async (req, res) => {
-    const { branchId, rows } = req.valid.body as z.infer<typeof importBody>;
-    assertBranchInScope(req, branchId);
-
-    const result = await importer.commitParties(rows, branchId, auditContextFrom(req));
+    const { rows } = req.valid.body as z.infer<typeof importBody>;
+    const result = await importer.commitParties(rows, auditContextFrom(req));
 
     return ok(
       res,

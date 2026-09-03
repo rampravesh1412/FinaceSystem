@@ -30,6 +30,13 @@ import * as khata from "../khata/khata.service.js";
  * `todayIncome`/`todayExpenses`/`todayProfit` are PROFIT. They sit in separate groups and
  * the UI labels them separately, because a day with ₹10,00,000 through the door can still
  * be a loss.
+ *
+ * What the branch selection scopes, now that accounts and parties are organisation-wide:
+ * MOVEMENT, not POSITION. Today's in/out, income, expenses, the trend, recent
+ * transactions and the approval queue are all read from the branch stamped on each
+ * posting and remain per-branch. Balances and party positions belong to shared accounts,
+ * so `balanceByKind` and `partyPositions` report that branch's CONTRIBUTION to them
+ * rather than pretending a branch owns a slice of the company's bank account.
  */
 
 export async function buildDashboard(options: {
@@ -88,11 +95,13 @@ export async function buildDashboard(options: {
     buildTrend(branchMatch, trendStart, todayEnd),
     buildExpenseBreakdown(branchMatch, monthStart, todayEnd),
     buildRecent(branchMatch),
-    buildTopParties(branchId, options.isUnscoped, options.branchIds),
+    buildTopParties(),
     Transaction.countDocuments({ ...branchMatch, status: "PENDING" }),
-    Reconciliation.countDocuments({ ...branchMatch, status: "IN_PROGRESS" }),
+    // Reconciliations are organisation-wide now that bank accounts are — there is no
+    // branch's share of a bank statement to count.
+    Reconciliation.countDocuments({ status: "IN_PROGRESS" }),
     Transaction.countDocuments({ ...branchMatch, date: { $gte: todayStart, $lte: todayEnd } }),
-    khata.creditReport(branchMatch, { limit: 1 }),
+    khata.creditReport({ limit: 1 }),
   ]);
 
   // Branch comparison is for unscoped users only (§32: never show another branch's data).
@@ -290,16 +299,16 @@ async function buildRecent(branchMatch: Record<string, unknown>) {
   });
 }
 
-async function buildTopParties(
-  branchId: string | undefined,
-  isUnscoped: boolean,
-  branchIds: Types.ObjectId[],
-) {
-  const filter: Record<string, unknown> = { status: "ACTIVE" };
-  if (branchId) filter.branchId = new Types.ObjectId(branchId);
-  else if (!isUnscoped) filter.branchId = { $in: branchIds };
-
-  const parties = await Party.find(filter).select("name ledgerAccountId").lean();
+/**
+ * The parties with the largest positions.
+ *
+ * Not filtered by branch: a party is organisation-wide and has ONE balance. Showing a
+ * branch its own share of that balance would rank the wrong parties and understate every
+ * figure, so this panel is the same for everyone — which is what "the biggest debtor" has
+ * to mean once the master is shared.
+ */
+async function buildTopParties() {
+  const parties = await Party.find({ status: "ACTIVE" }).select("name ledgerAccountId").lean();
   const balances = await LedgerAccount.find({ _id: { $in: parties.map((p) => p.ledgerAccountId) } })
     .select("cachedBalance")
     .lean();

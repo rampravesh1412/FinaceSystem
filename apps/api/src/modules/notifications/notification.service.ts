@@ -92,7 +92,8 @@ export async function notifyPermission(
 /* ── The events worth telling somebody about ─────────────────────────────── */
 
 export async function notifyApprovalRequired(options: {
-  branchId: string;
+  /** Null for an organisation-level posting — everyone who may approve is told. */
+  branchId: string | null;
   transactionId: string;
   txnNo: string;
   typeLabel: string;
@@ -136,14 +137,19 @@ export async function notifyApprovalDecided(options: {
   });
 }
 
+/**
+ * A drawer that did not tally.
+ *
+ * `branchId` is null: cash drawers are organisation-wide, so a shortfall is everybody's
+ * concern rather than one office's. Everyone holding `finance.cash.view` is told.
+ */
 export async function notifyCashTallyMismatch(options: {
-  branchId: string;
   drawer: string;
   difference: number;
   status: string;
   countedBy: string;
 }): Promise<void> {
-  await notifyPermission("finance.cash.view", options.branchId, {
+  await notifyPermission("finance.cash.view", null, {
     type: "CASH_TALLY_MISMATCH",
     severity: "WARNING",
     title: `Cash ${options.status.toLowerCase()} by ${formatINR(Math.abs(options.difference))}`,

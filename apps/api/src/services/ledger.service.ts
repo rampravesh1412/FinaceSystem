@@ -60,11 +60,29 @@ export interface PostingLine {
 export interface PostTransactionInput {
   type: TransactionType;
   date: Date;
-  branchId: Types.ObjectId | string;
+  /**
+   * The branch that transacted. Stamped on the header AND on every entry, which is what
+   * makes each branch's books balance on their own.
+   *
+   * Null for an organisation-level posting — the opening balance of a shared account or
+   * party. Both legs carry null together, so a branch-filtered trial balance excludes the
+   * pair and still ties.
+   */
+  branchId: Types.ObjectId | string | null;
   lines: PostingLine[];
 
   grossAmount: number;
   chargeAmount?: number;
+  /**
+   * What actually settles — the figure that must match a real line in `lines`.
+   *
+   * Defaults to `gross − charge`, which is right whenever the charge comes out of the
+   * amount. A caller whose charge is paid ON TOP (a fee we bear on money going out) must
+   * pass `gross + charge` here, or the header will claim a figure that appears nowhere in
+   * its own posting. Use `settlementNet(gross, charge, chargeEffect(type, bearer))` rather
+   * than open-coding the arithmetic.
+   */
+  netAmount?: number;
 
   paymentMode?: string;
   referenceNo?: string;
@@ -383,7 +401,7 @@ export async function postTransaction(
   const { debit } = assertBalanced(input.lines);
 
   const chargeAmount = input.chargeAmount ?? 0;
-  const netAmount = input.grossAmount - chargeAmount;
+  const netAmount = input.netAmount ?? input.grossAmount - chargeAmount;
 
   // ── 2. Accounts ─────────────────────────────────────────────────────────
   const accountIds = [...new Set(input.lines.map((l) => String(l.ledgerAccountId)))];
@@ -440,13 +458,15 @@ export async function postTransaction(
     : await reserveTxnNo(input.type, input.date, session);
 
   // ── 4. Header ───────────────────────────────────────────────────────────
+  const branchId = input.branchId ? new Types.ObjectId(String(input.branchId)) : null;
+
   const [transaction] = await Transaction.create(
     [
       {
         txnNo: numbering.txnNo,
         type: input.type,
         date: input.date,
-        branchId: input.branchId,
+        branchId,
         // Posting is what COMPLETED means. There is no state in which entries exist and
         // the header claims to be a draft.
         status: "COMPLETED",
@@ -493,7 +513,7 @@ export async function postTransaction(
       txnNo: transaction.txnNo,
       transactionType: input.type,
       ledgerAccountId: new Types.ObjectId(id),
-      branchId: new Types.ObjectId(String(input.branchId)),
+      branchId,
       date: input.date,
       direction: line.direction,
       amount: line.amount,
@@ -625,7 +645,8 @@ export async function assertPeriodOpen(
 export async function postOpeningBalance(
   input: {
     ledgerAccountId: Types.ObjectId | string;
-    branchId: Types.ObjectId | string;
+    /** Null for an organisation-wide account or party, which is now every master. */
+    branchId: Types.ObjectId | string | null;
     amount: number;
     date: Date;
     label: string;

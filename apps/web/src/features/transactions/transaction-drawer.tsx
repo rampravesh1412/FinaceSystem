@@ -95,7 +95,11 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
                   Reversal
                 </Badge>
               ) : null}
-              <Badge variant="outline" className="font-mono">{txn.branch.code}</Badge>
+              {/* Absent on an organisation-level posting — an opening balance belongs
+                  to the business, not to a branch. */}
+              {txn.branch ? (
+                <Badge variant="outline" className="font-mono">{txn.branch.code}</Badge>
+              ) : null}
             </div>
           </div>
         </div>

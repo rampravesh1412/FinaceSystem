@@ -148,7 +148,10 @@ export async function submitForApproval(
           status: "PENDING",
           grossAmount: input.grossAmount,
           chargeAmount,
-          netAmount: input.grossAmount - chargeAmount,
+          // Carried from the caller, never recomputed. A charge paid ON TOP of the amount
+          // settles at `gross + charge`, and re-deriving it as `gross − charge` here would
+          // show the approver a figure that contradicts the very lines they are signing off.
+          netAmount: input.netAmount ?? input.grossAmount - chargeAmount,
           paymentMode: input.paymentMode,
           referenceNo: input.referenceNo,
           narration: input.narration,
@@ -174,7 +177,7 @@ export async function submitForApproval(
     if (!txn) throw new Error("Failed to create the pending transaction");
 
     await audit.record(
-      { ...ctx, branchId: String(input.branchId) },
+      { ...ctx, branchId: input.branchId ? String(input.branchId) : null },
       {
         action: "SUBMIT",
         entity: "Transaction",
@@ -198,7 +201,7 @@ export async function submitForApproval(
     // AFTER commit. A notification failure must never roll back a submission, and the
     // recipients should only hear about something that actually happened.
     await notifications.notifyApprovalRequired({
-      branchId: String(input.branchId),
+      branchId: input.branchId ? String(input.branchId) : null,
       transactionId: String(txn._id),
       txnNo: txn.txnNo,
       typeLabel: TRANSACTION_TYPE_LABEL[input.type] ?? input.type,
@@ -294,10 +297,12 @@ export async function approve(
       {
         type: pending.type,
         date: pending.date,
-        branchId: pending.branchId,
+        branchId: pending.branchId ?? null,
         lines: pending.pendingLines!,
         grossAmount: pending.grossAmount,
         chargeAmount: pending.chargeAmount,
+        // What was submitted is what posts, down to the settlement figure.
+        netAmount: pending.netAmount,
         paymentMode: pending.paymentMode,
         referenceNo: pending.referenceNo,
         narration: pending.narration,
@@ -306,7 +311,7 @@ export async function approve(
         details,
       },
       session,
-      { ...ctx, branchId: String(pending.branchId) },
+      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
     );
 
     /**
@@ -335,7 +340,7 @@ export async function approve(
     );
 
     await audit.record(
-      { ...ctx, branchId: String(pending.branchId) },
+      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
       {
         action: "APPROVE",
         entity: "Transaction",
@@ -397,7 +402,7 @@ export async function reject(
     await pending.save({ session });
 
     await audit.record(
-      { ...ctx, branchId: String(pending.branchId) },
+      { ...ctx, branchId: pending.branchId ? String(pending.branchId) : null },
       {
         action: "REJECT",
         entity: "Transaction",

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -8,12 +8,10 @@ import {
   createPartySchema,
   formatINR,
   parseAmount,
-  type BranchSummary,
   type CreatePartyInput,
   type PartySummary,
 } from "@amiri/shared";
-import { ApiError, api, qs } from "@/lib/api";
-import { useAuth } from "@/features/auth/auth-context";
+import { ApiError, api } from "@/lib/api";
 import { AmountField, NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -52,22 +50,14 @@ export function NewPartyButton() {
 type Direction = "OWES_US" | "WE_OWE";
 
 function PartyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [direction, setDirection] = React.useState<Direction>("OWES_US");
   const [formError, setFormError] = React.useState<string | null>(null);
-
-  const branches = useQuery({
-    queryKey: ["branches", "for-party-form"],
-    queryFn: () => api.list<BranchSummary>(`/branches${qs({ limit: 100, status: "ACTIVE" })}`),
-    enabled: open,
-  });
 
   const form = useForm<CreatePartyInput>({
     resolver: zodResolver(createPartySchema),
     defaultValues: {
       name: "", code: "", type: "CUSTOMER",
-      branchId: user?.activeBranchId ?? "",
       mobile: "", email: "", address: "", city: "", state: "", pincode: "",
       gstin: "", pan: "",
       openingBalance: 0, creditLimit: 0, creditDays: 0,
@@ -174,19 +164,6 @@ function PartyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: 
                     { value: "EMPLOYEE", label: "Employee" },
                     { value: "OTHER", label: "Other" },
                   ]}
-                />
-                <SelectField
-                  form={form}
-                  name="branchId"
-                  label="Branch"
-                  required
-                  placeholder={branches.isPending ? "Loading…" : "Choose a branch"}
-                  hint="Permanent. A party cannot be moved later without breaking that branch's trial balance."
-                  options={(branches.data?.items ?? []).map((b) => ({
-                    value: b.id,
-                    label: `${b.code} — ${b.name}`,
-                    detail: b.city,
-                  }))}
                 />
               </div>
 

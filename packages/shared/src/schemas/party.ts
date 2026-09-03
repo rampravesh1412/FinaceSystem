@@ -5,7 +5,6 @@ import {
   listQuery,
   money,
   note,
-  objectId,
   optionalEmail,
   optionalGstin,
   optionalIndianMobile,
@@ -19,6 +18,12 @@ import {
  * agent, employee. They all share one ledger account and one balance, because a business
  * that is both a customer and a vendor should net to a single position rather than
  * appear twice with opposite signs.
+ *
+ * ORGANISATION-WIDE. A party has no branch. The same customer walks into whichever office
+ * is nearest, and their balance is one number across the business — splitting the master
+ * per branch would give one firm several part-balances that nobody could net without
+ * adding them up by hand. The BRANCH still appears on every posting: each ledger entry
+ * carries the branch that transacted, so branch books and branch reports are unaffected.
  */
 export const createPartySchema = z.object({
   name: z.string().trim().min(2, "Party name is required").max(140),
@@ -38,7 +43,6 @@ export const createPartySchema = z.object({
     .transform((v) => (v ? v : undefined)),
 
   type: z.nativeEnum(PARTY_TYPE).default("CUSTOMER"),
-  branchId: objectId,
 
   mobile: optionalIndianMobile,
   altMobile: optionalIndianMobile,
@@ -78,20 +82,19 @@ export const createPartySchema = z.object({
 export type CreatePartyInput = z.infer<typeof createPartySchema>;
 
 /**
- * Branch and opening balance are omitted.
+ * The opening balance is omitted.
  *
- * Moving a party between branches would move their historical ledger entries out from
- * under the branch that posted them, breaking that branch's trial balance. The opening
- * balance is a posted transaction and is corrected with an Adjustment (§25).
+ * It is a posted transaction, not a field, so it is corrected with an Adjustment (§25)
+ * rather than by editing the master — otherwise the party's balance and the entries that
+ * are supposed to explain it would disagree.
  */
 export const updatePartySchema = createPartySchema
-  .omit({ branchId: true, openingBalance: true, openingDate: true })
+  .omit({ openingBalance: true, openingDate: true })
   .partial();
 export type UpdatePartyInput = z.infer<typeof updatePartySchema>;
 
 export const partyQuerySchema = listQuery.extend({
   type: z.nativeEnum(PARTY_TYPE).optional(),
-  branchId: objectId.optional(),
   status: z.nativeEnum(RECORD_STATUS).optional(),
   /** Only parties who owe us, or only those we owe. Drives the receivable/payable views. */
   balance: z.enum(["all", "lena", "dena", "clear"]).default("all"),
@@ -105,7 +108,6 @@ export interface PartySummary {
   name: string;
   code: string;
   type: string;
-  branch: { id: string; name: string; code: string };
   mobile?: string;
   email?: string;
   city?: string;

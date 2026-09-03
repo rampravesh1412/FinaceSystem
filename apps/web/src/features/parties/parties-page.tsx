@@ -202,7 +202,6 @@ export function PartiesPage() {
                   <TableHead>Party</TableHead>
                   <TableHead className="hidden lg:table-cell">Type</TableHead>
                   <TableHead className="hidden md:table-cell">Contact</TableHead>
-                  <TableHead className="hidden sm:table-cell">Branch</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden text-right xl:table-cell">Credit left</TableHead>
@@ -241,10 +240,6 @@ export function PartiesPage() {
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
-                    </TableCell>
-
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline" className="font-mono">{party.branch.code}</Badge>
                     </TableCell>
 
                     <TableCell className="text-right">

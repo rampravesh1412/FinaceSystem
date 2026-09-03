@@ -193,10 +193,10 @@ export async function createExpense(
     const total = input.amount + (input.taxAmount ?? 0);
 
     const account = input.accountId
-      ? await accounts.resolveAccount(input.accountId, input.branchId, session)
+      ? await accounts.resolveAccount(input.accountId, session)
       : null;
     const party = input.partyId
-      ? await accounts.resolveParty(input.partyId, input.branchId, session)
+      ? await accounts.resolveParty(input.partyId, session)
       : null;
 
     // Schema-level validation already requires one of the two, but the service must not
@@ -273,9 +273,9 @@ export async function createIncome(
       throw new BadRequestError(`The income head "${head.name}" is not active`, "headId");
     }
 
-    const account = await accounts.resolveAccount(input.accountId, input.branchId, session);
+    const account = await accounts.resolveAccount(input.accountId, session);
     const party = input.partyId
-      ? await accounts.resolveParty(input.partyId, input.branchId, session)
+      ? await accounts.resolveParty(input.partyId, session)
       : null;
 
     const lines: ledger.PostingLine[] = [

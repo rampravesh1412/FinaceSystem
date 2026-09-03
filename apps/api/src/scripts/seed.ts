@@ -51,25 +51,38 @@ const BANKS = [
   { name: "Punjab National Bank", shortName: "PNB", ifscPrefix: "PUNB" },
 ];
 
-/** Bank accounts, spread across branches so branch isolation is visible in the UI. */
+/**
+ * Bank accounts.
+ *
+ * Organisation-wide: every one of these is reachable from every branch. The names still
+ * say which office opened them, because that is how the business refers to them.
+ */
 const BANK_ACCOUNTS = [
-  { bank: "HDFC Bank", branch: "105", name: "AMIRI Enterprises — Current", number: "50100234567890", ifsc: "HDFC0001234", opening: "12,50,000.00", type: "CURRENT" },
-  { bank: "ICICI Bank", branch: "105", name: "AMIRI Enterprises — Settlement", number: "002105001234", ifsc: "ICIC0000021", opening: "4,75,000.00", type: "CURRENT" },
-  { bank: "State Bank of India", branch: "107", name: "AMIRI Gaya — Current", number: "38291746501", ifsc: "SBIN0007890", opening: "6,20,000.00", type: "CURRENT" },
-  { bank: "Axis Bank", branch: "101", name: "AMIRI Head Office — Current", number: "918020045612345", ifsc: "UTIB0000456", opening: "22,00,000.00", type: "CURRENT" },
+  { bank: "HDFC Bank", name: "AMIRI Enterprises — Current", number: "50100234567890", ifsc: "HDFC0001234", opening: "12,50,000.00", type: "CURRENT" },
+  { bank: "ICICI Bank", name: "AMIRI Enterprises — Settlement", number: "002105001234", ifsc: "ICIC0000021", opening: "4,75,000.00", type: "CURRENT" },
+  { bank: "State Bank of India", name: "AMIRI Gaya — Current", number: "38291746501", ifsc: "SBIN0007890", opening: "6,20,000.00", type: "CURRENT" },
+  { bank: "Axis Bank", name: "AMIRI Head Office — Current", number: "918020045612345", ifsc: "UTIB0000456", opening: "22,00,000.00", type: "CURRENT" },
   // An overdraft account, so the balance check has something interesting to enforce.
-  { bank: "Punjab National Bank", branch: "102", name: "AMIRI Kankarbagh — OD", number: "0123456789012", ifsc: "PUNB0012300", opening: "-1,80,000.00", type: "OD", overdraft: "5,00,000.00" },
+  { bank: "Punjab National Bank", name: "AMIRI Kankarbagh — OD", number: "0123456789012", ifsc: "PUNB0012300", opening: "-1,80,000.00", type: "OD", overdraft: "5,00,000.00" },
+];
+
+/**
+ * Cash drawers — named, not per branch, since a drawer is counted on its own.
+ */
+const CASH_DRAWERS = [
+  { name: "Main Counter", code: "CASH-MAIN" },
+  { name: "Back Office", code: "CASH-BACK" },
 ];
 
 /** Parties, including the two named in the 19/08/2026 DayBook. */
 const PARTIES = [
-  { name: "RAMANUJ PUNB", branch: "105", type: "DISTRIBUTOR", mobile: "9876543210", opening: "9,50,000.00", creditLimit: "12,00,000.00", creditDays: 30 },
-  { name: "EDDIGO DISTRIBUTOR", branch: "105", type: "DISTRIBUTOR", mobile: "9876501234", opening: "-2,40,000.00", creditLimit: "5,00,000.00", creditDays: 15 },
-  { name: "Sharma Traders", branch: "105", type: "CUSTOMER", mobile: "9812345670", opening: "1,25,101.00", creditLimit: "2,00,000.00", creditDays: 30 },
-  { name: "Verma Electronics", branch: "105", type: "CUSTOMER", mobile: "9823456701", opening: "48,500.00", creditLimit: "1,00,000.00", creditDays: 15 },
-  { name: "Bihar Panel Services", branch: "105", type: "VENDOR", mobile: "9834567012", opening: "-72,000.00", creditLimit: "0", creditDays: 0 },
-  { name: "Gaya Wholesale", branch: "107", type: "CUSTOMER", mobile: "9845670123", opening: "3,10,000.00", creditLimit: "4,00,000.00", creditDays: 45 },
-  { name: "Ranchi Agency", branch: "111", type: "AGENT", mobile: "9856701234", opening: "0", creditLimit: "1,50,000.00", creditDays: 30 },
+  { name: "RAMANUJ PUNB", type: "DISTRIBUTOR", mobile: "9876543210", opening: "9,50,000.00", creditLimit: "12,00,000.00", creditDays: 30 },
+  { name: "EDDIGO DISTRIBUTOR", type: "DISTRIBUTOR", mobile: "9876501234", opening: "-2,40,000.00", creditLimit: "5,00,000.00", creditDays: 15 },
+  { name: "Sharma Traders", type: "CUSTOMER", mobile: "9812345670", opening: "1,25,101.00", creditLimit: "2,00,000.00", creditDays: 30 },
+  { name: "Verma Electronics", type: "CUSTOMER", mobile: "9823456701", opening: "48,500.00", creditLimit: "1,00,000.00", creditDays: 15 },
+  { name: "Bihar Panel Services", type: "VENDOR", mobile: "9834567012", opening: "-72,000.00", creditLimit: "0", creditDays: 0 },
+  { name: "Gaya Wholesale", type: "CUSTOMER", mobile: "9845670123", opening: "3,10,000.00", creditLimit: "4,00,000.00", creditDays: 45 },
+  { name: "Ranchi Agency", type: "AGENT", mobile: "9856701234", opening: "0", creditLimit: "1,50,000.00", creditDays: 30 },
 ];
 
 /**
@@ -182,15 +195,13 @@ async function seedFinancials(branches: Map<string, string>, ctx: AuditContext) 
   let accountsCreated = 0;
   for (const spec of BANK_ACCOUNTS) {
     const bankId = bankIds.get(spec.bank);
-    const branchId = branches.get(spec.branch);
-    if (!bankId || !branchId) continue;
+    if (!bankId) continue;
 
     if (await BankAccount.exists({ bankId, accountNumber: spec.number })) continue;
 
     await banking.createBankAccount(
       {
         bankId,
-        branchId,
         accountName: spec.name,
         accountNumber: spec.number,
         ifsc: spec.ifsc,
@@ -208,14 +219,14 @@ async function seedFinancials(branches: Map<string, string>, ctx: AuditContext) 
   }
   logger.info({ created: accountsCreated }, "bank accounts ready");
 
+  // Drawers are organisation-wide, so they are seeded by name rather than one per branch.
   let drawersCreated = 0;
-  for (const [code, branchId] of branches) {
-    if (await CashAccount.exists({ branchId })) continue;
+  for (const drawer of CASH_DRAWERS) {
+    if (await CashAccount.exists({ name: drawer.name })) continue;
     await banking.createCashAccount(
       {
-        branchId,
-        name: "Main Counter",
-        code: `CASH-${code}`,
+        name: drawer.name,
+        code: drawer.code,
         openingBalance: parseAmount("45,000.00"),
         openingDate: new Date(Date.UTC(2026, 3, 1)),
         status: "ACTIVE",
@@ -228,14 +239,11 @@ async function seedFinancials(branches: Map<string, string>, ctx: AuditContext) 
 
   let partiesCreated = 0;
   for (const spec of PARTIES) {
-    const branchId = branches.get(spec.branch);
-    if (!branchId) continue;
-    if (await Party.exists({ branchId, name: spec.name })) continue;
+    if (await Party.exists({ name: spec.name })) continue;
 
     await parties.createParty(
       {
         name: spec.name,
-        branchId,
         type: spec.type as never,
         mobile: spec.mobile,
         openingBalance: parseAmount(spec.opening),

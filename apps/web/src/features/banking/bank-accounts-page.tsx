@@ -138,7 +138,6 @@ function BankAccountsTable() {
                 <TableHead>Account</TableHead>
                 <TableHead className="hidden md:table-cell">Number</TableHead>
                 <TableHead className="hidden lg:table-cell">IFSC</TableHead>
-                <TableHead className="hidden sm:table-cell">Branch</TableHead>
                 <TableHead className="hidden xl:table-cell">Type</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
                 <TableHead className="hidden text-right lg:table-cell">Available</TableHead>
@@ -182,10 +181,6 @@ function BankAccountsTable() {
 
                   <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
                     {account.ifsc}
-                  </TableCell>
-
-                  <TableCell className="hidden sm:table-cell">
-                    <Badge variant="outline" className="font-mono">{account.branch.code}</Badge>
                   </TableCell>
 
                   <TableCell className="hidden xl:table-cell">
@@ -262,7 +257,6 @@ function CashAccountsTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Drawer</TableHead>
-              <TableHead className="hidden sm:table-cell">Branch</TableHead>
               <TableHead className="text-right">Balance</TableHead>
               <TableHead className="w-12 screen-only"><span className="sr-only">Actions</span></TableHead>
             </TableRow>
@@ -282,9 +276,6 @@ function CashAccountsTable() {
                       ) : null}
                     </div>
                   </div>
-                </TableCell>
-                <TableCell className="hidden sm:table-cell">
-                  <Badge variant="outline" className="font-mono">{account.branch.code}</Badge>
                 </TableCell>
                 <TableCell className="text-right">
                   <Money value={account.balance} showIcon={false} />

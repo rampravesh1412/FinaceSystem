@@ -55,7 +55,6 @@ export interface KhataStatement {
     code: string;
     type: string;
     mobile?: string;
-    branch: { id: string; name: string; code: string };
   };
 
   /** Balance immediately before the window. Without it a filtered statement starts at zero. */
@@ -130,7 +129,6 @@ export type CreateAdjustmentInput = z.infer<typeof createAdjustmentSchema>;
 /* -------------------------------------------------------------------------- */
 
 export const creditQuerySchema = listQuery.extend({
-  branchId: optionalObjectId,
   /** Only parties past their limit. */
   overLimit: booleanFlag.optional(),
   /** Only parties with something overdue. */
@@ -145,7 +143,6 @@ export interface AgingRow {
   code: string;
   type: string;
   mobile?: string;
-  branch: { id: string; code: string };
 
   balance: number;
   creditLimit: number;

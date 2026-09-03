@@ -52,7 +52,7 @@ export interface BankSummary {
   ifscPrefix?: string;
   status: string;
   accountCount: number;
-  /** Sum across every account of this bank the caller is allowed to see. */
+  /** Sum across every active account held with this bank. */
   totalBalance: number;
   createdAt: string;
 }
@@ -61,9 +61,15 @@ export interface BankSummary {
 /* Bank account                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * A real bank account.
+ *
+ * ORGANISATION-WIDE. The account belongs to the business, not to an office: one HDFC
+ * current account is paid into from every counter, and its balance is one number. The
+ * branch that transacted is recorded on each posting, so branch books still tie.
+ */
 export const createBankAccountSchema = z.object({
   bankId: objectId,
-  branchId: objectId,
   accountName: z.string().trim().min(2, "Account name is required").max(120),
   accountNumber,
   ifsc,
@@ -95,7 +101,7 @@ export const createBankAccountSchema = z.object({
 export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 
 /**
- * Account number, IFSC, bank and branch are all immutable after creation.
+ * Account number, IFSC and bank are all immutable after creation.
  *
  * They identify the real-world account that historical entries were posted against.
  * Editing one would silently re-point months of reconciled transactions at a different
@@ -105,7 +111,6 @@ export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 export const updateBankAccountSchema = createBankAccountSchema
   .omit({
     bankId: true,
-    branchId: true,
     accountNumber: true,
     ifsc: true,
     openingBalance: true,
@@ -116,7 +121,6 @@ export type UpdateBankAccountInput = z.infer<typeof updateBankAccountSchema>;
 
 export const bankAccountQuerySchema = listQuery.extend({
   bankId: objectId.optional(),
-  branchId: objectId.optional(),
   accountType: z.nativeEnum(BANK_ACCOUNT_TYPE).optional(),
   status: z.nativeEnum(RECORD_STATUS).optional(),
 });
@@ -125,7 +129,6 @@ export type BankAccountQuery = z.infer<typeof bankAccountQuerySchema>;
 export interface BankAccountSummary {
   id: string;
   bank: { id: string; name: string; shortName?: string };
-  branch: { id: string; name: string; code: string };
   accountName: string;
   /** Masked as `XXXX XXXX 1234` unless the caller holds `finance.bank.viewFull`. */
   accountNumber: string;
@@ -149,11 +152,13 @@ export interface BankAccountSummary {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The physical cash drawer. One per branch is typical, but several are supported for a
- * business running separate counters that tally independently.
+ * A cash drawer.
+ *
+ * ORGANISATION-WIDE, like every other account here: a drawer is named and counted on its
+ * own, and any counter may settle through it. Several are supported for a business
+ * running separate counters that tally independently.
  */
 export const createCashAccountSchema = z.object({
-  branchId: objectId,
   name: z.string().trim().min(2, "Name is required").max(120),
   code: z
     .string()
@@ -174,7 +179,7 @@ export const createCashAccountSchema = z.object({
 export type CreateCashAccountInput = z.infer<typeof createCashAccountSchema>;
 
 export const updateCashAccountSchema = createCashAccountSchema
-  .omit({ branchId: true, openingBalance: true, openingDate: true })
+  .omit({ openingBalance: true, openingDate: true })
   .partial();
 export type UpdateCashAccountInput = z.infer<typeof updateCashAccountSchema>;
 
@@ -182,10 +187,9 @@ export interface CashAccountSummary {
   id: string;
   name: string;
   code?: string;
-  branch: { id: string; name: string; code: string };
   balance: number;
   /**
-   * The branch's default drawer — the first one opened becomes it automatically.
+   * The default drawer — the first one opened becomes it automatically.
    *
    * Carried on the summary because it decides where a cash receipt lands when the operator
    * does not pick a drawer, and which one the Daily Cash Tally opens on. A list that hid it

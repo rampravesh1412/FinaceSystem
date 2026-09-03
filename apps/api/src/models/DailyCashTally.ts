@@ -1,9 +1,12 @@
 import { Schema, model, type Document, type Types } from "mongoose";
 import { TALLY_STATUS, type TallyStatus } from "@amiri/shared";
-import { actorField, baseSchemaOptions, branchField, businessDateField, moneyField } from "./fields.js";
+import { actorField, baseSchemaOptions, businessDateField, moneyField } from "./fields.js";
 
 /**
  * A counted cash drawer (§20).
+ *
+ * Keyed by drawer and date, with no branch of its own: the drawer is organisation-wide,
+ * so "which branch counted it" is not a property of the count.
  *
  * Only `actualClosing` and `notes` come from a human. Everything else is a SNAPSHOT of
  * what the ledger said at the moment of counting, frozen deliberately: if a back-dated
@@ -15,7 +18,6 @@ import { actorField, baseSchemaOptions, branchField, businessDateField, moneyFie
  * not something this model corrects.
  */
 export interface DailyCashTallyDoc extends Document<Types.ObjectId> {
-  branchId: Types.ObjectId;
   cashAccountId: Types.ObjectId;
   date: Date;
 
@@ -39,7 +41,6 @@ export interface DailyCashTallyDoc extends Document<Types.ObjectId> {
 
 const dailyCashTallySchema = new Schema<DailyCashTallyDoc>(
   {
-    branchId: branchField(true),
     cashAccountId: { type: Schema.Types.ObjectId, ref: "CashAccount", required: true, index: true },
     date: businessDateField(true),
 
@@ -62,7 +63,6 @@ const dailyCashTallySchema = new Schema<DailyCashTallyDoc>(
 
 /** One tally per drawer per day — recounting updates the same record rather than adding a second. */
 dailyCashTallySchema.index({ cashAccountId: 1, date: 1 }, { unique: true });
-dailyCashTallySchema.index({ branchId: 1, date: -1 });
 dailyCashTallySchema.index({ status: 1, date: -1 });
 
 export const DailyCashTally = model<DailyCashTallyDoc>("DailyCashTally", dailyCashTallySchema);
