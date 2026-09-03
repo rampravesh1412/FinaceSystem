@@ -195,15 +195,30 @@ function ChargeRuleDialog({ onClose }: { onClose: () => void }) {
               ]}
             />
 
+            {/**
+              * The single most consequential field on this form, and the one most easily
+              * got wrong: on a ₹1,00,000 payment out at 1.5% the two options are ₹3,000
+              * apart. The labels therefore quote the money rather than describing the
+              * accounting — "our expense" and "our income" are true but do not tell an
+              * operator which figure leaves the bank.
+              */}
             <SelectField
               form={form}
               name="bearer"
               label="Who bears it?"
               required
-              hint="This decides which side of the ledger the charge lands on."
+              hint="On a payment OUT this decides whether the charge is added to what leaves the bank, or taken out of what the party receives."
               options={[
-                { value: "SELF", label: "We do", detail: "Our expense; the source pays gross + charge" },
-                { value: "PARTY", label: "The party does", detail: "Our income; they are credited gross − charge" },
+                {
+                  value: "PARTY",
+                  label: "The party — deduct it from their payment",
+                  detail: "Our income. Pay out ₹1,00,000 at 1.5% → ₹98,500 leaves the bank, they are settled ₹1,00,000",
+                },
+                {
+                  value: "SELF",
+                  label: "We do — pay it on top",
+                  detail: "Our expense. Pay out ₹1,00,000 at 1.5% → ₹1,01,500 leaves the bank, they receive ₹1,00,000",
+                },
               ]}
             />
           </div>

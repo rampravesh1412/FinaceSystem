@@ -316,6 +316,74 @@ describe("charge engine (§18)", () => {
     expect(await balanceOfAccount(iciciId)).toBe(destinationBefore + 1_00_000_00);
   });
 
+  /**
+   * The preview must promise exactly what the posting delivers.
+   *
+   * REGRESSION, and an expensive one. `/charges/preview` used to return `gross − charge`
+   * unconditionally, so a payment out with a fee WE bear previewed as ₹98,500 and then
+   * took ₹1,01,500 out of the bank. The operator checked the figure, approved it, and got
+   * a different one — which is the worst failure available to a number whose only job is
+   * to be checked before committing.
+   */
+  it("previews the figure the posting will actually carry", async () => {
+    const selfBorne = await ChargeRule.create({
+      name: "Payout fee on top", code: "PREVSELF", type: "PERCENTAGE", rateBps: 150,
+      minCharge: 0, maxCharge: 0, bearer: "SELF", appliesTo: [], partyTypes: [], status: "ACTIVE",
+    });
+    const partyBorne = await ChargeRule.create({
+      name: "Payout commission", code: "PREVPARTY", type: "PERCENTAGE", rateBps: 150,
+      minCharge: 0, maxCharge: 0, bearer: "PARTY", appliesTo: [], partyTypes: [], status: "ACTIVE",
+    });
+
+    const preview = async (ruleId: string, type: string) => {
+      const res = await client.post<{ data: { net: number; charge: number; effect: string } }>(
+        "/charges/preview",
+        { chargeRuleId: ruleId, amount: "1,00,000", transactionType: type },
+        { token: superToken },
+      );
+      expect(res.status).toBe(200);
+      return res.body.data;
+    };
+
+    const post = async (ruleId: string) => {
+      const res = await client.post<{ data: { id: string } }>(
+        "/payment-out",
+        {
+          date: "2026-08-19", partyId: eddigoId, accountId: hdfcId,
+          amount: "1,00,000", paymentMode: "NEFT", chargeRuleId: ruleId,
+        },
+        { token: superToken },
+      );
+      expect(res.status).toBe(201);
+      return (await Transaction.findById(res.body.data.id).lean())!;
+    };
+
+    // A fee we bear is paid ON TOP: ₹1,01,500 leaves.
+    const selfPreview = await preview(String(selfBorne._id), "PAYMENT_OUT");
+    expect(selfPreview.effect).toBe("ADDED");
+    expect(selfPreview.net).toBe(1_01_500_00);
+
+    const selfBefore = await balanceOfAccount(hdfcId);
+    const selfPosted = await post(String(selfBorne._id));
+    // The promise and the posting agree, and both agree with the bank.
+    expect(selfPosted.netAmount).toBe(selfPreview.net);
+    expect(await balanceOfAccount(hdfcId)).toBe(selfBefore - selfPreview.net);
+
+    // A commission the party bears is DEDUCTED: ₹98,500 leaves.
+    const partyPreview = await preview(String(partyBorne._id), "PAYMENT_OUT");
+    expect(partyPreview.effect).toBe("DEDUCTED");
+    expect(partyPreview.net).toBe(98_500_00);
+
+    const partyBefore = await balanceOfAccount(hdfcId);
+    const partyPosted = await post(String(partyBorne._id));
+    expect(partyPosted.netAmount).toBe(partyPreview.net);
+    expect(await balanceOfAccount(hdfcId)).toBe(partyBefore - partyPreview.net);
+
+    // The two settings are ₹3,000 apart on the same gross — which is why the preview
+    // cannot be allowed to guess.
+    expect(selfPreview.net - partyPreview.net).toBe(3_000_00);
+  });
+
   it("refuses to apply a rule to a transaction type it is not meant for", async () => {
     const rule = await ChargeRule.findOne({ code: "DIST175" }).lean();
 

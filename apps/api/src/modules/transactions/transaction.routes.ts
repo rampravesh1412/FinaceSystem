@@ -23,9 +23,11 @@ import {
   type CreatePaymentOutInput,
   type TransactionQuery,
   updateAccountHeadSchema,
+  updateChargeRuleSchema,
   updatePaymentSchema,
   type PaymentEditResult,
   type UpdateAccountHeadInput,
+  type UpdateChargeRuleInput,
   type UpdatePaymentInput,
 } from "@amiri/shared";
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
@@ -35,6 +37,8 @@ import {
   requirePermission,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
+import { NotFoundError } from "../../lib/errors.js";
+import * as audit from "../../services/audit.service.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import { ChargeRule, ExpenseCategory, IncomeHead } from "../../models/index.js";
 import { computeCharge, previewCharge } from "../../services/charges.service.js";
@@ -421,6 +425,68 @@ chargeRouter.post(
 );
 
 /**
+ * Change a charge rule, including who bears it and whether it is still active.
+ *
+ * Affects FUTURE postings only — every posted transaction froze its own charge amount and
+ * basis string at the time, so correcting a rule cannot rewrite what was already charged.
+ * The audit row carries the before and after, because "who changed the commission rate,
+ * and when" is a question this screen has to be able to answer.
+ */
+chargeRouter.patch(
+  "/:id",
+  requirePermission("finance.charges.manage"),
+  mutationLimiter,
+  validate({ params: idParam, body: updateChargeRuleSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const input = req.valid.body as UpdateChargeRuleInput;
+
+    const rule = await ChargeRule.findById(id);
+    if (!rule) throw new NotFoundError("Charge rule", id);
+
+    const before = {
+      name: rule.name,
+      type: rule.type,
+      rateBps: rule.rateBps,
+      fixedAmount: rule.fixedAmount,
+      minCharge: rule.minCharge,
+      maxCharge: rule.maxCharge,
+      bearer: rule.bearer,
+      appliesTo: [...rule.appliesTo],
+      status: rule.status,
+    };
+
+    Object.assign(rule, input, { updatedBy: req.auth!.userId });
+    await rule.save();
+
+    await audit.recordSafe(auditContextFrom(req), {
+      action: "UPDATE",
+      entity: "ChargeRule",
+      entityId: id,
+      entityLabel: `${rule.code} — ${rule.name}`,
+      oldValue: before,
+      newValue: {
+        name: rule.name,
+        type: rule.type,
+        rateBps: rule.rateBps,
+        fixedAmount: rule.fixedAmount,
+        minCharge: rule.minCharge,
+        maxCharge: rule.maxCharge,
+        bearer: rule.bearer,
+        appliesTo: [...rule.appliesTo],
+        status: rule.status,
+      },
+    });
+
+    return ok(
+      res,
+      toChargeRuleSummary(rule.toObject() as never),
+      rule.status === "ACTIVE" ? `${rule.name} updated` : `${rule.name} retired`,
+    );
+  }),
+);
+
+/**
  * Preview a charge without posting anything.
  *
  * Powers the live "Gross / Charge / Net" breakdown in the payment forms, so an operator
@@ -431,8 +497,12 @@ chargeRouter.post(
   requirePermission("finance.charges.view"),
   validate({ body: previewChargeSchema }),
   asyncHandler(async (req, res) => {
-    const { chargeRuleId, amount } = req.valid.body as { chargeRuleId: string; amount: number };
-    return ok(res, await previewCharge(chargeRuleId, amount));
+    const { chargeRuleId, amount, transactionType } = req.valid.body as {
+      chargeRuleId: string;
+      amount: number;
+      transactionType?: string;
+    };
+    return ok(res, await previewCharge(chargeRuleId, amount, transactionType));
   }),
 );
 

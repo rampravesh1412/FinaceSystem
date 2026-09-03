@@ -1,6 +1,9 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Calculator, Percent } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Archive, ArrowLeftRight, Calculator, MoreHorizontal, Pencil, Percent, RotateCcw,
+} from "lucide-react";
+import { toast } from "sonner";
 import {
   formatINR, parseAmount,
   type ChargeBreakdown, type ChargeRuleSummary, type ChargeTier,
@@ -18,6 +21,14 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * Charges & commission (§18).
@@ -80,6 +91,7 @@ export function ChargesPage() {
                 <TableHead className="hidden xl:table-cell">Applies to</TableHead>
                 <TableHead className="text-right">On ₹1,00,000</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="screen-only w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -112,8 +124,8 @@ export function ChargesPage() {
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
                         {rule.bearer === "SELF"
-                          ? "We absorb it — the charge is posted as our expense and the source pays gross plus the charge."
-                          : "The party absorbs it — the charge is posted as our income and the party is credited gross minus the charge."}
+                          ? "We absorb it. On a payment out the charge is ADDED to what leaves the bank — ₹1,00,000 at 1.5% sends ₹1,01,500 — and the party is settled in full. Posted as our expense."
+                          : "The party absorbs it. On a payment out the charge is DEDUCTED from their payment — ₹1,00,000 at 1.5% sends ₹98,500 — and their full ₹1,00,000 is still discharged. Posted as our income."}
                       </TooltipContent>
                     </Tooltip>
                   </TableCell>
@@ -137,6 +149,11 @@ export function ChargesPage() {
                     <Badge variant={rule.status === "ACTIVE" ? "success" : "outline"}>
                       {rule.status === "ACTIVE" ? "Active" : "Inactive"}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="screen-only text-right">
+                    <Can permission="finance.charges.manage">
+                      <RuleActions rule={rule} />
+                    </Can>
                   </TableCell>
                 </TableRow>
               ))}
@@ -317,5 +334,195 @@ function RateCell({ rule }: { rule: ChargeRuleSummary }) {
         </ul>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/* ── Editing a rule ──────────────────────────────────────────────────────── */
+
+/**
+ * Change the bearer, the rate, or retire the rule.
+ *
+ * The bearer is the reason this exists. It decides whether a charge is deducted from what
+ * the party receives or paid on top of it, which on a ₹1,00,000 payout at 1.5% is a
+ * ₹3,000 difference — and until now a rule set the wrong way could not be corrected at
+ * all, only abandoned and replaced.
+ *
+ * Editing affects future postings only. Every transaction already posted froze its own
+ * charge amount and its basis text, so last month's commission cannot be rewritten by
+ * changing this month's rate. The dialog says so, because it is the first thing anybody
+ * sensibly worries about before touching a rate.
+ */
+function RuleActions({ rule }: { rule: ChargeRuleSummary }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = React.useState(false);
+
+  const mutation = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api.patch<ChargeRuleSummary>(`/charges/${rule.id}`, body),
+    onSuccess: async (updated) => {
+      toast.success(
+        updated.status === "ACTIVE" ? `${updated.name} updated` : `${updated.name} retired`,
+        { description: `On ₹1,00,000 it now charges ${formatINR(updated.sampleOn100k)}.` },
+      );
+      await queryClient.invalidateQueries({ queryKey: ["charge-rules"] });
+      await queryClient.invalidateQueries({ queryKey: ["charge-preview"] });
+      setEditing(false);
+    },
+    onError: (error) =>
+      toast.error(error instanceof ApiError ? error.message : "Could not update the rule."),
+  });
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label={`Actions for ${rule.name}`}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setEditing(true)}>
+            <Pencil />
+            Edit rule
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() =>
+              mutation.mutate({
+                bearer: rule.bearer === "SELF" ? "PARTY" : "SELF",
+              })
+            }
+          >
+            <ArrowLeftRight />
+            {rule.bearer === "SELF" ? "Deduct from the party instead" : "We bear it instead"}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            destructive={rule.status === "ACTIVE"}
+            onSelect={() =>
+              mutation.mutate({ status: rule.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" })
+            }
+          >
+            {rule.status === "ACTIVE" ? <Archive /> : <RotateCcw />}
+            {rule.status === "ACTIVE" ? "Retire" : "Reactivate"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {editing ? (
+        <EditRuleDialog
+          rule={rule}
+          saving={mutation.isPending}
+          onSave={(body) => mutation.mutate(body)}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function EditRuleDialog({
+  rule,
+  saving,
+  onSave,
+  onClose,
+}: {
+  rule: ChargeRuleSummary;
+  saving: boolean;
+  onSave: (body: Record<string, unknown>) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = React.useState(rule.name);
+  const [bearer, setBearer] = React.useState(rule.bearer);
+  const [rate, setRate] = React.useState(
+    rule.rateBps !== undefined ? String(rule.rateBps / 100) : "",
+  );
+
+  const bps = Math.round(Number(rate.replace(/[^\d.]/g, "")) * 100);
+  const validRate = rule.type !== "PERCENTAGE" || (Number.isFinite(bps) && bps > 0);
+  // The worked example, on the amount the operator is actually arguing about.
+  const on100k = Number.isFinite(bps) ? Math.round((100_000_00 * bps) / 10_000) : 0;
+
+  return (
+    <Dialog open onOpenChange={(v) => (v ? undefined : onClose())}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit {rule.code}</DialogTitle>
+          <DialogDescription>
+            Applies to future postings only. Everything already posted keeps the charge and
+            the basis text it was given at the time.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="rule-name">Name</Label>
+            <Input id="rule-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+
+          {rule.type === "PERCENTAGE" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="rule-rate">Rate (%)</Label>
+              <Input
+                id="rule-rate"
+                inputMode="decimal"
+                className="tabular"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="rule-bearer">Who bears it?</Label>
+            <Select value={bearer} onValueChange={setBearer}>
+              <SelectTrigger id="rule-bearer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PARTY">The party — deduct it from their payment</SelectItem>
+                <SelectItem value="SELF">We do — pay it on top</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* The whole point of the screen, in money, on a payment out. */}
+            <p className="rounded-md border border-border bg-surface-muted/40 p-2.5 text-2xs">
+              On a ₹1,00,000 payment out at a {formatINR(on100k)} charge:{" "}
+              {bearer === "PARTY" ? (
+                <span className="font-medium text-foreground">
+                  {formatINR(100_000_00 - on100k)} leaves the bank
+                </span>
+              ) : (
+                <span className="font-medium text-warning-foreground">
+                  {formatINR(100_000_00 + on100k)} leaves the bank
+                </span>
+              )}
+              {bearer === "PARTY"
+                ? " — the charge comes out of what they receive and is booked as our income."
+                : " — the charge is paid on top and is booked as our expense."}{" "}
+              Either way the party&rsquo;s ₹1,00,000 is fully discharged.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="accent"
+            loading={saving}
+            disabled={name.trim().length < 2 || !validRate}
+            onClick={() =>
+              onSave({
+                name: name.trim(),
+                bearer,
+                ...(rule.type === "PERCENTAGE" ? { rateBps: bps } : {}),
+              })
+            }
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

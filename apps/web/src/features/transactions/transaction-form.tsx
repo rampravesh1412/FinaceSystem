@@ -146,7 +146,7 @@ export function TransactionFormDialog({
 
   const amount = String(form.watch("amount") ?? "");
   const chargeRuleId = form.watch("chargeRuleId") as string | undefined;
-  const preview = useChargePreview(chargeRuleId, amount);
+  const preview = useChargePreview(chargeRuleId, amount, mode);
 
   const applicableRules = (chargeRules.data ?? []).filter(
     (r) => r.appliesTo.length === 0 || r.appliesTo.includes(mode),
@@ -435,15 +435,49 @@ export function TransactionFormDialog({
             </Field>
           ) : null}
 
-          {/* §18: gross, charge and net — all three, before anything is committed. */}
+          {/**
+            * §18: gross, charge and net — all three, before anything is committed.
+            *
+            * `net` is now the figure that WILL post, not `gross − charge` assumed. The
+            * sentence underneath spells out which account moves by how much, because the
+            * three numbers alone do not distinguish "₹1,500 comes out of their payment"
+            * from "₹1,500 comes out of ours on top" — and those are ₹3,000 apart.
+            */}
           {preview.data ? (
-            <div className="grid grid-cols-3 gap-3 rounded-lg border border-border bg-surface-muted/50 p-3">
-              <Figure label="Gross" value={preview.data.gross} />
-              <Figure label="Charge" value={preview.data.charge} />
-              <Figure label="Net" value={preview.data.net} emphasis />
-              <p className="col-span-3 text-2xs text-muted-foreground">
+            <div className="space-y-2 rounded-lg border border-border bg-surface-muted/50 p-3">
+              <div className="grid grid-cols-3 gap-3">
+                <Figure label="Gross" value={preview.data.gross} />
+                <Figure label="Charge" value={preview.data.charge} />
+                <Figure
+                  label={preview.data.effect === "ADDED" ? "Total out" : "Net"}
+                  value={preview.data.net}
+                  emphasis
+                />
+              </div>
+              <p className="text-2xs text-muted-foreground">
                 {preview.data.basis}
                 {preview.data.bearer === "PARTY" ? " — borne by the party" : " — borne by us"}
+              </p>
+              <p className="border-t border-border pt-2 text-2xs">
+                {preview.data.effect === "ADDED" ? (
+                  <>
+                    <span className="font-medium text-warning-foreground">
+                      {formatINR(preview.data.net)} leaves the account
+                    </span>{" "}
+                    — the {formatINR(preview.data.charge)} charge is paid on top of the{" "}
+                    {formatINR(preview.data.gross)}, and the party is settled in full. To
+                    deduct it from their payment instead, set the rule&rsquo;s bearer to the
+                    party.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium text-foreground">
+                      {formatINR(preview.data.net)} settles
+                    </span>{" "}
+                    — the {formatINR(preview.data.charge)} charge comes out of the{" "}
+                    {formatINR(preview.data.gross)}.
+                  </>
+                )}
               </p>
             </div>
           ) : null}

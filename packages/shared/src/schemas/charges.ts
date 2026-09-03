@@ -169,6 +169,26 @@ export const createChargeRuleSchema = z
   });
 export type CreateChargeRuleInput = z.infer<typeof createChargeRuleSchema>;
 
+/**
+ * Change a charge rule — including RETIRING it, and including who bears it.
+ *
+ * `code` is omitted: it is the stable handle that posted transactions and exports quote,
+ * so renaming it would orphan them. Everything else is editable, because the alternative
+ * turned out to be worse than any risk of editing: `finance.charges.manage` was documented
+ * as "create and edit charge rules" but only creation was ever built, so a rule set to the
+ * wrong bearer could not be corrected at all — the operator had to abandon it and make
+ * another, and the wrong one stayed in every picker.
+ *
+ * Editing a rule affects FUTURE postings only. Every transaction already posted froze its
+ * own `chargeAmount` and its `chargeBasis` string at the time, so last month's commission
+ * cannot be rewritten by changing this month's rate. That is what makes editing safe.
+ */
+export const updateChargeRuleSchema = createChargeRuleSchema
+  .innerType()
+  .omit({ code: true })
+  .partial();
+export type UpdateChargeRuleInput = z.infer<typeof updateChargeRuleSchema>;
+
 export const chargeRuleQuerySchema = listQuery.extend({
   type: z.nativeEnum(CHARGE_TYPE).optional(),
   status: z.nativeEnum(RECORD_STATUS).optional(),
@@ -195,10 +215,22 @@ export interface ChargeRuleSummary {
   sampleOn100k: number;
 }
 
-/** Preview a charge before committing to it — powers the live figure in the form. */
+/**
+ * Preview a charge before committing to it — powers the live figure in the form.
+ *
+ * `transactionType` is what makes the preview HONEST, and it was missing.
+ *
+ * Whether a charge is deducted from the amount or paid on top of it depends on the bearer
+ * AND the direction of the money (see `chargeEffect`). Without the type, the preview had
+ * to guess, and it guessed `gross − charge` every time — so a payment out with a fee we
+ * absorb showed "Net ₹98,500" on the form and then posted ₹1,01,500 out of the bank. The
+ * operator was shown one number and given another, which is the worst possible failure for
+ * a figure whose entire job is to be checked before committing.
+ */
 export const previewChargeSchema = z.object({
   chargeRuleId: objectId,
   amount: money,
+  transactionType: z.nativeEnum(TRANSACTION_TYPE).optional(),
 });
 export type PreviewChargeInput = z.infer<typeof previewChargeSchema>;
 
@@ -206,13 +238,15 @@ export interface ChargeBreakdown {
   gross: number;
   charge: number;
   /**
-   * What settles when the charge is DEDUCTED — the counterparty's side of a party-borne
-   * charge. The calculator has no transaction type, so it cannot say which way a
-   * self-borne charge would push the settlement; `chargeEffect` decides that at posting
-   * time, and `effect` below reports what this rule's bearer implies.
+   * WHAT WILL ACTUALLY SETTLE — the same figure the posting will carry, computed by
+   * `settlementNet`. Equal to `gross − charge` or `gross + charge` depending on `effect`.
    */
   net: number;
-  /** DEDUCTED for a party-borne charge; for a self-borne one it depends on the direction. */
+  /**
+   * Which way the charge pushed the settlement. `ADDED` means more money moves than the
+   * gross, which is the case a preview must never round to "net is less".
+   */
+  effect: ChargeEffect;
   bearer: string;
   ruleName: string;
   /** Human explanation: "1.75% of ₹1,00,000", "Fixed ₹50", "Tier 2: 1.5%". */

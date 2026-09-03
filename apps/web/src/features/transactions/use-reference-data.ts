@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type {
   BankAccountSummary,
   CashAccountSummary,
+  ChargeBreakdown,
   ChargeRuleSummary,
   PartySummary,
 } from "@amiri/shared";
@@ -88,14 +89,23 @@ export function useChargeRules() {
  * by the same engine that will post it — a client-side approximation could disagree with
  * what actually gets charged.
  */
-export function useChargePreview(chargeRuleId: string | undefined, amount: string) {
+/**
+ * The live Gross / Charge / Net breakdown.
+ *
+ * `transactionType` is not optional in practice and must be passed: whether the charge is
+ * deducted from the amount or paid on top of it depends on the direction of the money, and
+ * without it the server can only guess. It used to guess `gross − charge`, so a payment
+ * out with a fee we absorb previewed as ₹98,500 and then posted ₹1,01,500.
+ */
+export function useChargePreview(
+  chargeRuleId: string | undefined,
+  amount: string,
+  transactionType?: string,
+) {
   return useQuery({
-    queryKey: ["charge-preview", chargeRuleId, amount],
+    queryKey: ["charge-preview", chargeRuleId, amount, transactionType],
     queryFn: () =>
-      api.post<{ gross: number; charge: number; net: number; basis: string; bearer: string }>(
-        "/charges/preview",
-        { chargeRuleId, amount },
-      ),
+      api.post<ChargeBreakdown>("/charges/preview", { chargeRuleId, amount, transactionType }),
     enabled: Boolean(chargeRuleId) && Boolean(amount) && Number(String(amount).replace(/[^\d.]/g, "")) > 0,
     // A charge preview is pure arithmetic on inputs the user just typed — retrying a
     // rejection would only produce the same rejection.

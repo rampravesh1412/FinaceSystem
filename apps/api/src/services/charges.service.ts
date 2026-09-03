@@ -1,5 +1,12 @@
 import type { ClientSession } from "mongoose";
-import { applyRate, bpsToPercent, formatINR, type ChargeBreakdown } from "@amiri/shared";
+import {
+  applyRate,
+  bpsToPercent,
+  chargeEffect,
+  formatINR,
+  settlementNet,
+  type ChargeBreakdown,
+} from "@amiri/shared";
 import { ChargeRule, type ChargeRuleDoc } from "../models/ChargeRule.js";
 import { BadRequestError, NotFoundError } from "../lib/errors.js";
 
@@ -175,21 +182,30 @@ export async function resolveCharge(
 }
 
 /** The breakdown shown live in a form before anything is committed. */
-export async function previewCharge(chargeRuleId: string, amount: number): Promise<ChargeBreakdown> {
+export async function previewCharge(
+  chargeRuleId: string,
+  amount: number,
+  transactionType?: string,
+): Promise<ChargeBreakdown> {
   const rule = await ChargeRule.findById(chargeRuleId);
   if (!rule) throw new NotFoundError("Charge rule", chargeRuleId);
 
   const computed = computeCharge(rule, amount);
+
+  /**
+   * The SAME function the posting uses, so the preview cannot disagree with what lands.
+   *
+   * With no transaction type — the standalone calculator on the Charges screen — the
+   * effect is reported for the bearer alone, which is exact for a party-borne charge and
+   * the conservative reading for a self-borne one.
+   */
+  const effect = chargeEffect(transactionType ?? "", computed.bearer);
+
   return {
     gross: amount,
     charge: computed.amount,
-    /**
-     * The calculator has no transaction type, so it reports the DEDUCTED reading: what
-     * the counterparty is left with when the charge comes out of the amount. Whether a
-     * self-borne charge is instead paid on top is decided per posting by `chargeEffect`,
-     * because it depends on which way the money is going.
-     */
-    net: amount - computed.amount,
+    net: settlementNet(amount, computed.amount, effect),
+    effect,
     bearer: computed.bearer,
     ruleName: computed.ruleName,
     basis: computed.basis,
