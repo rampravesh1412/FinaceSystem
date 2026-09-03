@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -68,12 +68,38 @@ function ChargeRuleDialog({ onClose }: { onClose: () => void }) {
       type: "PERCENTAGE",
       minCharge: 0, maxCharge: 0,
       bearer: "SELF",
+      deductFromAmount: true,
       appliesTo: [], partyTypes: [],
       status: "ACTIVE",
     } as never,
   });
 
   const type = form.watch("type");
+  const bearer = form.watch("bearer");
+  // `SelectField` yields strings, so the boolean arrives as "true"/"false".
+  const deductFromAmount = String(form.watch("deductFromAmount")) !== "false";
+
+  /**
+   * The heads this rule may post to.
+   *
+   * Expense heads for a cost, income heads for a commission — the server refuses the wrong
+   * side outright, so offering both here would only produce a rejection the operator
+   * cannot interpret.
+   */
+  const heads = useQuery({
+    queryKey: ["charge-heads", bearer],
+    queryFn: () =>
+      api.get<Array<{ id: string; name: string; code: string }>>(
+        bearer === "SELF" ? "/expenses/categories" : "/income/heads",
+      ),
+  });
+
+  /** The charge on ₹1,00,000, for the worked example below the arrangement. */
+  const sample = React.useMemo(() => {
+    if (type !== "PERCENTAGE") return 0;
+    const pct = Number(ratePercent.replace(/[^\d.]/g, ""));
+    return Number.isFinite(pct) ? Math.round((100_000_00 * pct) / 100) : 0;
+  }, [type, ratePercent]);
 
   const mutation = useMutation({
     mutationFn: (values: CreateChargeRuleInput) =>
@@ -202,26 +228,72 @@ function ChargeRuleDialog({ onClose }: { onClose: () => void }) {
               * accounting — "our expense" and "our income" are true but do not tell an
               * operator which figure leaves the bank.
               */}
+            {/**
+              * Two fields, because there are THREE arrangements and one binary cannot
+              * express them. Who the cost falls on decides expense vs income; whether it
+              * comes out of the amount decides who is short of it. On a ₹1,00,000 payout
+              * at 1.5% the extremes are ₹3,000 apart, so both are stated rather than
+              * inferred, and the panel below spells out the resulting entries.
+              */}
             <SelectField
               form={form}
               name="bearer"
-              label="Who bears it?"
+              label="Whose cost is it?"
               required
-              hint="On a payment OUT this decides whether the charge is added to what leaves the bank, or taken out of what the party receives."
               options={[
                 {
-                  value: "PARTY",
-                  label: "The party — deduct it from their payment",
-                  detail: "Our income. Pay out ₹1,00,000 at 1.5% → ₹98,500 leaves the bank, they are settled ₹1,00,000",
+                  value: "SELF",
+                  label: "Ours — an expense",
+                  detail: "A fee a bank or platform took from us",
                 },
                 {
-                  value: "SELF",
-                  label: "We do — pay it on top",
-                  detail: "Our expense. Pay out ₹1,00,000 at 1.5% → ₹1,01,500 leaves the bank, they receive ₹1,00,000",
+                  value: "PARTY",
+                  label: "Theirs — our income",
+                  detail: "A commission we keep out of what we pay or receive",
                 },
               ]}
             />
           </div>
+
+          {/* Only meaningful for a cost. A commission we keep is deducted by definition —
+              that is what keeping it means — so the choice would be a no-op. */}
+          {bearer === "SELF" ? (
+            <SelectField
+              form={form}
+              name="deductFromAmount"
+              label="Is it taken out of the amount?"
+              options={[
+                {
+                  value: "true",
+                  label: "Yes — it comes out of the amount",
+                  detail: "The full amount leaves the account and the party is credited less",
+                },
+                {
+                  value: "false",
+                  label: "No — it is charged on top",
+                  detail: "The party gets the full amount and the fee leaves separately",
+                },
+              ]}
+            />
+          ) : null}
+
+          <ArrangementPreview
+            bearer={bearer}
+            deductFromAmount={deductFromAmount}
+            charge={sample}
+          />
+
+          <SelectField
+            form={form}
+            name="chargeAccountId"
+            label={bearer === "SELF" ? "Post the charge to (expense head)" : "Post the charge to (income head)"}
+            hint="Leave empty to use the built-in Bank Charges / Commission Income account."
+            placeholder="Built-in account"
+            options={[
+              { value: "", label: "Built-in account" },
+              ...(heads.data ?? []).map((h) => ({ value: h.id, label: h.name, detail: h.code })),
+            ]}
+          />
 
           {type === "PERCENTAGE" ? (
             <div className="space-y-1.5">
@@ -362,3 +434,76 @@ function ChargeRuleDialog({ onClose }: { onClose: () => void }) {
 }
 
 export const CHARGE_TYPE_LABELS = TRANSACTION_TYPE_LABEL;
+
+
+/**
+ * The arrangement, in entries, on ₹1,00,000.
+ *
+ * Two dropdowns produce three quite different sets of ledger lines, and no combination of
+ * labels makes that legible. Showing the actual debits and credits is the only version an
+ * operator can check against what they meant — and it is the screen where the ₹3,000
+ * difference between the extremes becomes obvious before anything is posted.
+ */
+function ArrangementPreview({
+  bearer,
+  deductFromAmount,
+  charge,
+}: {
+  bearer: string;
+  deductFromAmount: boolean;
+  charge: number;
+}) {
+  if (charge <= 0) return null;
+
+  const GROSS = 100_000_00;
+  const income = bearer === "PARTY";
+  const absorbed = !income && deductFromAmount;
+
+  const account = income ? GROSS - charge : absorbed ? GROSS : GROSS + charge;
+  const party = absorbed ? GROSS - charge : GROSS;
+
+  const rows: Array<[string, string, number]> = [
+    ["Party", "DR", party],
+    ...(income
+      ? ([["Commission (income)", "CR", charge]] as Array<[string, string, number]>)
+      : ([["Charge head (expense)", "DR", charge]] as Array<[string, string, number]>)),
+    ["Bank / cash", "CR", account],
+  ];
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-surface-muted/40 p-3">
+      <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+        On a ₹1,00,000 payment out
+      </p>
+      <table className="w-full text-2xs tabular">
+        <tbody>
+          {rows.map(([label, side, value]) => (
+            <tr key={label}>
+              <td className="py-0.5">{label}</td>
+              <td className="py-0.5 pr-2 text-right text-muted-foreground">{side}</td>
+              <td className="py-0.5 text-right font-medium">{formatINR(value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="border-t border-border pt-2 text-2xs text-muted-foreground">
+        {income ? (
+          <>
+            {formatINR(account)} leaves the account, their full {formatINR(GROSS)} claim is
+            discharged, and the {formatINR(charge)} you keep is income.
+          </>
+        ) : absorbed ? (
+          <>
+            The whole {formatINR(GROSS)} leaves the account, only {formatINR(party)} reaches
+            them, and the {formatINR(charge)} is your expense.
+          </>
+        ) : (
+          <>
+            {formatINR(account)} leaves the account, they receive the full {formatINR(GROSS)},
+            and the {formatINR(charge)} is your expense.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}

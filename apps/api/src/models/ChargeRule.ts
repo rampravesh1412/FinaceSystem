@@ -33,6 +33,10 @@ export interface ChargeRuleDoc extends Document<Types.ObjectId> {
   minCharge: number;
   maxCharge: number;
   bearer: ChargeBearer;
+  /** Charge comes out of the amount (true) or is levied on top of it (false). */
+  deductFromAmount: boolean;
+  /** An ExpenseCategory or IncomeHead. Null falls back to the built-in system account. */
+  chargeAccountId?: Types.ObjectId | null;
   appliesTo: string[];
   partyTypes: string[];
   status: RecordStatus;
@@ -77,6 +81,19 @@ const chargeRuleSchema = new Schema<ChargeRuleDoc>(
 
     /** SELF = our expense, PARTY = our income. Decides which side of the ledger it hits. */
     bearer: { type: String, enum: Object.values(CHARGE_BEARER), default: CHARGE_BEARER.SELF },
+
+    /**
+     * Defaults to true — a rate quoted "on" an amount comes out of it.
+     *
+     * Existing rules created before this field predate the distinction and were behaving
+     * as ADDED on a payout. They pick up `true` on read, which changes that behaviour, and
+     * that is the intended correction rather than an accident: `false` is the special case
+     * (a bank's own transfer fee) and is now stated explicitly by whoever wants it.
+     */
+    deductFromAmount: { type: Boolean, default: true },
+
+    /** Refs either collection; resolved by id, since both are account heads. */
+    chargeAccountId: { type: Schema.Types.ObjectId, default: null },
 
     appliesTo: [{ type: String, enum: Object.values(TRANSACTION_TYPE) }],
     partyTypes: [{ type: String, enum: Object.values(PARTY_TYPE) }],

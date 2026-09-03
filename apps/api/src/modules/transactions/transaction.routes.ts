@@ -360,6 +360,33 @@ incomeRouter.patch(
  * `NaN` in the UI — which is exactly the field the operator checks to confirm the rule does
  * what they intended.
  */
+/**
+ * Resolve the heads a set of rules post to, in one pass per collection.
+ *
+ * A rule may name an expense head or an income head, and which one depends on its bearer,
+ * so both collections are searched by id. Two queries for the whole list rather than two
+ * per rule — the charges screen is small, but an N+1 here would be N+1 everywhere the
+ * summary is used.
+ */
+async function resolveChargeHeads(
+  ids: Array<unknown | null | undefined>,
+): Promise<Map<string, { id: string; name: string; code: string }>> {
+  const wanted = [...new Set(ids.filter(Boolean).map(String))];
+  if (wanted.length === 0) return new Map();
+
+  const [expense, income] = await Promise.all([
+    ExpenseCategory.find({ _id: { $in: wanted } }).select("name code").lean(),
+    IncomeHead.find({ _id: { $in: wanted } }).select("name code").lean(),
+  ]);
+
+  return new Map(
+    [...expense, ...income].map((h) => [
+      String(h._id),
+      { id: String(h._id), name: h.name, code: h.code },
+    ]),
+  );
+}
+
 function toChargeRuleSummary(r: {
   _id: unknown;
   name: string;
@@ -372,10 +399,12 @@ function toChargeRuleSummary(r: {
   minCharge: number;
   maxCharge: number;
   bearer: string;
+  deductFromAmount?: boolean;
+  chargeAccountId?: unknown;
   appliesTo: string[];
   partyTypes: string[];
   status: string;
-}) {
+}, heads?: Map<string, { id: string; name: string; code: string }>) {
   return {
     id: String(r._id),
     name: r.name,
@@ -388,6 +417,9 @@ function toChargeRuleSummary(r: {
     minCharge: r.minCharge,
     maxCharge: r.maxCharge,
     bearer: r.bearer,
+    // Rules written before this field existed read as `true` — see the model.
+    deductFromAmount: r.deductFromAmount !== false,
+    chargeAccount: r.chargeAccountId ? heads?.get(String(r.chargeAccountId)) ?? null : null,
     appliesTo: r.appliesTo,
     partyTypes: r.partyTypes,
     status: r.status,
@@ -406,7 +438,8 @@ chargeRouter.get(
     const filter = query.status ? { status: query.status } : {};
 
     const rules = await ChargeRule.find(filter).sort({ name: 1 }).lean();
-    return ok(res, rules.map(toChargeRuleSummary));
+    const heads = await resolveChargeHeads(rules.map((r) => r.chargeAccountId));
+    return ok(res, rules.map((r) => toChargeRuleSummary(r, heads)));
   }),
 );
 
@@ -418,9 +451,14 @@ chargeRouter.post(
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateChargeRuleInput;
     const rule = await ChargeRule.create({ ...input, createdBy: req.auth!.userId });
+    const heads = await resolveChargeHeads([rule.chargeAccountId]);
     // The list's shape — including the worked example, which is the one field a caller
     // wants back to confirm the rule does what they meant.
-    return created(res, toChargeRuleSummary(rule.toObject() as never), `${rule.name} added`);
+    return created(
+      res,
+      toChargeRuleSummary(rule.toObject() as never, heads),
+      `${rule.name} added`,
+    );
   }),
 );
 
@@ -478,9 +516,10 @@ chargeRouter.patch(
       },
     });
 
+    const heads = await resolveChargeHeads([rule.chargeAccountId]);
     return ok(
       res,
-      toChargeRuleSummary(rule.toObject() as never),
+      toChargeRuleSummary(rule.toObject() as never, heads),
       rule.status === "ACTIVE" ? `${rule.name} updated` : `${rule.name} retired`,
     );
   }),

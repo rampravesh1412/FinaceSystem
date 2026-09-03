@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { CHARGE_BEARER, CHARGE_TYPE, PARTY_TYPE, RECORD_STATUS, TRANSACTION_TYPE } from "../enums.js";
-import { basisPoints, listQuery, money, nonNegativeMoney, note, objectId } from "./common.js";
+import {
+  basisPoints,
+  booleanFlag,
+  listQuery,
+  money,
+  nonNegativeMoney,
+  note,
+  objectId,
+  optionalObjectId,
+} from "./common.js";
 
 /**
  * Charges and commission (§18).
@@ -22,43 +31,67 @@ import { basisPoints, listQuery, money, nonNegativeMoney, note, objectId } from 
 /* -------------------------------------------------------------------------- */
 
 /**
- * Whether a charge comes OUT of the amount or is paid ON TOP of it.
+ * What a charge does to the SETTLEMENT — the figure that moves through the bank or drawer.
  *
- *   DEDUCTED — the settlement shrinks. ₹50,000 gross, ₹750 charge, ₹49,250 moves.
- *   ADDED    — the settlement grows.  ₹50,000 gross, ₹750 charge, ₹50,750 moves.
+ *   DEDUCTED — the settlement shrinks.  ₹1,00,000 gross, ₹1,500 charge →   ₹98,500 moves
+ *   ADDED    — the settlement grows.    ₹1,00,000 gross, ₹1,500 charge → ₹1,01,500 moves
+ *   ABSORBED — the settlement is the gross, and the COUNTERPARTY takes the shortfall:
+ *              ₹1,00,000 leaves the bank, ₹1,500 is eaten by the fee, and the party is
+ *              credited only ₹98,500.
+ *
+ * All three balance. They differ in who is short of the ₹1,500 — us, nobody, or them —
+ * and on a ₹1,00,000 payout the extremes are ₹3,000 apart, which is why the rule states
+ * it explicitly rather than leaving it to be inferred from the bearer.
  */
-export type ChargeEffect = "DEDUCTED" | "ADDED";
+export type ChargeEffect = "DEDUCTED" | "ADDED" | "ABSORBED";
 
 /**
  * Which way a charge pushes the settlement.
  *
- * This is the rule that `netAmount` on every transaction obeys, and it exists as one
- * exported function because it was previously assumed rather than stated: `net` was
- * computed as `gross − charge` everywhere, which is wrong for exactly the case below and
- * produced a summary figure that appeared nowhere in the posting — a ₹50,000 payment out
- * with a ₹750 fee we bear takes ₹50,750 out of the bank, and calling that ₹49,250 made the
- * header disagree with its own ledger entries.
+ * Every `netAmount` in the system comes from here, so the header, the preview and the
+ * ledger entries cannot tell three different stories. It exists as one exported function
+ * because it used to be assumed: `net` was computed as `gross − charge` everywhere, and a
+ * payment out with a fee we bear takes MORE than the gross out of the bank, so the header
+ * quoted a figure that appeared nowhere in its own posting.
  *
- * The counterparty bearing it (PARTY) always means DEDUCTED: they receive less, or they
- * settle less, and we keep the difference as commission.
+ * Two independent facts decide the answer, and keeping them apart is what lets all three
+ * arrangements be expressed:
  *
- * Us bearing it (SELF) depends on which way the money is going, because "we absorb the
- * fee" has opposite effects on our own account:
+ *   WHO THE COST FALLS ON (`bearer`)
+ *     PARTY — we keep the charge, so it is our INCOME. Always DEDUCTED: the party's claim
+ *             is discharged in full and we pay out less, or they settle less and we bank
+ *             the same. Either way we are ₹1,500 better off.
+ *     SELF  — a third party took it, so it is our EXPENSE.
  *
- *   money coming IN  — the fee is taken out of what reaches us, so LESS arrives (DEDUCTED)
- *   money going OUT  — the fee is charged on top of what we send, so MORE leaves  (ADDED)
+ *   WHETHER IT COMES OUT OF THE AMOUNT (`deductFromAmount`)
+ *     Only meaningful for a SELF-borne charge on money going OUT, where both readings are
+ *     genuinely available:
+ *       true  — the fee is taken from the ₹1,00,000 in transit. ₹1,00,000 leaves the bank,
+ *               ₹98,500 reaches the party, we expense ₹1,500. → ABSORBED
+ *       false — the fee is levied separately, as a bank's NEFT charge is. ₹1,01,500 leaves
+ *               the bank, the party gets their full ₹1,00,000. → ADDED
+ *
+ * Money coming IN has only one sensible SELF reading — the fee is taken out of what
+ * reaches us, so less arrives — because "on top" would credit the party more than they
+ * sent. A BANK_TRANSFER is always ADDED: the destination must receive the full gross or
+ * the receiving statement will not reconcile.
  */
 export function chargeEffect(
   transactionType: string,
   bearer: "SELF" | "PARTY" | string,
+  deductFromAmount = true,
 ): ChargeEffect {
   if (bearer === "PARTY") return "DEDUCTED";
 
   switch (transactionType) {
     case TRANSACTION_TYPE.PAYMENT_OUT:
-    case TRANSACTION_TYPE.BANK_TRANSFER:
     case TRANSACTION_TYPE.SETTLEMENT:
+      return deductFromAmount ? "ABSORBED" : "ADDED";
+
+    // The destination receives the gross, so a fee is always extra money leaving.
+    case TRANSACTION_TYPE.BANK_TRANSFER:
       return "ADDED";
+
     default:
       return "DEDUCTED";
   }
@@ -71,7 +104,15 @@ export function chargeEffect(
  * ledger entries below it can never tell different stories.
  */
 export function settlementNet(gross: number, charge: number, effect: ChargeEffect): number {
-  return effect === "ADDED" ? gross + charge : gross - charge;
+  switch (effect) {
+    case "ADDED":
+      return gross + charge;
+    case "ABSORBED":
+      // The gross is what left the account; the counterparty is the one short of the fee.
+      return gross;
+    default:
+      return gross - charge;
+  }
 }
 
 /** One band of a tiered rate. `upTo` is inclusive; the last tier leaves it null. */
@@ -113,6 +154,38 @@ export const createChargeRuleSchema = z
      *   PARTY — our income; the party is credited gross - charge
      */
     bearer: z.nativeEnum(CHARGE_BEARER).default("SELF"),
+
+    /**
+     * Does the charge come out of the amount, or is it levied on top of it?
+     *
+     * Only bites on a SELF-borne charge on money going out, where both are real:
+     *   true  — ₹1,00,000 leaves the bank, ₹98,500 reaches the party, ₹1,500 is our cost
+     *   false — ₹1,01,500 leaves the bank, the party receives their full ₹1,00,000
+     *
+     * Defaults to true because that is what "a 1.5% charge on ₹1,00,000" normally means:
+     * the charge is ON the amount, not extra to it. A bank's own transfer fee is the
+     * exception and wants false.
+     *
+     * `booleanFlag` rather than `z.boolean()`: the form renders this as a select, which
+     * yields the STRING "false". A strict boolean would reject it, and the rejection would
+     * land on a field whose error nothing renders — the button stays enabled and the save
+     * silently does nothing.
+     */
+    deductFromAmount: booleanFlag.default(true),
+
+    /**
+     * Which head the charge posts to.
+     *
+     * Omit to use the built-in accounts — `EXP-BANK-CHARGES` for a cost, `INC-COMMISSION`
+     * for income. Name one of your own heads to see the charge on a line you chose in the
+     * Profit & Loss, which is the difference between "Bank Charges ₹40,000" and
+     * "Panel Commission ₹40,000" on a report somebody has to explain.
+     *
+     * It must match the side the charge lands on: an expense head for a SELF-borne charge,
+     * an income head for a party-borne one. Pointing a cost at an income head would post a
+     * debit to income and print a negative figure in the wrong section.
+     */
+    chargeAccountId: optionalObjectId,
 
     /** Transaction types this rule may be applied to. Empty means any. */
     appliesTo: z.array(z.nativeEnum(TRANSACTION_TYPE)).default([]),
@@ -208,6 +281,10 @@ export interface ChargeRuleSummary {
   minCharge: number;
   maxCharge: number;
   bearer: string;
+  /** See `createChargeRuleSchema`. Decides ABSORBED vs ADDED on a payment out. */
+  deductFromAmount: boolean;
+  /** The head the charge posts to, or null for the built-in account. */
+  chargeAccount: { id: string; name: string; code: string } | null;
   appliesTo: string[];
   partyTypes: string[];
   status: string;

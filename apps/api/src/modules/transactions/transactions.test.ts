@@ -229,10 +229,13 @@ describe("charge engine (§18)", () => {
    * against the bank statement found three numbers and no explanation.
    */
   it("adds a charge we bear to the settlement rather than deducting it", async () => {
+    // `deductFromAmount: false` is the on-top arrangement — a bank's own transfer fee,
+    // levied separately from the amount. It is the explicit case now that the default is
+    // to take the charge out of the amount.
     const rule = await ChargeRule.create({
       name: "Payout fee", code: "PAYOUTFEE", type: "PERCENTAGE", rateBps: 150,
-      minCharge: 0, maxCharge: 0, bearer: "SELF", appliesTo: ["PAYMENT_OUT"],
-      partyTypes: [], status: "ACTIVE",
+      minCharge: 0, maxCharge: 0, bearer: "SELF", deductFromAmount: false,
+      appliesTo: ["PAYMENT_OUT"], partyTypes: [], status: "ACTIVE",
     });
 
     const bankBefore = await balanceOfAccount(hdfcId);
@@ -328,7 +331,8 @@ describe("charge engine (§18)", () => {
   it("previews the figure the posting will actually carry", async () => {
     const selfBorne = await ChargeRule.create({
       name: "Payout fee on top", code: "PREVSELF", type: "PERCENTAGE", rateBps: 150,
-      minCharge: 0, maxCharge: 0, bearer: "SELF", appliesTo: [], partyTypes: [], status: "ACTIVE",
+      minCharge: 0, maxCharge: 0, bearer: "SELF", deductFromAmount: false,
+      appliesTo: [], partyTypes: [], status: "ACTIVE",
     });
     const partyBorne = await ChargeRule.create({
       name: "Payout commission", code: "PREVPARTY", type: "PERCENTAGE", rateBps: 150,
@@ -1129,5 +1133,163 @@ describe("editing a posted payment", () => {
       { token: superToken },
     );
     expect(res.status).toBe(422);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The three ways a charge can be settled (§18).
+ *
+ * All three balance, and they differ in WHO is short of the charge. On a ₹1,00,000 payout
+ * the extremes are ₹3,000 apart, so the arrangement is stated on the rule rather than
+ * inferred — and each case here asserts the party, the account and the head together,
+ * because the whole failure mode is getting one of the three right and another wrong.
+ */
+describe("charge arrangements", () => {
+  async function rule(
+    code: string,
+    bearer: "SELF" | "PARTY",
+    deductFromAmount: boolean,
+    chargeAccountId?: string,
+  ) {
+    const created = await ChargeRule.create({
+      name: code, code, type: "PERCENTAGE", rateBps: 150,
+      minCharge: 0, maxCharge: 0, bearer, deductFromAmount,
+      ...(chargeAccountId ? { chargeAccountId } : {}),
+      appliesTo: [], partyTypes: [], status: "ACTIVE",
+    });
+    return String(created._id);
+  }
+
+  /** The posted entries, keyed by account code, signed positive for a debit. */
+  async function entriesOf(txnId: string) {
+    const rows = await LedgerEntry.find({ transactionId: txnId })
+      .populate<{ ledgerAccountId: { code: string } }>("ledgerAccountId", "code")
+      .lean();
+    return Object.fromEntries(
+      rows.map((e) => [
+        e.ledgerAccountId.code,
+        e.direction === "DEBIT" ? e.amount : -e.amount,
+      ]),
+    );
+  }
+
+  async function payOut(ruleId: string) {
+    const res = await client.post<{ data: { id: string } }>(
+      "/payment-out",
+      {
+        date: "2026-08-19", partyId: eddigoId, accountId: hdfcId,
+        amount: "1,00,000", paymentMode: "NEFT", chargeRuleId: ruleId,
+      },
+      { token: superToken },
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const txn = (await Transaction.findById(res.body.data.id).lean())!;
+    return { txn, entries: await entriesOf(res.body.data.id) };
+  }
+
+  it("takes the charge OUT of a payout, leaving the party short and us with the cost", async () => {
+    const bankBefore = await balanceOfAccount(hdfcId);
+    const partyBefore = await balanceOfParty(eddigoId);
+
+    const { txn, entries } = await payOut(await rule("ARR_ABSORB", "SELF", true));
+
+    // The whole ₹1,00,000 left the bank...
+    expect(entries["BANK-105-0001"] ?? entries[Object.keys(entries).find((k) => k.startsWith("BANK"))!])
+      .toBe(-1_00_000_00);
+    // ...only ₹98,500 reached the party, so only that discharges their claim...
+    expect(entries[Object.keys(entries).find((k) => k.startsWith("PARTY"))!]).toBe(98_500_00);
+    // ...and the ₹1,500 is our expense.
+    expect(entries["EXP-BANK-CHARGES"]).toBe(1_500_00);
+
+    expect(txn.netAmount).toBe(1_00_000_00);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 1_00_000_00);
+    expect(await balanceOfParty(eddigoId)).toBe(partyBefore + 98_500_00);
+  });
+
+  it("keeps the charge as income when the party bears it", async () => {
+    const bankBefore = await balanceOfAccount(hdfcId);
+    const partyBefore = await balanceOfParty(eddigoId);
+
+    const { txn, entries } = await payOut(await rule("ARR_INCOME", "PARTY", true));
+
+    expect(entries[Object.keys(entries).find((k) => k.startsWith("BANK"))!]).toBe(-98_500_00);
+    expect(entries[Object.keys(entries).find((k) => k.startsWith("PARTY"))!]).toBe(1_00_000_00);
+    // A gain, so it credits INCOME — never an expense, whatever the rule is called.
+    expect(entries["INC-COMMISSION"]).toBe(-1_500_00);
+
+    expect(txn.netAmount).toBe(98_500_00);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 98_500_00);
+    expect(await balanceOfParty(eddigoId)).toBe(partyBefore + 1_00_000_00);
+  });
+
+  it("levies the charge on top when it is not deducted from the amount", async () => {
+    const bankBefore = await balanceOfAccount(hdfcId);
+
+    const { txn, entries } = await payOut(await rule("ARR_ONTOP", "SELF", false));
+
+    expect(entries[Object.keys(entries).find((k) => k.startsWith("BANK"))!]).toBe(-1_01_500_00);
+    expect(entries[Object.keys(entries).find((k) => k.startsWith("PARTY"))!]).toBe(1_00_000_00);
+    expect(entries["EXP-BANK-CHARGES"]).toBe(1_500_00);
+
+    expect(txn.netAmount).toBe(1_01_500_00);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore - 1_01_500_00);
+  });
+
+  /**
+   * Money coming IN has one sensible reading for a self-borne charge, and `deductFromAmount`
+   * must not change it: crediting the party more than they sent would invent a payment.
+   */
+  it("always deducts a self-borne charge on money coming in", async () => {
+    for (const deduct of [true, false]) {
+      const bankBefore = await balanceOfAccount(hdfcId);
+      const ruleId = await rule(`ARR_IN_${deduct}`, "SELF", deduct);
+
+      const res = await client.post<{ data: { id: string } }>(
+        "/payment-in",
+        {
+          date: "2026-08-19", partyId: ramanujId, accountId: hdfcId,
+          amount: "1,00,000", paymentMode: "NEFT", chargeRuleId: ruleId,
+        },
+        { token: superToken },
+      );
+      expect(res.status).toBe(201);
+
+      const entries = await entriesOf(res.body.data.id);
+      expect(entries[Object.keys(entries).find((k) => k.startsWith("BANK"))!]).toBe(98_500_00);
+      expect(entries["EXP-BANK-CHARGES"]).toBe(1_500_00);
+      expect(await balanceOfAccount(hdfcId)).toBe(bankBefore + 98_500_00);
+    }
+  });
+
+  it("posts the charge to the head the rule names, not the built-in account", async () => {
+    const head = await ExpenseCategory.findById(panelHeadId).lean();
+    const ruleId = await rule("ARR_OWNHEAD", "SELF", true, panelHeadId);
+
+    const { entries } = await payOut(ruleId);
+
+    const headAccount = await LedgerAccount.findById(head!.ledgerAccountId).lean();
+    expect(entries[headAccount!.code]).toBe(1_500_00);
+    // And NOT the built-in one, which is the point of the setting.
+    expect(entries["EXP-BANK-CHARGES"]).toBeUndefined();
+  });
+
+  it("refuses a cost pointed at an income head", async () => {
+    const incomeHead = await IncomeHead.findOne({}).lean();
+    const ruleId = await rule("ARR_WRONGSIDE", "SELF", true, String(incomeHead!._id));
+
+    const res = await client.post<{ error: { code: string } }>(
+      "/payment-out",
+      {
+        date: "2026-08-19", partyId: eddigoId, accountId: hdfcId,
+        amount: "1,00,000", paymentMode: "NEFT", chargeRuleId: ruleId,
+      },
+      { token: superToken },
+    );
+
+    // Debiting an income account balances and prints a negative figure in the wrong half
+    // of the P&L — the kind of error that survives because the totals still tie.
+    expect(res.status).toBe(400);
   });
 });

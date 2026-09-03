@@ -118,14 +118,22 @@ export function ChargesPage() {
                         spelled out rather than left as an enum. */}
                     <Tooltip>
                       <TooltipTrigger asChild>
+                        {/* The arrangement, not just the bearer — "Us" alone does not
+                            distinguish ₹1,00,000 leaving from ₹1,01,500 leaving. */}
                         <Badge variant={rule.bearer === "SELF" ? "outline" : "default"}>
-                          {rule.bearer === "SELF" ? "Us" : "The party"}
+                          {rule.bearer === "PARTY"
+                            ? "The party"
+                            : rule.deductFromAmount
+                              ? "Us · from the amount"
+                              : "Us · on top"}
                         </Badge>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
-                        {rule.bearer === "SELF"
-                          ? "We absorb it. On a payment out the charge is ADDED to what leaves the bank — ₹1,00,000 at 1.5% sends ₹1,01,500 — and the party is settled in full. Posted as our expense."
-                          : "The party absorbs it. On a payment out the charge is DEDUCTED from their payment — ₹1,00,000 at 1.5% sends ₹98,500 — and their full ₹1,00,000 is still discharged. Posted as our income."}
+                        {rule.bearer === "PARTY"
+                          ? "Our income. On a ₹1,00,000 payment out, ₹98,500 leaves the bank and their full ₹1,00,000 claim is discharged — the ₹1,500 you keep is the commission."
+                          : rule.deductFromAmount
+                            ? "Our expense, taken out of the amount. On a ₹1,00,000 payment out the whole ₹1,00,000 leaves the bank, only ₹98,500 reaches them, and the ₹1,500 is your cost."
+                            : "Our expense, levied on top. On a ₹1,00,000 payment out, ₹1,01,500 leaves the bank and they receive the full ₹1,00,000."}
                       </TooltipContent>
                     </Tooltip>
                   </TableCell>
@@ -144,6 +152,11 @@ export function ChargesPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <Money value={rule.sampleOn100k} showIcon={false} />
+                    {rule.chargeAccount ? (
+                      <div className="truncate text-2xs text-muted-foreground">
+                        to {rule.chargeAccount.name}
+                      </div>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <Badge variant={rule.status === "ACTIVE" ? "success" : "outline"}>

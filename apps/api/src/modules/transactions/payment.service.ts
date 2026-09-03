@@ -137,7 +137,9 @@ export async function postPaymentIn(
         { ledgerAccountId: party.ledgerAccountId, direction: "CREDIT", amount: input.amount },
       );
     } else if (charge.bearer === "PARTY") {
-      const commissionId = await ledger.systemAccountId("COMMISSION_INCOME", session);
+      // We keep it: the full gross lands in the account, the party is credited the net,
+      // and the difference is our income.
+      const commissionId = await charges.chargeLedgerAccountId(charge, session);
       lines.push(
         { ledgerAccountId: account.ledgerAccountId, direction: "DEBIT", amount: input.amount },
         {
@@ -148,7 +150,14 @@ export async function postPaymentIn(
         { ledgerAccountId: commissionId, direction: "CREDIT", amount: charge.amount },
       );
     } else {
-      const chargeAccountId = await ledger.systemAccountId("BANK_CHARGES", session);
+      /**
+       * A fee took its cut in transit, so less arrived than the party sent.
+       *
+       * Their debt still falls by the full gross — they paid it — and the shortfall is our
+       * cost. There is no "on top" reading for money coming IN: crediting the party more
+       * than they sent would invent a payment nobody made.
+       */
+      const chargeAccountId = await charges.chargeLedgerAccountId(charge, session);
       lines.push(
         {
           ledgerAccountId: account.ledgerAccountId,
@@ -173,7 +182,7 @@ export async function postPaymentIn(
         netAmount: settlementNet(
           input.amount,
           charge.amount,
-          chargeEffect("PAYMENT_IN", charge.bearer),
+          chargeEffect("PAYMENT_IN", charge.bearer, charge.deductFromAmount),
         ),
         paymentMode: input.paymentMode,
         referenceNo: input.referenceNo,
@@ -256,7 +265,14 @@ export async function postPaymentOut(
         { ledgerAccountId: account.ledgerAccountId, direction: "CREDIT", amount: input.amount },
       );
     } else if (charge.bearer === "PARTY") {
-      const commissionId = await ledger.systemAccountId("COMMISSION_INCOME", session);
+      /**
+       * WE KEEP IT — the charge is our income.
+       *
+       * Their claim is discharged in full and we pay out less, so we are better off by the
+       * charge. That gain cannot be an expense, whatever it is called on the rule: a credit
+       * to an expense head would print a negative cost in the wrong half of the P&L.
+       */
+      const commissionId = await charges.chargeLedgerAccountId(charge, session);
       lines.push(
         { ledgerAccountId: party.ledgerAccountId, direction: "DEBIT", amount: input.amount },
         {
@@ -266,8 +282,37 @@ export async function postPaymentOut(
         },
         { ledgerAccountId: commissionId, direction: "CREDIT", amount: charge.amount },
       );
+    } else if (charge.deductFromAmount) {
+      /**
+       * TAKEN OUT OF THE AMOUNT — the charge is our expense and the PARTY is short of it.
+       *
+       *     DR  Party            98,500     only what reached them discharges their claim
+       *     DR  Bank Charges      1,500     the fee, our cost
+       *         CR  Bank                   1,00,000     the whole amount left the account
+       *
+       * The gross is what we sent. ₹1,500 of it was eaten in transit, so the party can only
+       * be credited ₹98,500 — crediting them the full ₹1,00,000 would say they received
+       * money that never arrived, and their statement would disagree with their own books.
+       */
+      const chargeAccountId = await charges.chargeLedgerAccountId(charge, session);
+      lines.push(
+        {
+          ledgerAccountId: party.ledgerAccountId,
+          direction: "DEBIT",
+          amount: input.amount - charge.amount,
+        },
+        { ledgerAccountId: chargeAccountId, direction: "DEBIT", amount: charge.amount },
+        { ledgerAccountId: account.ledgerAccountId, direction: "CREDIT", amount: input.amount },
+      );
     } else {
-      const chargeAccountId = await ledger.systemAccountId("BANK_CHARGES", session);
+      /**
+       * LEVIED ON TOP — a bank's own transfer fee.
+       *
+       *     DR  Party          1,00,000     they received the full amount
+       *     DR  Bank Charges      1,500     the fee, charged separately
+       *         CR  Bank                   1,01,500     both left the account
+       */
+      const chargeAccountId = await charges.chargeLedgerAccountId(charge, session);
       lines.push(
         { ledgerAccountId: party.ledgerAccountId, direction: "DEBIT", amount: input.amount },
         { ledgerAccountId: chargeAccountId, direction: "DEBIT", amount: charge.amount },
@@ -290,7 +335,16 @@ export async function postPaymentOut(
       const partyAccount = await LedgerAccount.findById(party.ledgerAccountId)
         .select("cachedBalance")
         .session(session);
-      const wouldBe = (partyAccount?.cachedBalance ?? 0) + input.amount;
+      /**
+       * The party is debited by what REACHED them, which is less than the gross when the
+       * charge came out of it. Checking the gross would refuse a payout that stays inside
+       * the limit by the width of the fee.
+       */
+      const debitedToParty =
+        charge.bearer === "SELF" && charge.deductFromAmount
+          ? input.amount - charge.amount
+          : input.amount;
+      const wouldBe = (partyAccount?.cachedBalance ?? 0) + debitedToParty;
       if (wouldBe > party.creditLimit) {
         throw new CreditLimitExceededError(party.name, party.creditLimit, wouldBe);
       }
@@ -312,7 +366,7 @@ export async function postPaymentOut(
         netAmount: settlementNet(
           input.amount,
           charge.amount,
-          chargeEffect("PAYMENT_OUT", charge.bearer),
+          chargeEffect("PAYMENT_OUT", charge.bearer, charge.deductFromAmount),
         ),
         paymentMode: input.paymentMode,
         referenceNo: input.referenceNo,
@@ -383,7 +437,7 @@ export async function createBankTransfer(
     ];
 
     if (charge.amount > 0) {
-      const chargeAccountId = await ledger.systemAccountId("BANK_CHARGES", session);
+      const chargeAccountId = await charges.chargeLedgerAccountId(charge, session);
       lines.push({ ledgerAccountId: chargeAccountId, direction: "DEBIT", amount: charge.amount });
     }
 

@@ -1,4 +1,4 @@
-import type { ClientSession } from "mongoose";
+import type { ClientSession, Types } from "mongoose";
 import {
   applyRate,
   bpsToPercent,
@@ -8,7 +8,9 @@ import {
   type ChargeBreakdown,
 } from "@amiri/shared";
 import { ChargeRule, type ChargeRuleDoc } from "../models/ChargeRule.js";
+import { ExpenseCategory, IncomeHead } from "../models/ExpenseCategory.js";
 import { BadRequestError, NotFoundError } from "../lib/errors.js";
+import * as ledger from "./ledger.service.js";
 
 /**
  * The charge engine (§18).
@@ -32,6 +34,10 @@ import { BadRequestError, NotFoundError } from "../lib/errors.js";
 export interface ComputedCharge {
   amount: number;
   bearer: "SELF" | "PARTY";
+  /** See `chargeEffect`. Decides ABSORBED vs ADDED on money going out. */
+  deductFromAmount: boolean;
+  /** The head the charge posts to, or null to use the built-in system account. */
+  chargeAccountId: string | null;
   basis: string;
   ruleId: string | null;
   ruleName: string;
@@ -116,6 +122,8 @@ export function computeCharge(rule: ChargeRuleDoc, amount: number): ComputedChar
   return {
     amount: charge,
     bearer: rule.bearer,
+    deductFromAmount: rule.deductFromAmount !== false,
+    chargeAccountId: rule.chargeAccountId ? String(rule.chargeAccountId) : null,
     basis,
     ruleId: String(rule._id),
     ruleName: rule.name,
@@ -172,13 +180,24 @@ export async function resolveCharge(
       // A manual charge is assumed to be ours to bear. Making someone else's commission
       // implicit would be the kind of silent assumption §18 warns against.
       bearer: "SELF",
+      // And assumed to come out of the amount, for the same reason the rule default does.
+      deductFromAmount: true,
+      chargeAccountId: null,
       basis: `Manually entered ${formatINR(manualCharge)}`,
       ruleId: null,
       ruleName: "Manual charge",
     };
   }
 
-  return { amount: 0, bearer: "SELF", basis: "", ruleId: null, ruleName: "" };
+  return {
+    amount: 0,
+    bearer: "SELF",
+    deductFromAmount: true,
+    chargeAccountId: null,
+    basis: "",
+    ruleId: null,
+    ruleName: "",
+  };
 }
 
 /** The breakdown shown live in a form before anything is committed. */
@@ -199,7 +218,7 @@ export async function previewCharge(
    * effect is reported for the bearer alone, which is exact for a party-borne charge and
    * the conservative reading for a self-borne one.
    */
-  const effect = chargeEffect(transactionType ?? "", computed.bearer);
+  const effect = chargeEffect(transactionType ?? "", computed.bearer, computed.deductFromAmount);
 
   return {
     gross: amount,
@@ -210,4 +229,50 @@ export async function previewCharge(
     ruleName: computed.ruleName,
     basis: computed.basis,
   };
+}
+
+
+/**
+ * The ledger account a charge posts to.
+ *
+ * A rule may name one of the business's own heads — "Panel Commission" rather than the
+ * built-in "Bank Charges" — because the difference shows up on the Profit & Loss, where a
+ * line somebody has to explain is better named by them than by us.
+ *
+ * The side is checked, not trusted: a cost must point at an EXPENSE head and income at an
+ * INCOME head. Posting a debit to an income account balances perfectly well and prints a
+ * negative figure in the wrong half of the report, which is exactly the kind of error that
+ * survives for months because the totals still tie.
+ */
+export async function chargeLedgerAccountId(
+  charge: ComputedCharge,
+  session?: ClientSession,
+): Promise<Types.ObjectId> {
+  const wantsExpense = charge.bearer === "SELF";
+
+  if (!charge.chargeAccountId) {
+    return ledger.systemAccountId(wantsExpense ? "BANK_CHARGES" : "COMMISSION_INCOME", session);
+  }
+
+  const Model = wantsExpense ? ExpenseCategory : IncomeHead;
+  const head = await Model.findById(charge.chargeAccountId)
+    .select("name status ledgerAccountId")
+    .session(session ?? null)
+    .lean();
+
+  if (!head) {
+    throw new BadRequestError(
+      `The charge rule "${charge.ruleName}" posts to a ${wantsExpense ? "an expense" : "an income"} ` +
+        `head that no longer exists. Point it at a current head or clear it to use the built-in account.`,
+      "chargeAccountId",
+    );
+  }
+  if (head.status !== "ACTIVE") {
+    throw new BadRequestError(
+      `The charge rule "${charge.ruleName}" posts to "${head.name}", which has been retired.`,
+      "chargeAccountId",
+    );
+  }
+
+  return head.ledgerAccountId;
 }

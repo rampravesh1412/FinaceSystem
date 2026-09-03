@@ -209,25 +209,32 @@ const transactionSchema = new Schema<TransactionDoc>(
 /**
  * Arithmetic invariant, enforced at the model layer.
  *
- * The net must differ from the gross by EXACTLY the charge, in one direction or the
- * other — because a charge either comes out of the amount or is paid on top of it:
+ * `net` is what moved through the bank or the drawer, and it must be one of exactly three
+ * figures — because a charge is settled in exactly one of three ways (`chargeEffect`):
  *
- *     net = gross − charge     the charge is DEDUCTED (the counterparty gets less)
- *     net = gross + charge     the charge is ADDED    (we pay the fee on top)
+ *     net = gross − charge     DEDUCTED — we banked or paid out less
+ *     net = gross + charge     ADDED    — the fee was levied on top
+ *     net = gross              ABSORBED — the whole amount moved, and the COUNTERPARTY is
+ *                                         the one short of the fee
  *
- * The check used to demand `gross − charge` unconditionally, which silently accepted a
- * wrong header on the second shape: a ₹50,000 payment out with a ₹750 fee we bear moves
- * ₹50,750 through the bank, yet the transaction recorded ₹49,250 as its net — a number
- * that matched none of its own ledger entries. `chargeEffect` in @amiri/shared decides the
- * direction; this is the guard that stops a service getting it wrong again.
+ * So the net differs from the gross by the charge, or by nothing at all. Anything else means
+ * a service computed a figure its own ledger lines do not support — the failure this check
+ * exists to catch, and one that shipped once: `net` was derived as `gross − charge`
+ * unconditionally, so a payment out with a fee on top recorded ₹49,250 against a posting
+ * that actually moved ₹50,750.
+ *
+ * With no charge the two must be equal, so the `delta === 0` branch is not a loophole for a
+ * mis-stated net: a zero charge makes both terms zero.
  */
 transactionSchema.pre("validate", function checkAmounts(next) {
-  if (Math.abs(this.netAmount - this.grossAmount) !== this.chargeAmount) {
+  const delta = Math.abs(this.netAmount - this.grossAmount);
+
+  if (delta !== 0 && delta !== this.chargeAmount) {
     next(
       new Error(
         `Transaction amounts do not reconcile: net (${this.netAmount}) must be gross ` +
-          `(${this.grossAmount}) either minus or plus the charge (${this.chargeAmount}), ` +
-          `depending on whether the charge is deducted from the amount or paid on top of it.`,
+          `(${this.grossAmount}) minus the charge, plus the charge, or equal to it — the ` +
+          `charge is ${this.chargeAmount}, and none of those give ${this.netAmount}.`,
       ),
     );
     return;

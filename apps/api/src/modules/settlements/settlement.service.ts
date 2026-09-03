@@ -103,7 +103,7 @@ export async function createSettlement(
           netAmount: settlementNet(
             input.amount,
             charge.amount,
-            chargeEffect("SETTLEMENT", charge.bearer),
+            chargeEffect("SETTLEMENT", charge.bearer, charge.deductFromAmount),
           ),
           settledAmount: 0,
           transactionIds: [],

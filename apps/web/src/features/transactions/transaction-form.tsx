@@ -449,7 +449,7 @@ export function TransactionFormDialog({
                 <Figure label="Gross" value={preview.data.gross} />
                 <Figure label="Charge" value={preview.data.charge} />
                 <Figure
-                  label={preview.data.effect === "ADDED" ? "Total out" : "Net"}
+                  label={preview.data.effect === "DEDUCTED" ? "Net" : "Total moved"}
                   value={preview.data.net}
                   emphasis
                 />
@@ -458,16 +458,28 @@ export function TransactionFormDialog({
                 {preview.data.basis}
                 {preview.data.bearer === "PARTY" ? " — borne by the party" : " — borne by us"}
               </p>
+              {/* One sentence per arrangement, naming the account AND the counterparty.
+                  The three numbers alone cannot distinguish who is short of the charge. */}
               <p className="border-t border-border pt-2 text-2xs">
                 {preview.data.effect === "ADDED" ? (
                   <>
                     <span className="font-medium text-warning-foreground">
                       {formatINR(preview.data.net)} leaves the account
                     </span>{" "}
-                    — the {formatINR(preview.data.charge)} charge is paid on top of the{" "}
-                    {formatINR(preview.data.gross)}, and the party is settled in full. To
-                    deduct it from their payment instead, set the rule&rsquo;s bearer to the
-                    party.
+                    — the {formatINR(preview.data.charge)} charge is levied on top of the{" "}
+                    {formatINR(preview.data.gross)}, and the party receives the full amount.
+                  </>
+                ) : preview.data.effect === "ABSORBED" ? (
+                  <>
+                    <span className="font-medium text-foreground">
+                      {formatINR(preview.data.net)} leaves the account
+                    </span>{" "}
+                    — the {formatINR(preview.data.charge)} charge comes out of it, so the
+                    party is credited{" "}
+                    <span className="font-medium text-foreground">
+                      {formatINR(preview.data.gross - preview.data.charge)}
+                    </span>{" "}
+                    and the charge is your expense.
                   </>
                 ) : (
                   <>
@@ -475,7 +487,8 @@ export function TransactionFormDialog({
                       {formatINR(preview.data.net)} settles
                     </span>{" "}
                     — the {formatINR(preview.data.charge)} charge comes out of the{" "}
-                    {formatINR(preview.data.gross)}.
+                    {formatINR(preview.data.gross)}
+                    {preview.data.bearer === "PARTY" ? " and is your income" : ""}.
                   </>
                 )}
               </p>

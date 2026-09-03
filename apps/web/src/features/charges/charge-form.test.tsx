@@ -57,8 +57,42 @@ describe("charge rule form", () => {
     await user.clear(rate);
     await user.type(rate, "1.75");
 
-    // 1.75% of ₹1,00,000 = ₹1,750.
-    expect(await screen.findByText(/1,750/)).toBeInTheDocument();
+    /**
+     * 1.75% of ₹1,00,000 = ₹1,750, and it now appears more than once — the rate's own
+     * example plus the arrangement panel, which prints the resulting ledger lines. Both
+     * are wanted, so this asserts on the count rather than on a single match.
+     */
+    const shown = await screen.findAllByText(/1,750/);
+    expect(shown.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Two dropdowns, three arrangements. The panel is the only place an operator can see
+   * that "ours, from the amount" and "ours, on top" are ₹3,000 apart on the same rate.
+   */
+  it("spells out the resulting entries for each arrangement", async () => {
+    const user = await openForm();
+
+    const rate = screen.getByLabelText(/^rate/i);
+    await user.clear(rate);
+    await user.type(rate, "1.5");
+
+    /**
+     * Matched on the PROSE, not the figures. `formatINR` renders "₹98,500.00", so a regex
+     * quoting "₹98,500" silently misses — and the amounts are asserted properly against the
+     * ledger in the API suite, where they belong.
+     */
+    // Default: our cost, taken out of the amount → the whole amount leaves, they get less.
+    const absorbed = await screen.findByText(/reaches them/i);
+    expect(absorbed.textContent).toContain("98,500.00");
+    expect(absorbed.textContent).toContain("1,00,000.00");
+
+    await user.click(screen.getByRole("combobox", { name: /taken out of the amount/i }));
+    await user.click(await screen.findByRole("option", { name: /charged on top/i }));
+
+    // On top → more leaves the account and they receive the full amount.
+    const onTop = await screen.findByText(/they receive the full/i);
+    expect(onTop.textContent).toContain("1,01,500.00");
   });
 
   it("sends integer basis points, never the percent", async () => {
