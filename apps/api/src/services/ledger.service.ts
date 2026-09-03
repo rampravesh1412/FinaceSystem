@@ -324,9 +324,15 @@ export async function systemAccountId(
     .lean();
 
   if (!account) {
+    /**
+     * Unreachable in a healthy process: `ensureSystemAccounts` runs at boot and creates
+     * every one of these. Kept as a loud failure rather than a silent fallback, because
+     * inventing the account here would let a posting land somewhere nobody chose.
+     */
     throw new Error(
-      `The system account ${SYSTEM_ACCOUNTS[key].code} is missing. Run \`npm run seed\` — ` +
-        `the ledger cannot balance an opening entry without it.`,
+      `The system account ${SYSTEM_ACCOUNTS[key].code} is missing, so this posting has ` +
+        `nowhere to put its other side. It is created automatically at startup — restart ` +
+        `the API, and if it persists the account was deleted from the chart of accounts.`,
     );
   }
   return account._id;

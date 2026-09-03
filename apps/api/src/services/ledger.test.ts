@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { formatINR } from "@amiri/shared";
 import { withTransaction } from "../lib/unitOfWork.js";
 import { LedgerAccount, LedgerEntry, Transaction, User } from "../models/index.js";
+import { SYSTEM_ACCOUNTS } from "../models/LedgerAccount.js";
 import { clearFixtures, seedFixtures, type Fixtures } from "../test/helpers.js";
 import * as ledger from "./ledger.service.js";
 
@@ -799,5 +800,69 @@ describe("posting guards", () => {
 describe("fixtures remain intact", () => {
   it("keeps the seeded users available to other suites", async () => {
     expect(await User.countDocuments({})).toBeGreaterThan(0);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The engine's own accounts must exist without anybody having seeded them.
+ *
+ * REGRESSION. `ensureSystemAccounts` used to be called only by `npm run seed` — which
+ * refuses to run with NODE_ENV=production — and by `bootstrap:admin`. An install whose
+ * data was entered through the UI therefore had no `EXP-BANK-CHARGES`, no `INC-COMMISSION`
+ * and no `SUSPENSE`, and the symptom was brutal to diagnose: plain payments posted fine
+ * for weeks, then the first payment carrying a commission returned a bare 500 from a
+ * screen that had nothing to do with the omission.
+ *
+ * The accounts are now created on boot. These cases pin down the two properties that
+ * makes safe: every account the posting rules name resolves, and creating them twice is a
+ * no-op rather than a duplicate.
+ */
+describe("system accounts", () => {
+  it("resolves every account the posting rules name", async () => {
+    for (const key of Object.keys(SYSTEM_ACCOUNTS) as Array<keyof typeof SYSTEM_ACCOUNTS>) {
+      const id = await ledger.systemAccountId(key);
+      expect(id, `${key} did not resolve`).toBeTruthy();
+    }
+  });
+
+  it("is idempotent, so running it on every boot creates nothing twice", async () => {
+    const before = await LedgerAccount.countDocuments({ isSystem: true });
+
+    await ledger.ensureSystemAccounts();
+    await ledger.ensureSystemAccounts();
+
+    expect(await LedgerAccount.countDocuments({ isSystem: true })).toBe(before);
+  });
+
+  it("posts a charge against the charge account rather than throwing", async () => {
+    // The exact shape that used to 500: a SELF-borne charge needs somewhere to land.
+    const bank = await makeAccount("T-SYS-BANK", "Sys Bank", "BANK");
+    const partyAccount = await makeAccount("T-SYS-PARTY", "Sys Party", "PARTY");
+    const chargeId = await ledger.systemAccountId("BANK_CHARGES");
+
+    const txn = await withTransaction((session) =>
+      ledger.postTransaction(
+        {
+          type: "PAYMENT_IN",
+          date: new Date("2026-08-19"),
+          lines: [
+            { ledgerAccountId: bank, direction: "DEBIT", amount: 9_850_00 },
+            { ledgerAccountId: chargeId, direction: "DEBIT", amount: 150_00 },
+            { ledgerAccountId: partyAccount, direction: "CREDIT", amount: 10_000_00 },
+          ],
+          grossAmount: 10_000_00,
+          chargeAmount: 150_00,
+          netAmount: 9_850_00,
+          details: paymentDetails(),
+          createdBy: userId,
+        },
+        session,
+      ),
+    );
+
+    expect(txn.txnNo).toBeTruthy();
+    expect((await ledger.computeBalance(chargeId)).balance).toBeGreaterThanOrEqual(150_00);
   });
 });

@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { connectDatabase, disconnectDatabase } from "./config/db.js";
+import { ensureSystemAccounts } from "./services/ledger.service.js";
 
 /**
  * Process lifecycle.
@@ -14,6 +15,28 @@ import { connectDatabase, disconnectDatabase } from "./config/db.js";
  */
 async function main(): Promise<void> {
   await connectDatabase();
+
+  /**
+   * The engine's own accounts, created before the first request.
+   *
+   * `EQUITY-OPENING`, `EXP-BANK-CHARGES`, `INC-COMMISSION`, `SUSPENSE` and
+   * `EXP-CASH-DIFFERENCE` are not reference data — the posting rules NAME them. A payment
+   * carrying a charge has nowhere to put the charge without one, so it throws, and the
+   * caller sees an unexplained 500 on an otherwise valid transaction.
+   *
+   * This used to be the seed script's job alone. That was a real defect and not a
+   * theoretical one: the seed refuses to run with NODE_ENV=production, so any install
+   * whose data was entered through the UI rather than seeded had a ledger that worked for
+   * plain payments and failed the first time anybody applied a commission, posted an
+   * adjustment, or opened an account with a non-zero balance. The failure arrived weeks
+   * after deployment, on a screen unrelated to the omission.
+   *
+   * It belongs here because it is a precondition of serving traffic, exactly like the
+   * index builds in `connectDatabase`. It is idempotent — an upsert per account — so it
+   * costs one round trip per boot and nothing else.
+   */
+  const accounts = await ensureSystemAccounts();
+  logger.debug({ count: accounts.size }, "system accounts ready");
 
   const app = createApp();
   const server: Server = app.listen(env.PORT, () => {
