@@ -33,7 +33,7 @@ export function DayBookPage() {
             {/* The export endpoint requires an explicit period — a DayBook with no
                 range would be the entire ledger under a name that promises one day. */}
             <ExportMenu path="/export/daybook" params={{ from: monthStart(), to: today() }} />
-            <Can permission="finance.payment.create">
+            <Can permission="payment_in.create">
               <NewTransactionButton mode="PAYMENT_IN" label="Payment In" />
             </Can>
           </>
@@ -56,7 +56,7 @@ export function PaymentInPage() {
         title="Payment In"
         description="Money received from parties. Each posting debits an account and reduces what the party owes."
         actions={
-          <Can permission="finance.payment.create">
+          <Can permission="payment_in.create">
             <NewTransactionButton mode="PAYMENT_IN" label="Record receipt" />
           </Can>
         }
@@ -79,7 +79,7 @@ export function PaymentOutPage() {
         title="Payment Out"
         description="Money paid to parties. Each posting credits an account and settles what we owe."
         actions={
-          <Can permission="finance.payment.create">
+          <Can permission="payment_out.create">
             <NewTransactionButton mode="PAYMENT_OUT" label="Record payment" />
           </Can>
         }
@@ -102,7 +102,7 @@ export function BankTransferPage() {
         title="Bank Transfers"
         description="Movements between our own accounts. The destination always receives the full gross; any fee is charged separately to the source."
         actions={
-          <Can permission="finance.bank.transfer">
+          <Can permission="bank_transfer.create">
             <NewTransactionButton mode="BANK_TRANSFER" label="New transfer" />
           </Can>
         }
@@ -125,7 +125,7 @@ export function ExpensesPage() {
         title="Expenses"
         description="Costs booked against expense heads, paid from an account or left as a payable."
         actions={
-          <Can permission="finance.expense.create">
+          <Can permission="expenses.create">
             <NewTransactionButton mode="EXPENSE" label="Record expense" />
           </Can>
         }
@@ -151,7 +151,7 @@ export function IncomePage() {
         actions={
           <>
             <ExportMenu path="/export/daybook" params={{ from: monthStart(), to: today() }} />
-            <Can permission="finance.income.create">
+            <Can permission="income.create">
               <NewTransactionButton mode="INCOME" label="Record Income" />
             </Can>
           </>

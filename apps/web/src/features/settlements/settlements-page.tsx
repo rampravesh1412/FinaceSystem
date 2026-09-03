@@ -41,7 +41,7 @@ export function SettlementsPage() {
         title="Settlements"
         description="Agreed amounts and what has actually been paid against them."
         actions={
-          <Can permission="finance.settlement.create">
+          <Can permission="settlements.create">
             <NewSettlementButton />
           </Can>
         }

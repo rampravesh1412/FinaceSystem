@@ -50,7 +50,7 @@ export function SavingsPage() {
         title="Bachat Khata"
         description="Member savings. Every balance here is money we hold on their behalf, not our own."
         actions={
-          <Can permission="finance.savings.manage">
+          <Can permission="savings.create">
             <NewSavingsAccountButton />
           </Can>
         }

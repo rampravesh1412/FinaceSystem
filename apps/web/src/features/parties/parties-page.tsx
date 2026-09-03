@@ -90,7 +90,7 @@ export function PartiesPage() {
         title="Parties"
         description="Customers, vendors, distributors and agents — one ledger account each."
         actions={
-          <Can permission="finance.party.create">
+          <Can permission="parties.create">
             <NewPartyButton />
           </Can>
         }

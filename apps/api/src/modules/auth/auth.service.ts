@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import type { LoginResponse, SessionUser } from "@amiri/shared";
+import { expandLegacy, type LoginResponse, type SessionUser } from "@amiri/shared";
 import { Role, User, type UserDoc } from "../../models/index.js";
 import {
   AccountLockedError,
@@ -42,7 +42,7 @@ export async function buildSessionUser(
     name: user.name,
     email: user.email,
     role: { id: String(role._id), name: role.name, label: role.label },
-    permissions: role.permissions,
+    permissions: expandLegacy(role.permissions),
     isSuperAdmin: role.isSuperAdmin === true,
     mustChangePassword: user.mustChangePassword,
     lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,

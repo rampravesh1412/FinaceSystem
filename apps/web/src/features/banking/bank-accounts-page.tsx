@@ -35,7 +35,7 @@ export function BankAccountsPage() {
         title="Accounts"
         description="Bank accounts and cash drawers. Balances are computed from the ledger, not stored."
         actions={
-          <Can permission="finance.bank.create">
+          <Can permission="bank_accounts.create">
             <NewAccountButton />
           </Can>
         }
@@ -95,7 +95,7 @@ function BankAccountsTable() {
           />
         </div>
 
-        {!can("finance.bank.viewFull") ? (
+        {!can("bank_accounts.viewFull") ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <Badge variant="outline" className="w-fit">

@@ -1,5 +1,8 @@
 import { Types } from "mongoose";
-import { formatINR, type NotificationType, type Severity } from "@amiri/shared";
+import {
+  formatINR, grantStringsFor,
+  type NotificationType, type Permission, type Severity,
+} from "@amiri/shared";
 import { Notification, Role, User } from "../../models/index.js";
 import { logger } from "../../config/logger.js";
 
@@ -56,11 +59,17 @@ export async function notify(userIds: string[], input: NotifyInput): Promise<voi
  * whenever somebody changed role, so a message about last week's payment could surface
  * for a person who had nothing to do with it.
  */
-export async function notifyPermission(permission: string, input: NotifyInput): Promise<void> {
+export async function notifyPermission(permission: Permission, input: NotifyInput): Promise<void> {
   try {
-    const roles = await Role.find({
-      $or: [{ permissions: permission }, { permissions: "*" }],
-    })
+    /**
+     * Matched against every string that would grant it, not just the key itself.
+     *
+     * This is a raw database query, so it cannot call `hasPermission` — it has to know
+     * the literal strings. That includes the legacy vocabulary: until the migration runs,
+     * the role that may approve still says `approvals.act` on disk, and a query for
+     * `approvals.approve` alone would find nobody and silently send no notification.
+     */
+    const roles = await Role.find({ permissions: { $in: grantStringsFor(permission) } })
       .select("_id")
       .lean();
 
@@ -86,7 +95,7 @@ export async function notifyApprovalRequired(options: {
   amount: number;
   submittedBy: string;
 }): Promise<void> {
-  await notifyPermission("approvals.act", {
+  await notifyPermission("approvals.approve", {
     type: "APPROVAL_REQUIRED",
     severity: "WARNING",
     title: `${options.typeLabel} of ${formatINR(options.amount)} needs approval`,
@@ -123,14 +132,14 @@ export async function notifyApprovalDecided(options: {
   });
 }
 
-/** A drawer that did not tally. Everyone holding `finance.cash.view` is told. */
+/** A drawer that did not tally. Everyone who can open the Daily Cash Tally is told. */
 export async function notifyCashTallyMismatch(options: {
   drawer: string;
   difference: number;
   status: string;
   countedBy: string;
 }): Promise<void> {
-  await notifyPermission("finance.cash.view", {
+  await notifyPermission("cash_tally.view", {
     type: "CASH_TALLY_MISMATCH",
     severity: "WARNING",
     title: `Cash ${options.status.toLowerCase()} by ${formatINR(Math.abs(options.difference))}`,
@@ -147,7 +156,7 @@ export async function notifyReversal(options: {
   reversedBy: string;
   reason: string;
 }): Promise<void> {
-  await notifyPermission("finance.daybook.view", {
+  await notifyPermission("daybook.view", {
     type: "TRANSACTION_REVERSED",
     severity: "WARNING",
     title: `${options.originalNo} was reversed`,

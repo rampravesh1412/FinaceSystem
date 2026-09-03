@@ -25,7 +25,7 @@ const idParam = z.object({ id: objectId });
 
 partyRouter.get(
   "/",
-  requirePermission("finance.party.view"),
+  requirePermission("parties.view"),
   validate({ query: partyQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as PartyQuery;
@@ -53,7 +53,7 @@ partyRouter.get(
 
 partyRouter.get(
   "/:id",
-  requirePermission("finance.party.view"),
+  requirePermission("parties.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -63,7 +63,7 @@ partyRouter.get(
 
 partyRouter.post(
   "/",
-  requirePermission("finance.party.create"),
+  requirePermission("parties.create"),
   mutationLimiter,
   validate({ body: createPartySchema }),
   asyncHandler(async (req, res) => {
@@ -76,7 +76,7 @@ partyRouter.post(
 
 partyRouter.patch(
   "/:id",
-  requirePermission("finance.party.edit"),
+  requirePermission("parties.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updatePartySchema }),
   asyncHandler(async (req, res) => {

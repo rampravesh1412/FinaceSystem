@@ -4,7 +4,13 @@ import { z } from "zod";
 import { ledgerAccountQuerySchema, ledgerEntryQuerySchema, objectId, type LedgerAccountQuery } from "@amiri/shared";
 import { asyncHandler, escapeRegex, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { requireAuth, requirePermission } from "../../middleware/auth.js";
+import {
+  requireAnyPermission,
+  requireAuth,
+  requirePermission,
+  requireResolvedPermission,
+} from "../../middleware/auth.js";
+import { hasPermission, type Permission } from "@amiri/shared";
 import { LedgerAccount, LedgerEntry } from "../../models/index.js";
 import { NotFoundError } from "../../lib/errors.js";
 import * as ledger from "../../services/ledger.service.js";
@@ -22,9 +28,60 @@ ledgerRouter.use(requireAuth);
 
 const idParam = z.object({ id: objectId });
 
+/**
+ * Which ledger screen owns an account.
+ *
+ * One endpoint serves the Cash Book, the Bank Book, the Party Ledger, the Savings Ledger,
+ * the Expense Ledger, the Income Ledger and the General Ledger. Guarding it with a single
+ * `finance.ledger.view` is what made those screens inseparable — granting somebody the
+ * General Ledger handed them every party's statement and every head's spend at the same
+ * time, with no way to say otherwise.
+ */
+const LEDGER_MODULE_OF_KIND: Record<string, string> = {
+  PARTY: "party_ledger",
+  SAVINGS: "savings_ledger",
+  EXPENSE: "expense_ledger",
+  // A charge is an expense head by another name, and it appears on the Expense Ledger.
+  CHARGE: "expense_ledger",
+  INCOME: "income_ledger",
+  BANK: "bank_book",
+  CASH: "cash_book",
+};
+
+const LEDGER_VIEWS: Permission[] = [
+  "general_ledger.view", "party_ledger.view", "savings_ledger.view",
+  "expense_ledger.view", "income_ledger.view", "bank_book.view", "cash_book.view",
+];
+
+/**
+ * The permission for reading THIS account's statement.
+ *
+ * `general_ledger.view` is the master key by design: the General Ledger screen is the one
+ * that lists every account in the chart, so holding it means holding the whole book.
+ * Equity and suspense have no screen of their own and fall to it as well.
+ */
+async function statementPermission(req: {
+  params: Record<string, unknown>;
+  auth?: { permissions: string[] };
+}): Promise<Permission | null> {
+  const granted = req.auth?.permissions ?? [];
+  if (hasPermission(granted, "general_ledger.view")) return null;
+
+  const account = await LedgerAccount.findById(String(req.params.id)).select("kind").lean();
+  // Absent: let the handler raise the NotFoundError rather than answering "denied", which
+  // would turn this route into a way to probe for account ids.
+  if (!account) return null;
+
+  const module = LEDGER_MODULE_OF_KIND[account.kind];
+  return (module ? `${module}.view` : "general_ledger.view") as Permission;
+}
+
 ledgerRouter.get(
   "/accounts",
-  requirePermission("finance.ledger.view"),
+  // The account picker feeds every ledger screen, so any one of them opens it. Which
+  // accounts come back is the screen's own `kind` filter, and each statement is guarded
+  // individually below.
+  requireAnyPermission(...LEDGER_VIEWS),
   validate({ query: ledgerAccountQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as LedgerAccountQuery;
@@ -91,7 +148,7 @@ ledgerRouter.get(
  */
 ledgerRouter.get(
   "/accounts/:id/entries",
-  requirePermission("finance.ledger.view"),
+  requireResolvedPermission(statementPermission),
   validate({ params: idParam, query: ledgerEntryQuerySchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -202,7 +259,7 @@ ledgerRouter.get(
  */
 ledgerRouter.get(
   "/trial-balance",
-  requirePermission("reports.trialBalance"),
+  requirePermission("trial_balance.view"),
   validate({ query: z.object({ asOf: z.coerce.date().optional() }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { asOf?: Date };
@@ -224,7 +281,8 @@ ledgerRouter.get(
  */
 ledgerRouter.get(
   "/accounts/:id/verify",
-  requirePermission("finance.ledger.view"),
+  // Replaying every entry to prove the cache is a whole-book operation.
+  requirePermission("general_ledger.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;

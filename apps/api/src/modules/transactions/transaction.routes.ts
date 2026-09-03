@@ -35,6 +35,7 @@ import { validate } from "../../middleware/validate.js";
 import {
   requireAuth,
   requirePermission,
+  requireResolvedPermission,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { NotFoundError } from "../../lib/errors.js";
@@ -46,6 +47,7 @@ import * as payments from "./payment.service.js";
 import * as expenses from "./expense.service.js";
 import * as reversal from "./reversal.service.js";
 import * as listing from "./transaction.service.js";
+import { transactionPermission } from "./transaction-permissions.js";
 
 export const paymentInRouter: Router = Router();
 export const paymentOutRouter: Router = Router();
@@ -111,14 +113,14 @@ function listHandler(type?: Parameters<typeof listing.list>[0]["type"]) {
 
 paymentInRouter.get(
   "/",
-  requirePermission("finance.payment.view"),
+  requirePermission("payment_in.view"),
   validate({ query: transactionQuerySchema }),
   listHandler("PAYMENT_IN"),
 );
 
 paymentInRouter.post(
   "/",
-  requirePermission("finance.payment.create"),
+  requirePermission("payment_in.create"),
   mutationLimiter,
   validate({ body: createPaymentInSchema }),
   asyncHandler(async (req, res) => {
@@ -131,13 +133,13 @@ paymentInRouter.post(
 /**
  * Edit a posted Payment In.
  *
- * Guarded by `finance.payment.reverse`, not `.edit`: when the money changes this reverses
- * and reposts, and anyone who can do that through this route could do it through the
- * reversal route anyway. Gating it lower would be a way around the stricter permission.
+ * `payment_in.edit` is the gate, and a money change additionally reverses and reposts —
+ * so a role that may edit but not reverse can still correct a reference or a narration,
+ * and `editPayment` refuses the money edit itself.
  */
 paymentInRouter.patch(
   "/:id",
-  requirePermission("finance.payment.reverse"),
+  requirePermission("payment_in.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updatePaymentSchema }),
   asyncHandler(async (req, res) => {
@@ -155,14 +157,14 @@ paymentInRouter.patch(
 
 paymentOutRouter.get(
   "/",
-  requirePermission("finance.payment.view"),
+  requirePermission("payment_out.view"),
   validate({ query: transactionQuerySchema }),
   listHandler("PAYMENT_OUT"),
 );
 
 paymentOutRouter.post(
   "/",
-  requirePermission("finance.payment.create"),
+  requirePermission("payment_out.create"),
   mutationLimiter,
   validate({ body: createPaymentOutSchema }),
   asyncHandler(async (req, res) => {
@@ -175,7 +177,7 @@ paymentOutRouter.post(
 /** Edit a posted Payment Out. See the Payment In route above. */
 paymentOutRouter.patch(
   "/:id",
-  requirePermission("finance.payment.reverse"),
+  requirePermission("payment_out.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updatePaymentSchema }),
   asyncHandler(async (req, res) => {
@@ -193,14 +195,14 @@ paymentOutRouter.patch(
 
 transferRouter.get(
   "/",
-  requirePermission("finance.bank.view"),
+  requirePermission("bank_transfer.view"),
   validate({ query: transactionQuerySchema }),
   listHandler("BANK_TRANSFER"),
 );
 
 transferRouter.post(
   "/",
-  requirePermission("finance.bank.transfer"),
+  requirePermission("bank_transfer.create"),
   mutationLimiter,
   validate({ body: createBankTransferSchema }),
   asyncHandler(async (req, res) => {
@@ -214,14 +216,14 @@ transferRouter.post(
 
 expenseRouter.get(
   "/",
-  requirePermission("finance.expense.view"),
+  requirePermission("expenses.view"),
   validate({ query: transactionQuerySchema }),
   listHandler("EXPENSE"),
 );
 
 expenseRouter.post(
   "/",
-  requirePermission("finance.expense.create"),
+  requirePermission("expenses.create"),
   mutationLimiter,
   validate({ body: createExpenseSchema }),
   asyncHandler(async (req, res) => {
@@ -244,7 +246,7 @@ expenseRouter.post(
  */
 expenseRouter.get(
   "/categories",
-  requirePermission("finance.expense.view"),
+  requirePermission("heads.view"),
   validate({ query: z.object({ includeInactive: booleanFlag.default(false) }) }),
   asyncHandler(async (req, res) => {
     const { includeInactive } = req.valid.query as { includeInactive: boolean };
@@ -254,7 +256,7 @@ expenseRouter.get(
 
 expenseRouter.post(
   "/categories",
-  requirePermission("finance.expense.manageCategories"),
+  requirePermission("heads.create"),
   mutationLimiter,
   validate({ body: createExpenseCategorySchema }),
   asyncHandler(async (req, res) => {
@@ -276,7 +278,7 @@ expenseRouter.post(
  */
 expenseRouter.patch(
   "/categories/:id",
-  requirePermission("finance.expense.manageCategories"),
+  requirePermission("heads.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateAccountHeadSchema }),
   asyncHandler(async (req, res) => {
@@ -295,14 +297,14 @@ expenseRouter.patch(
 
 incomeRouter.get(
   "/",
-  requirePermission("finance.income.view"),
+  requirePermission("income.view"),
   validate({ query: transactionQuerySchema }),
   listHandler("INCOME"),
 );
 
 incomeRouter.post(
   "/",
-  requirePermission("finance.income.create"),
+  requirePermission("income.create"),
   mutationLimiter,
   validate({ body: createIncomeSchema }),
   asyncHandler(async (req, res) => {
@@ -314,7 +316,7 @@ incomeRouter.post(
 
 incomeRouter.get(
   "/heads",
-  requirePermission("finance.income.view"),
+  requirePermission("heads.view"),
   validate({ query: z.object({ includeInactive: booleanFlag.default(false) }) }),
   asyncHandler(async (req, res) => {
     const { includeInactive } = req.valid.query as { includeInactive: boolean };
@@ -324,7 +326,7 @@ incomeRouter.get(
 
 incomeRouter.post(
   "/heads",
-  requirePermission("finance.income.manageHeads"),
+  requirePermission("heads.create"),
   mutationLimiter,
   validate({ body: createIncomeHeadSchema }),
   asyncHandler(async (req, res) => {
@@ -336,7 +338,7 @@ incomeRouter.post(
 /** Rename or retire an income head. See the expense head route above. */
 incomeRouter.patch(
   "/heads/:id",
-  requirePermission("finance.income.manageHeads"),
+  requirePermission("heads.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateAccountHeadSchema }),
   asyncHandler(async (req, res) => {
@@ -431,7 +433,7 @@ function toChargeRuleSummary(r: {
 
 chargeRouter.get(
   "/",
-  requirePermission("finance.charges.view"),
+  requirePermission("charges.view"),
   validate({ query: chargeRuleQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { page: number; limit: number; status?: string };
@@ -445,7 +447,7 @@ chargeRouter.get(
 
 chargeRouter.post(
   "/",
-  requirePermission("finance.charges.manage"),
+  requirePermission("charges.create"),
   mutationLimiter,
   validate({ body: createChargeRuleSchema }),
   asyncHandler(async (req, res) => {
@@ -472,7 +474,7 @@ chargeRouter.post(
  */
 chargeRouter.patch(
   "/:id",
-  requirePermission("finance.charges.manage"),
+  requirePermission("charges.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateChargeRuleSchema }),
   asyncHandler(async (req, res) => {
@@ -533,7 +535,7 @@ chargeRouter.patch(
  */
 chargeRouter.post(
   "/preview",
-  requirePermission("finance.charges.view"),
+  requirePermission("charges.view"),
   validate({ body: previewChargeSchema }),
   asyncHandler(async (req, res) => {
     const { chargeRuleId, amount, transactionType } = req.valid.body as {
@@ -549,14 +551,14 @@ chargeRouter.post(
 
 transactionRouter.get(
   "/",
-  requirePermission("finance.daybook.view"),
+  requirePermission("daybook.view"),
   validate({ query: transactionQuerySchema }),
   listHandler(),
 );
 
 transactionRouter.get(
   "/:id",
-  requirePermission("finance.daybook.view"),
+  requirePermission("daybook.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -572,7 +574,9 @@ transactionRouter.get(
  */
 transactionRouter.post(
   "/:id/reverse",
-  requirePermission("finance.payment.reverse"),
+  // One endpoint, seven kinds of transaction. The permission is whichever module owns the
+  // row being reversed — see `moduleOfTransaction`.
+  requireResolvedPermission((req) => transactionPermission(String(req.params.id), "reverse")),
   mutationLimiter,
   validate({ params: idParam, body: reverseTransactionSchema }),
   asyncHandler(async (req, res) => {

@@ -182,7 +182,7 @@ export function SavingsTransactionButtons({ account }: { account: SavingsAccount
   const { can } = useAuth();
   const [operation, setOperation] = React.useState<"DEPOSIT" | "WITHDRAWAL" | null>(null);
 
-  if (!can("finance.savings.transact")) return null;
+  if (!can("savings.transact")) return null;
 
   return (
     <>

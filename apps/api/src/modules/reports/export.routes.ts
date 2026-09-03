@@ -48,7 +48,7 @@ const rangeSchema = z.object({
 
 exportRouter.get(
   "/daybook",
-  requirePermission("reports.export"),
+  requirePermission("daybook.export"),
   exportLimiter,
   validate({ query: rangeSchema }),
   asyncHandler(async (req, res) => {
@@ -106,7 +106,7 @@ exportRouter.get(
 
 exportRouter.get(
   "/profit-loss",
-  requirePermission("reports.export"),
+  requirePermission("profit_loss.export"),
   exportLimiter,
   validate({ query: rangeSchema }),
   asyncHandler(async (req, res) => {
@@ -164,7 +164,7 @@ exportRouter.get(
 
 exportRouter.get(
   "/balance-sheet",
-  requirePermission("reports.export"),
+  requirePermission("balance_sheet.export"),
   exportLimiter,
   validate({ query: z.object({ asOf: z.coerce.date().optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
@@ -227,7 +227,7 @@ exportRouter.get(
 
 exportRouter.get(
   "/trial-balance",
-  requirePermission("reports.export"),
+  requirePermission("trial_balance.export"),
   exportLimiter,
   validate({ query: z.object({ asOf: z.coerce.date().optional() }).merge(formatSchema) }),
   asyncHandler(async (req, res) => {
@@ -268,7 +268,7 @@ exportRouter.get(
 
 exportRouter.get(
   "/ledger/:accountId",
-  requirePermission("reports.export"),
+  requirePermission("general_ledger.export"),
   exportLimiter,
   validate({ params: z.object({ accountId: objectId }), query: rangeSchema.partial({ from: true, to: true }) }),
   asyncHandler(async (req, res) => {

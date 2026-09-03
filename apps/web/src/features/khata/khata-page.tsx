@@ -48,7 +48,7 @@ function KhataPartyPicker() {
         title="Digital Khata"
         description="Choose a party to open their khata — what they owe, what we owe, and every entry between."
         actions={
-          <Can permission="finance.adjustment.create">
+          <Can permission="adjustments.create">
             <NewAdjustmentButton />
           </Can>
         }

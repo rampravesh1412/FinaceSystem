@@ -15,7 +15,8 @@
     "migrate:global-masters": "tsx src/scripts/migrate-global-masters.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate:remove-branches": "tsx src/scripts/migrate-remove-branches.ts"
+    "migrate:remove-branches": "tsx src/scripts/migrate-remove-branches.ts",
+    "migrate:permission-catalogue": "tsx src/scripts/migrate-permission-catalogue.ts"
   },
   "dependencies": {
     "@amiri/shared": "*",

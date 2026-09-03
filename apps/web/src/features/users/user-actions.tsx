@@ -48,7 +48,7 @@ export function UserRowActions({ user }: { user: UserSummary }) {
 
   const isSelf = me?.id === user.id;
   const canEdit = can("users.edit");
-  const canDisable = can("users.disable");
+  const canDisable = can("users.delete");
   const canReset = can("users.resetPassword");
 
   if (!canEdit && !canDisable && !canReset) return null;

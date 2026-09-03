@@ -1,5 +1,5 @@
 import type { Request, RequestHandler } from "express";
-import { hasPermission, type Permission } from "@amiri/shared";
+import { hasPermission, type Permission, expandLegacy} from "@amiri/shared";
 import {
   ForbiddenError,
   PermissionDeniedError,
@@ -68,7 +68,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
       email: user.email,
       roleId: String(role._id),
       roleName: role.name,
-      permissions: role.permissions,
+      permissions: expandLegacy(role.permissions),
       isSuperAdmin: role.isSuperAdmin === true,
       sessionId: claims.sid,
     };
@@ -106,6 +106,37 @@ export function requirePermission(permission: Permission): RequestHandler {
     } catch (err) {
       next(err);
     }
+  };
+}
+
+/**
+ * Require a permission that is only known once the target has been read.
+ *
+ * Reversal, approval and rejection all act on a row whose TYPE decides which module owns
+ * it — the same endpoint reverses a payment out, an expense and a settlement. Guarding it
+ * with one fixed permission means the other six are enforced by whatever that one happens
+ * to be, which is how `finance.settlement.approve` and every other per-module approve key
+ * came to be grantable while nothing checked them.
+ *
+ * The resolver returns `null` when the target does not exist; the handler behind it raises
+ * the NotFoundError, so a caller cannot use permission denials to probe for ids.
+ */
+export function requireResolvedPermission(
+  resolve: (req: Request) => Promise<Permission | null>,
+): RequestHandler {
+  return (req, _res, next) => {
+    void (async () => {
+      try {
+        const auth = assertAuth(req);
+        const permission = await resolve(req);
+        if (permission && !hasPermission(auth.permissions, permission)) {
+          throw new PermissionDeniedError(permission);
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
+    })();
   };
 }
 

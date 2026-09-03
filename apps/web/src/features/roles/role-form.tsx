@@ -5,11 +5,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { Lock, LogOut, MoreHorizontal, Pencil, Plus, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
 import {
-  PERMISSIONS,
+  ACTION_LABEL,
+  ACTION_ORDER,
+  ALL_PERMISSIONS,
   createRoleSchema,
-  groupPermissions,
+  groupModules,
   type CreateRoleInput,
+  type ModuleDefinition,
   type Permission,
+  type PermissionAction,
   type RoleSummary,
 } from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
@@ -72,7 +76,7 @@ export function RoleRowActions({ role }: { role: RoleSummary }) {
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
-  if (!can("roles.manage")) return null;
+  if (!can("roles.edit")) return null;
 
   // The super admin role is immutable in both directions — see the note above.
   const locked = role.isSystem && role.isSuperAdmin;
@@ -137,7 +141,19 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
   );
   const [isSuperAdmin, setIsUnscoped] = React.useState(role?.isSuperAdmin ?? false);
 
-  const groups = React.useMemo(() => groupPermissions(), []);
+  const groups = React.useMemo(() => groupModules({ includeHidden: true }), []);
+
+  /**
+   * Only the actions that actually occur in this group get a column.
+   *
+   * Rendering all thirteen everywhere would give the Reports group ten empty cells and
+   * bury the two that matter. The column set is computed per group from the modules in it.
+   */
+  const columnsFor = React.useCallback(
+    (modules: ModuleDefinition[]): PermissionAction[] =>
+      ACTION_ORDER.filter((a) => modules.some((m) => m.actions.includes(a))),
+    [],
+  );
 
   const form = useForm<CreateRoleInput>({
     resolver: zodResolver(createRoleSchema),
@@ -181,13 +197,17 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
       prev.includes(permission) ? prev.filter((p) => p !== permission) : [...prev, permission],
     );
 
-  const toggleGroup = (groupPermissions: Permission[]) =>
+  /** Toggle a whole set at once — a group header, or one module's row. */
+  const toggleMany = (keys: Permission[]) =>
     setPermissions((prev) => {
-      const allOn = groupPermissions.every((p) => prev.includes(p));
+      const allOn = keys.every((p) => prev.includes(p));
       return allOn
-        ? prev.filter((p) => !groupPermissions.includes(p))
-        : [...new Set([...prev, ...groupPermissions])];
+        ? prev.filter((p) => !keys.includes(p))
+        : [...new Set([...prev, ...keys])];
     });
+
+  const permissionsOf = (modules: ModuleDefinition[]): Permission[] =>
+    modules.flatMap((m) => m.actions.map((a) => `${m.key}.${a}` as Permission));
 
   const holders = role?.userCount ?? 0;
 
@@ -256,46 +276,92 @@ function RoleDialog({ role, onClose }: { role?: RoleSummary; onClose: () => void
             <div className="flex items-center justify-between">
               <Label>Permissions</Label>
               <Badge variant="outline">
-                {permissions.length} of {Object.keys(PERMISSIONS).length} selected
+                {permissions.length} of {ALL_PERMISSIONS.length} selected
               </Badge>
             </div>
 
+            {/**
+             * A matrix: one row per sidebar entry, one column per action it supports.
+             *
+             * The old flat checklist could not express "Payment In but not Payment Out",
+             * because those two screens shared a permission — and it showed keys that no
+             * route checked, so ticking them changed nothing. Every row here is a menu
+             * entry and every cell is a guard that runs.
+             */}
             {groups.map((group) => {
-              const allOn = group.permissions.every((p) => permissions.includes(p));
-              const someOn = group.permissions.some((p) => permissions.includes(p));
+              const groupPerms = permissionsOf(group.modules);
+              const allOn = groupPerms.every((p) => permissions.includes(p));
+              const someOn = groupPerms.some((p) => permissions.includes(p));
+              const columns = columnsFor(group.modules);
 
               return (
-                <div key={group.key} className="rounded-md border border-border">
+                <div key={group.group} className="overflow-hidden rounded-md border border-border">
                   <button
                     type="button"
-                    onClick={() => toggleGroup(group.permissions)}
+                    onClick={() => toggleMany(groupPerms)}
                     className="flex w-full items-center justify-between gap-2 border-b border-border bg-surface-muted/40 px-3 py-2 text-left hover:bg-surface-muted"
                   >
-                    <span className="text-xs font-semibold">{group.label}</span>
+                    <span className="text-xs font-semibold">{group.group}</span>
                     <span className="text-2xs text-muted-foreground">
                       {allOn ? "All on — click to clear" : someOn ? "Some on" : "Click to select all"}
                     </span>
                   </button>
 
-                  <div className="grid gap-1.5 p-3 sm:grid-cols-2">
-                    {group.permissions.map((permission) => (
-                      <label
-                        key={permission}
-                        className="flex cursor-pointer items-start gap-2 rounded p-1 text-xs hover:bg-surface-muted"
-                      >
-                        <Checkbox
-                          checked={permissions.includes(permission)}
-                          onCheckedChange={() => toggle(permission)}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          <span className="block">{PERMISSIONS[permission]}</span>
-                          <span className="block font-mono text-2xs text-muted-foreground">
-                            {permission}
-                          </span>
-                        </span>
-                      </label>
-                    ))}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <th className="px-3 py-1.5 text-left font-medium">Screen</th>
+                          {columns.map((a) => (
+                            <th key={a} className="px-2 py-1.5 text-center font-medium">
+                              {ACTION_LABEL[a]}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.modules.map((m) => {
+                          const rowPerms = m.actions.map((a) => `${m.key}.${a}` as Permission);
+                          return (
+                            <tr key={m.key} className="border-b border-border/60 last:border-0">
+                              <td className="px-3 py-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMany(rowPerms)}
+                                  className="text-left hover:underline"
+                                  title={m.description}
+                                >
+                                  {m.label}
+                                  {m.hideInMenu ? (
+                                    <span className="ml-1.5 text-2xs text-muted-foreground">
+                                      (no menu entry)
+                                    </span>
+                                  ) : null}
+                                </button>
+                              </td>
+                              {columns.map((a) => {
+                                const key = `${m.key}.${a}` as Permission;
+                                // A blank cell means the action does not exist for this
+                                // screen — a Balance Sheet cannot be approved. Showing an
+                                // unchecked box there would imply it could be turned on.
+                                if (!m.actions.includes(a)) {
+                                  return <td key={a} className="px-2 py-1.5 text-center text-muted-foreground/30">–</td>;
+                                }
+                                return (
+                                  <td key={a} className="px-2 py-1.5 text-center">
+                                    <Checkbox
+                                      aria-label={`${ACTION_LABEL[a]} ${m.label}`}
+                                      checked={permissions.includes(key)}
+                                      onCheckedChange={() => toggle(key)}
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               );

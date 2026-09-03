@@ -2,8 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   createRoleSchema,
-  groupPermissions,
+  describePermission,
+  expandLegacy,
+  groupModules,
+  hasPermission,
   objectId,
+  type Permission,
   updateRoleSchema,
   type CreateRoleInput,
   type UpdateRoleInput,
@@ -31,11 +35,47 @@ roleRouter.use(requireAuth);
 
 const idParam = z.object({ id: objectId });
 
-/** The permission catalogue, grouped, for the role editor UI. */
+/**
+ * Normalise a grant list before it is stored.
+ *
+ * Two jobs. It rewrites any legacy string into the keys it stands for, so pressing Save on
+ * a role written under the old vocabulary CLEANS it rather than storing the old strings
+ * back; and it refuses a grant the actor does not themselves hold, which is the escalation
+ * a role editor otherwise offers for free — anyone with `roles.edit` could mint a role
+ * with every permission and assign it to themselves.
+ *
+ * A super admin is exempt from the second rule: they hold everything by definition, and it
+ * is their job to hand out what they are not personally using.
+ */
+function normaliseGrants(
+  requested: readonly string[],
+  actor: { permissions: string[]; isSuperAdmin: boolean },
+): string[] {
+  const expanded = expandLegacy(requested);
+  if (actor.isSuperAdmin) return expanded;
+
+  const beyond = expanded.filter((p) => !hasPermission(actor.permissions, p as Permission));
+  if (beyond.length > 0) {
+    throw new ForbiddenError(
+      `You cannot grant a permission you do not hold yourself: ${beyond
+        .map((p) => describePermission(p))
+        .join(", ")}`,
+    );
+  }
+  return expanded;
+}
+
+/**
+ * The permission catalogue, grouped, for the role matrix.
+ *
+ * Hidden modules are included: `adjustments` has no sidebar entry but is very much
+ * something a role is granted, and leaving it out of the matrix is how a permission
+ * becomes ungrantable in practice while still being enforced.
+ */
 roleRouter.get(
   "/catalogue",
   requirePermission("roles.view"),
-  asyncHandler(async (_req, res) => ok(res, groupPermissions())),
+  asyncHandler(async (_req, res) => ok(res, groupModules({ includeHidden: true }))),
 );
 
 roleRouter.get(
@@ -68,7 +108,7 @@ roleRouter.get(
 
 roleRouter.post(
   "/",
-  requirePermission("roles.manage"),
+  requirePermission("roles.create"),
   mutationLimiter,
   validate({ body: createRoleSchema }),
   asyncHandler(async (req, res) => {
@@ -86,7 +126,12 @@ roleRouter.post(
     }
 
     try {
-      const role = await Role.create({ ...input, isSystem: false, createdBy: req.auth!.userId });
+      const role = await Role.create({
+        ...input,
+        permissions: normaliseGrants(input.permissions ?? [], req.auth!),
+        isSystem: false,
+        createdBy: req.auth!.userId,
+      });
 
       await audit.record(audit.auditContextFrom(req), {
         action: "CREATE",
@@ -107,7 +152,7 @@ roleRouter.post(
 
 roleRouter.patch(
   "/:id",
-  requirePermission("roles.manage"),
+  requirePermission("roles.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateRoleSchema }),
   asyncHandler(async (req, res) => {
@@ -136,6 +181,10 @@ roleRouter.patch(
 
       const before = { permissions: doc.permissions, label: doc.label, isSuperAdmin: doc.isSuperAdmin };
       Object.assign(doc, input, { updatedBy: req.auth!.userId });
+      // Whether or not this edit touched them, what gets stored is the current vocabulary.
+      doc.permissions = input.permissions
+        ? normaliseGrants(input.permissions, req.auth!)
+        : expandLegacy(doc.permissions);
       await doc.save({ session });
 
       await audit.record(
@@ -167,7 +216,7 @@ roleRouter.patch(
 
 roleRouter.delete(
   "/:id",
-  requirePermission("roles.manage"),
+  requirePermission("roles.delete"),
   mutationLimiter,
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {

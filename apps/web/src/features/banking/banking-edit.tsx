@@ -71,7 +71,7 @@ function ActionsMenu({ label, onEdit }: { label: string; onEdit: () => void }) {
 export function BankRowActions({ bank }: { bank: BankSummary }) {
   const { can } = useAuth();
   const [editing, setEditing] = React.useState(false);
-  if (!can("finance.bank.edit")) return null;
+  if (!can("banks.edit")) return null;
 
   return (
     <>
@@ -168,7 +168,7 @@ function EditBankDialog({ bank, onClose }: { bank: BankSummary; onClose: () => v
 export function BankAccountRowActions({ account }: { account: BankAccountSummary }) {
   const { can } = useAuth();
   const [editing, setEditing] = React.useState(false);
-  if (!can("finance.bank.edit")) return null;
+  if (!can("bank_accounts.edit")) return null;
 
   return (
     <>
@@ -307,7 +307,7 @@ function EditBankAccountDialog({
 export function CashAccountRowActions({ account }: { account: CashAccountSummary }) {
   const { can } = useAuth();
   const [editing, setEditing] = React.useState(false);
-  if (!can("finance.bank.edit")) return null;
+  if (!can("bank_accounts.edit")) return null;
 
   return (
     <>

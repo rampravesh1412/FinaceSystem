@@ -48,7 +48,7 @@ dashboardRouter.get(
 
 reportRouter.get(
   "/profit-loss",
-  requirePermission("reports.pnl"),
+  requirePermission("profit_loss.view"),
   validate({ query: reportRangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ReportRange;
@@ -73,7 +73,7 @@ reportRouter.get(
  */
 reportRouter.get(
   "/monthly-history",
-  requirePermission("reports.pnl"),
+  requirePermission("monthly_history.view"),
   validate({ query: reportRangeSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as ReportRange;
@@ -91,7 +91,7 @@ reportRouter.get(
 
 reportRouter.get(
   "/balance-sheet",
-  requirePermission("reports.balanceSheet"),
+  requirePermission("balance_sheet.view"),
   validate({ query: asOfSchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as AsOfQuery;
@@ -126,13 +126,13 @@ reportRouter.get(
 
 tallyRouter.get(
   "/targets",
-  requirePermission("finance.cash.view"),
+  requirePermission("cash_tally.view"),
   asyncHandler(async (_req, res) => ok(res, await tally.tallyTargets())),
 );
 
 tallyRouter.get(
   "/",
-  requirePermission("finance.cash.view"),
+  requirePermission("cash_tally.view"),
   validate({ query: z.object({ date: z.coerce.date().optional(), cashAccountId: objectId }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { date?: Date; cashAccountId: string };
@@ -148,7 +148,7 @@ tallyRouter.get(
  */
 tallyRouter.post(
   "/",
-  requirePermission("finance.cash.tally"),
+  requirePermission("cash_tally.create"),
   mutationLimiter,
   validate({ body: recordTallySchema }),
   asyncHandler(async (req, res) => {
@@ -166,7 +166,7 @@ tallyRouter.post(
 
 tallyRouter.get(
   "/history",
-  requirePermission("finance.cash.view"),
+  requirePermission("cash_tally.view"),
   validate({ query: z.object({ cashAccountId: objectId, limit: z.coerce.number().min(1).max(180).default(60) }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { cashAccountId: string; limit: number };

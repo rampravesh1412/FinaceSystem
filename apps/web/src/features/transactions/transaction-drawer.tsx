@@ -6,7 +6,9 @@ import { toast } from "sonner";
 import {
   ArrowRight, Clock, FileText, Link2, Paperclip, Pencil, Scale, TriangleAlert, Undo2, User,
 } from "lucide-react";
-import { reverseTransactionSchema, type ReverseTransactionInput, type TransactionDetail } from "@amiri/shared";
+import { reverseTransactionSchema, type ReverseTransactionInput, type TransactionDetail,
+  transactionPermissionFor,
+} from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/features/auth/auth-context";
 import { formatDate, formatDateTime, relativeTime } from "@/lib/utils";
@@ -77,6 +79,12 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
   const [reverseOpen, setReverseOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   const isPayment = txn.type === "PAYMENT_IN" || txn.type === "PAYMENT_OUT";
+
+  // Resolved from the transaction's own type, through the map the API guard reads.
+  const reversePermission = transactionPermissionFor(txn.type, "reverse");
+  const editPermission = transactionPermissionFor(txn.type, "edit");
+  const canReverse = reversePermission !== null && can(reversePermission);
+  const canEdit = editPermission !== null && can(editPermission);
 
   const totalDebit = txn.entries.reduce((s, e) => s + e.debit, 0);
   const totalCredit = txn.entries.reduce((s, e) => s + e.credit, 0);
@@ -351,18 +359,20 @@ function DrawerBody({ txn, onClose }: { txn: TransactionDetail; onClose: () => v
       {/**
         * Edit and Reverse. There is no delete, anywhere.
         *
-        * Edit is offered only on a payment, because it is the only type whose correction
-        * path is built — and it shares `finance.payment.reverse`, since a money edit IS a
-        * reversal underneath and gating it lower would be a way around the stricter
-        * permission.
+        * The permission depends on the transaction's TYPE, resolved through the same map
+        * the server guard uses — a Reverse button that appears for somebody the API then
+        * refuses is worse than no button, and one fixed permission cannot be right for a
+        * screen that shows payments, expenses, income and settlements alike.
         */}
-      {txn.status === "COMPLETED" && !txn.isReversal && can("finance.payment.reverse") ? (
+      {txn.status === "COMPLETED" && !txn.isReversal && canReverse ? (
         <div className="flex items-center justify-between gap-3 border-t border-border p-4">
           <p className="text-2xs text-muted-foreground">
             Nothing here is deleted. A correction is posted; the original stays.
           </p>
           <div className="flex shrink-0 gap-2">
-            {isPayment ? (
+            {/* Editing is its own permission now: correcting a reference is not reversing
+                a posting, and a desk may well allow one without the other. */}
+            {isPayment && canEdit ? (
               <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                 <Pencil />
                 Edit

@@ -59,7 +59,7 @@ export function ReportsIndexPage() {
           description="Income earned less expenses incurred, for the period. Not the same as cash received."
           exportPath="/export/profit-loss"
           params={{ from, to }}
-          permission="reports.pnl"
+          permission="profit_loss.view"
           can={can}
         />
         <ReportCard
@@ -68,7 +68,7 @@ export function ReportsIndexPage() {
           title="Monthly History"
           description="Profit, expenses and party movement month by month, so this period can be read against the ones before it."
           params={{ from, to }}
-          permission="reports.pnl"
+          permission="monthly_history.view"
           can={can}
         />
         <ReportCard
@@ -78,7 +78,7 @@ export function ReportsIndexPage() {
           description="What is owned, what is owed and what is left, as at the end date."
           exportPath="/export/balance-sheet"
           params={{ asOf: to }}
-          permission="reports.balanceSheet"
+          permission="balance_sheet.view"
           can={can}
         />
         <ReportCard
@@ -88,7 +88,7 @@ export function ReportsIndexPage() {
           description="Every account's net position. Proves debits equal credits."
           exportPath="/export/trial-balance"
           params={{ asOf: to }}
-          permission="reports.trialBalance"
+          permission="trial_balance.view"
           can={can}
         />
         <ReportCard
@@ -98,7 +98,7 @@ export function ReportsIndexPage() {
           description="Every transaction as posted, in order, with its running effect."
           exportPath="/export/daybook"
           params={{ from, to }}
-          permission="finance.daybook.view"
+          permission="daybook.view"
           can={can}
         />
         <ReportCard
@@ -106,7 +106,7 @@ export function ReportsIndexPage() {
           icon={Wallet}
           title="Daily Cash Tally"
           description="What the drawer should hold against what was counted. Differences are reported, never absorbed."
-          permission="finance.cash.view"
+          permission="cash_book.view"
           can={can}
         />
         <ReportCard

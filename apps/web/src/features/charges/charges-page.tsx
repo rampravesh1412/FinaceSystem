@@ -56,7 +56,7 @@ export function ChargesPage() {
         title="Charges & Commission"
         description="Every rule shows what it does to ₹1,00,000. Gross, charge and net stay three separate figures — a charge never silently rewrites an amount."
         actions={
-          <Can permission="finance.charges.manage">
+          <Can permission="charges.create">
             <NewChargeRuleButton />
           </Can>
         }
@@ -157,7 +157,7 @@ export function ChargesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="screen-only text-right">
-                    <Can permission="finance.charges.manage">
+                    <Can permission="charges.edit">
                       <RuleActions rule={rule} />
                     </Can>
                   </TableCell>

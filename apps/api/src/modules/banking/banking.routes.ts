@@ -44,7 +44,7 @@ const idParam = z.object({ id: objectId });
 
 bankRouter.get(
   "/",
-  requirePermission("finance.bank.view"),
+  requirePermission("banks.view"),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
@@ -56,7 +56,7 @@ bankRouter.get(
 
 bankRouter.post(
   "/",
-  requirePermission("finance.bank.create"),
+  requirePermission("banks.create"),
   mutationLimiter,
   validate({ body: createBankSchema }),
   asyncHandler(async (req, res) => {
@@ -69,7 +69,7 @@ bankRouter.post(
 
 bankRouter.patch(
   "/:id",
-  requirePermission("finance.bank.edit"),
+  requirePermission("banks.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateBankSchema }),
   asyncHandler(async (req, res) => {
@@ -83,7 +83,7 @@ bankRouter.patch(
 
 bankAccountRouter.get(
   "/",
-  requirePermission("finance.bank.view"),
+  requirePermission("bank_accounts.view"),
   validate({ query: bankAccountQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as BankAccountQuery;
@@ -99,7 +99,7 @@ bankAccountRouter.get(
       page,
       // Full account numbers require their own permission; everyone else gets
       // XXXX XXXX 1234 and the digits never leave the server.
-      hasPermission(req.auth!.permissions, "finance.bank.viewFull"),
+      hasPermission(req.auth!.permissions, "bank_accounts.viewFull"),
     );
 
     return paginated(res, items, total, page.page, page.limit, { totalBalance });
@@ -108,7 +108,7 @@ bankAccountRouter.get(
 
 bankAccountRouter.post(
   "/",
-  requirePermission("finance.bank.create"),
+  requirePermission("bank_accounts.create"),
   mutationLimiter,
   validate({ body: createBankAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -118,7 +118,7 @@ bankAccountRouter.post(
     // account number masked unless they hold `finance.bank.viewFull`.
     return created(
       res,
-      await service.getBankAccountSummary(String(account._id), hasPermission(req.auth!.permissions, "finance.bank.viewFull")),
+      await service.getBankAccountSummary(String(account._id), hasPermission(req.auth!.permissions, "bank_accounts.viewFull")),
       `${account.accountName} added`,
     );
   }),
@@ -126,7 +126,7 @@ bankAccountRouter.post(
 
 bankAccountRouter.patch(
   "/:id",
-  requirePermission("finance.bank.edit"),
+  requirePermission("bank_accounts.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateBankAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -144,7 +144,7 @@ bankAccountRouter.patch(
 
 cashAccountRouter.get(
   "/",
-  requirePermission("finance.cash.view"),
+  requirePermission("bank_accounts.view"),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
@@ -156,7 +156,7 @@ cashAccountRouter.get(
 
 cashAccountRouter.post(
   "/",
-  requirePermission("finance.cash.manage"),
+  requirePermission("bank_accounts.create"),
   mutationLimiter,
   validate({ body: createCashAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -172,7 +172,7 @@ cashAccountRouter.post(
 
 cashAccountRouter.patch(
   "/:id",
-  requirePermission("finance.bank.edit"),
+  requirePermission("bank_accounts.edit"),
   mutationLimiter,
   validate({ params: idParam, body: updateCashAccountSchema }),
   asyncHandler(async (req, res) => {

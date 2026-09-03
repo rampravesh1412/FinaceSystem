@@ -26,7 +26,7 @@ settingsRouter.get(
 
 settingsRouter.put(
   "/organisation",
-  requirePermission("settings.manage"),
+  requirePermission("settings.edit"),
   mutationLimiter,
   validate({ body: organisationProfileSchema }),
   asyncHandler(async (req, res) => {

@@ -31,7 +31,7 @@ export function RolesPage() {
         title="Roles & permissions"
         description="What each role may do. Changing a role takes effect immediately and signs its holders out."
         actions={
-          <Can permission="roles.manage">
+          <Can permission="roles.create">
             <NewRoleButton />
           </Can>
         }

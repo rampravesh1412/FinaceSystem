@@ -113,7 +113,7 @@ export const router = createBrowserRouter([
       {
         path: "daybook",
         element: (
-          <RequirePermission permission="finance.daybook.view">
+          <RequirePermission permission="daybook.view">
             <DayBookPage />
           </RequirePermission>
         ),
@@ -121,7 +121,7 @@ export const router = createBrowserRouter([
       {
         path: "payment-in",
         element: (
-          <RequirePermission permission="finance.payment.view">
+          <RequirePermission permission="payment_in.view">
             <PaymentInPage />
           </RequirePermission>
         ),
@@ -129,7 +129,7 @@ export const router = createBrowserRouter([
       {
         path: "payment-out",
         element: (
-          <RequirePermission permission="finance.payment.view">
+          <RequirePermission permission="payment_out.view">
             <PaymentOutPage />
           </RequirePermission>
         ),
@@ -137,7 +137,7 @@ export const router = createBrowserRouter([
       {
         path: "bank-transfers",
         element: (
-          <RequirePermission permission="finance.bank.view">
+          <RequirePermission permission="bank_transfer.view">
             <BankTransferPage />
           </RequirePermission>
         ),
@@ -145,7 +145,7 @@ export const router = createBrowserRouter([
       {
         path: "expenses",
         element: (
-          <RequirePermission permission="finance.expense.view">
+          <RequirePermission permission="expenses.view">
             <ExpensesPage />
           </RequirePermission>
         ),
@@ -153,7 +153,7 @@ export const router = createBrowserRouter([
       {
         path: "income",
         element: (
-          <RequirePermission permission="finance.income.view">
+          <RequirePermission permission="income.view">
             <IncomePage />
           </RequirePermission>
         ),
@@ -177,7 +177,7 @@ export const router = createBrowserRouter([
       {
         path: "periods",
         element: (
-          <RequirePermission permission="period.view">
+          <RequirePermission permission="periods.view">
             <PeriodsPage />
           </RequirePermission>
         ),
@@ -185,7 +185,7 @@ export const router = createBrowserRouter([
       {
         path: "reports/profit-loss",
         element: (
-          <RequirePermission permission="reports.pnl">
+          <RequirePermission permission="profit_loss.view">
             <ProfitLossPage />
           </RequirePermission>
         ),
@@ -193,7 +193,7 @@ export const router = createBrowserRouter([
       {
         path: "reports/monthly-history",
         element: (
-          <RequirePermission permission="reports.pnl">
+          <RequirePermission permission="monthly_history.view">
             <MonthlyHistoryPage />
           </RequirePermission>
         ),
@@ -201,7 +201,7 @@ export const router = createBrowserRouter([
       {
         path: "reports/balance-sheet",
         element: (
-          <RequirePermission permission="reports.balanceSheet">
+          <RequirePermission permission="balance_sheet.view">
             <BalanceSheetPage />
           </RequirePermission>
         ),
@@ -209,7 +209,7 @@ export const router = createBrowserRouter([
       {
         path: "cash-tally",
         element: (
-          <RequirePermission permission="finance.cash.view">
+          <RequirePermission permission="cash_tally.view">
             <CashTallyPage />
           </RequirePermission>
         ),
@@ -217,7 +217,7 @@ export const router = createBrowserRouter([
       {
         path: "khata",
         element: (
-          <RequirePermission permission="finance.khata.view">
+          <RequirePermission permission="khata.view">
             <KhataPage />
           </RequirePermission>
         ),
@@ -226,7 +226,7 @@ export const router = createBrowserRouter([
         // The party id is optional: /khata is the picker, /khata/:partyId the statement.
         path: "khata/:partyId",
         element: (
-          <RequirePermission permission="finance.khata.view">
+          <RequirePermission permission="khata.view">
             <KhataPage />
           </RequirePermission>
         ),
@@ -234,7 +234,7 @@ export const router = createBrowserRouter([
       {
         path: "credit",
         element: (
-          <RequirePermission permission="finance.party.view">
+          <RequirePermission permission="credit.view">
             <CreditPage />
           </RequirePermission>
         ),
@@ -242,7 +242,7 @@ export const router = createBrowserRouter([
       {
         path: "savings",
         element: (
-          <RequirePermission permission="finance.savings.view">
+          <RequirePermission permission="savings.view">
             <SavingsPage />
           </RequirePermission>
         ),
@@ -250,7 +250,7 @@ export const router = createBrowserRouter([
       {
         path: "banks",
         element: (
-          <RequirePermission permission="finance.bank.view">
+          <RequirePermission permission="banks.view">
             <BanksPage />
           </RequirePermission>
         ),
@@ -258,7 +258,7 @@ export const router = createBrowserRouter([
       {
         path: "bank-accounts",
         element: (
-          <RequirePermission permission="finance.bank.view">
+          <RequirePermission permission="bank_accounts.view">
             <BankAccountsPage />
           </RequirePermission>
         ),
@@ -266,7 +266,7 @@ export const router = createBrowserRouter([
       {
         path: "parties",
         element: (
-          <RequirePermission permission="finance.party.view">
+          <RequirePermission permission="parties.view">
             <PartiesPage />
           </RequirePermission>
         ),
@@ -298,7 +298,7 @@ export const router = createBrowserRouter([
       {
         path: "reports/trial-balance",
         element: (
-          <RequirePermission permission="reports.trialBalance">
+          <RequirePermission permission="trial_balance.view">
             <TrialBalancePage />
           </RequirePermission>
         ),
@@ -306,7 +306,7 @@ export const router = createBrowserRouter([
       {
         path: "ledger",
         element: (
-          <RequirePermission permission="finance.ledger.view">
+          <RequirePermission permission="general_ledger.view">
             <GeneralLedgerPage />
           </RequirePermission>
         ),
@@ -314,7 +314,7 @@ export const router = createBrowserRouter([
       {
         path: "expense-ledger",
         element: (
-          <RequirePermission permission="finance.ledger.view">
+          <RequirePermission permission="expense_ledger.view">
             <ExpenseLedgerPage />
           </RequirePermission>
         ),
@@ -322,7 +322,7 @@ export const router = createBrowserRouter([
       {
         path: "income-ledger",
         element: (
-          <RequirePermission permission="finance.ledger.view">
+          <RequirePermission permission="income_ledger.view">
             <IncomeLedgerPage />
           </RequirePermission>
         ),
@@ -330,7 +330,7 @@ export const router = createBrowserRouter([
       {
         path: "savings-ledger",
         element: (
-          <RequirePermission permission="finance.ledger.view">
+          <RequirePermission permission="savings_ledger.view">
             <SavingsLedgerPage />
           </RequirePermission>
         ),
@@ -338,7 +338,7 @@ export const router = createBrowserRouter([
       {
         path: "cash-book",
         element: (
-          <RequirePermission permission="finance.cash.view">
+          <RequirePermission permission="cash_book.view">
             <CashBookPage />
           </RequirePermission>
         ),
@@ -346,7 +346,7 @@ export const router = createBrowserRouter([
       {
         path: "bank-book",
         element: (
-          <RequirePermission permission="finance.bank.view">
+          <RequirePermission permission="bank_book.view">
             <BankBookPage />
           </RequirePermission>
         ),
@@ -354,7 +354,7 @@ export const router = createBrowserRouter([
       {
         path: "party-ledger",
         element: (
-          <RequirePermission permission="finance.ledger.view">
+          <RequirePermission permission="party_ledger.view">
             <PartyLedgerPage />
           </RequirePermission>
         ),
@@ -362,7 +362,7 @@ export const router = createBrowserRouter([
       {
         path: "heads",
         element: (
-          <RequirePermission permission="finance.expense.view">
+          <RequirePermission permission="heads.view">
             <HeadsPage />
           </RequirePermission>
         ),
@@ -370,7 +370,7 @@ export const router = createBrowserRouter([
       {
         path: "charges",
         element: (
-          <RequirePermission permission="finance.charges.view">
+          <RequirePermission permission="charges.view">
             <ChargesPage />
           </RequirePermission>
         ),
@@ -378,7 +378,7 @@ export const router = createBrowserRouter([
       {
         path: "reconciliation",
         element: (
-          <RequirePermission permission="finance.bank.reconcile">
+          <RequirePermission permission="reconciliation.view">
             <ReconciliationPage />
           </RequirePermission>
         ),
@@ -386,7 +386,7 @@ export const router = createBrowserRouter([
       {
         path: "settlements",
         element: (
-          <RequirePermission permission="finance.settlement.view">
+          <RequirePermission permission="settlements.view">
             <SettlementsPage />
           </RequirePermission>
         ),
@@ -394,7 +394,7 @@ export const router = createBrowserRouter([
       {
         path: "import",
         element: (
-          <RequirePermission permission="import.run">
+          <RequirePermission permission="import_parties.view">
             <ImportPage />
           </RequirePermission>
         ),

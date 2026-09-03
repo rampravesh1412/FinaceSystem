@@ -42,7 +42,7 @@ export function PartyRowActions({ party }: { party: PartySummary }) {
   const { can } = useAuth();
   const [editing, setEditing] = React.useState(false);
 
-  if (!can("finance.party.edit")) return null;
+  if (!can("parties.edit")) return null;
 
   return (
     <>

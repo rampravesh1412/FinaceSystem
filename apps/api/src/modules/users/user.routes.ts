@@ -93,7 +93,7 @@ userRouter.patch(
 
 userRouter.post(
   "/:id/status",
-  requirePermission("users.disable"),
+  requirePermission("users.delete"),
   mutationLimiter,
   validate({
     params: idParam,

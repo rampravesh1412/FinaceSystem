@@ -38,7 +38,7 @@ export function BanksPage() {
             : "Institutions you bank with. Totals cover your branches only."
         }
         actions={
-          <Can permission="finance.bank.create">
+          <Can permission="banks.create">
             <NewBankButton />
           </Can>
         }

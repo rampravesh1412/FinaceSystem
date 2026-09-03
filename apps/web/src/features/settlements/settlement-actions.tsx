@@ -269,7 +269,7 @@ export function ExecuteSettlementButton({ settlement }: { settlement: Settlement
   const remaining = settlement.netAmount - settlement.settledAmount;
   const done = settlement.status === "COMPLETED" || settlement.status === "CANCELLED";
 
-  if (!can("finance.settlement.create") || done || remaining <= 0) return null;
+  if (!can("settlements.create") || done || remaining <= 0) return null;
 
   return (
     <>

@@ -50,7 +50,7 @@ const idParam = z.object({ id: objectId });
 
 khataRouter.get(
   "/:id",
-  requirePermission("finance.khata.view"),
+  requirePermission("khata.view"),
   validate({ params: idParam, query: khataQuerySchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -66,7 +66,7 @@ khataRouter.get(
 
 adjustmentRouter.post(
   "/",
-  requirePermission("finance.adjustment.create"),
+  requirePermission("adjustments.create"),
   mutationLimiter,
   validate({ body: createAdjustmentSchema }),
   asyncHandler(async (req, res) => {
@@ -80,7 +80,7 @@ adjustmentRouter.post(
 
 creditRouter.get(
   "/",
-  requirePermission("finance.party.view"),
+  requirePermission("credit.view"),
   validate({ query: creditQuerySchema }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as CreditQuery;
@@ -99,7 +99,7 @@ creditRouter.get(
 
 savingsRouter.get(
   "/",
-  requirePermission("finance.savings.view"),
+  requirePermission("savings.view"),
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as z.infer<typeof listQuery>;
@@ -114,7 +114,7 @@ savingsRouter.get(
 
 savingsRouter.post(
   "/",
-  requirePermission("finance.savings.manage"),
+  requirePermission("savings.create"),
   mutationLimiter,
   validate({ body: createSavingsAccountSchema }),
   asyncHandler(async (req, res) => {
@@ -131,7 +131,7 @@ savingsRouter.post(
 
 savingsRouter.get(
   "/:id/passbook",
-  requirePermission("finance.savings.view"),
+  requirePermission("savings.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -141,7 +141,7 @@ savingsRouter.get(
 
 savingsRouter.post(
   "/transactions",
-  requirePermission("finance.savings.transact"),
+  requirePermission("savings.transact"),
   mutationLimiter,
   validate({ body: savingsTransactionSchema }),
   asyncHandler(async (req, res) => {
@@ -155,7 +155,7 @@ savingsRouter.post(
 
 reconciliationRouter.post(
   "/",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.create"),
   mutationLimiter,
   validate({ body: startReconciliationSchema }),
   asyncHandler(async (req, res) => {
@@ -168,7 +168,7 @@ reconciliationRouter.post(
 /** Every reconciliation. `finance.bank.reconcile` is the control. */
 reconciliationRouter.get(
   "/",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.view"),
   validate({
     query: listQuery.extend({ bankAccountId: objectId.optional(), status: z.string().optional() }),
   }),
@@ -187,7 +187,7 @@ reconciliationRouter.get(
 
 reconciliationRouter.get(
   "/:id",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -197,7 +197,7 @@ reconciliationRouter.get(
 
 reconciliationRouter.get(
   "/:id/lines",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.view"),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
@@ -207,7 +207,7 @@ reconciliationRouter.get(
 
 reconciliationRouter.post(
   "/:id/statement",
-  requirePermission("finance.bank.statement.import"),
+  requirePermission("reconciliation.import"),
   exportLimiter,
   validate({ params: idParam, body: importStatementSchema }),
   asyncHandler(async (req, res) => {
@@ -227,7 +227,7 @@ reconciliationRouter.post(
 
 reconciliationRouter.post(
   "/lines/:id/match",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.edit"),
   mutationLimiter,
   validate({ params: idParam, body: matchLineSchema.omit({ lineId: true }) }),
   asyncHandler(async (req, res) => {
@@ -239,7 +239,7 @@ reconciliationRouter.post(
 
 reconciliationRouter.post(
   "/:id/complete",
-  requirePermission("finance.bank.reconcile"),
+  requirePermission("reconciliation.edit"),
   mutationLimiter,
   validate({
     params: idParam,
@@ -261,7 +261,7 @@ reconciliationRouter.post(
 
 settlementRouter.get(
   "/",
-  requirePermission("finance.settlement.view"),
+  requirePermission("settlements.view"),
   validate({ query: listQuery.extend({ status: z.string().optional(), kind: z.string().optional() }) }),
   asyncHandler(async (req, res) => {
     const query = req.valid.query as { page: number; limit: number; status?: string; kind?: string };
@@ -276,7 +276,7 @@ settlementRouter.get(
 
 settlementRouter.post(
   "/",
-  requirePermission("finance.settlement.create"),
+  requirePermission("settlements.create"),
   mutationLimiter,
   validate({ body: createSettlementSchema }),
   asyncHandler(async (req, res) => {
@@ -288,7 +288,7 @@ settlementRouter.post(
 
 settlementRouter.post(
   "/:id/execute",
-  requirePermission("finance.settlement.create"),
+  requirePermission("settlements.create"),
   mutationLimiter,
   validate({
     params: idParam,

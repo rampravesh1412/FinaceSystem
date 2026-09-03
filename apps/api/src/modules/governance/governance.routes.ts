@@ -21,6 +21,7 @@ import { validate } from "../../middleware/validate.js";
 import {
   requireAuth,
   requirePermission,
+  requireResolvedPermission,
   requireSuperAdmin,
 } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
@@ -29,6 +30,7 @@ import { ConflictError, NotFoundError, translateDuplicate } from "../../lib/erro
 import { withTransaction } from "../../lib/unitOfWork.js";
 import * as audit from "../../services/audit.service.js";
 import * as approvals from "./approval.service.js";
+import { transactionPermission } from "../transactions/transaction-permissions.js";
 
 export const approvalRouter: Router = Router();
 export const periodRouter: Router = Router();
@@ -84,9 +86,22 @@ approvalRouter.put(
   }),
 );
 
+/**
+ * Approving is TWO permissions, not one.
+ *
+ * `approvals.approve` says a person may work this queue at all; the module's own
+ * `approve` says they may sign off that kind of thing. Requiring only the first is what
+ * the system did before, and it is why `payment_out.approve`, `settlements.approve` and
+ * every other per-module approve key sat on the Roles screen doing nothing — one grant
+ * silently approved payments, expenses, settlements and adjustments alike.
+ *
+ * Splitting them is the difference between "may clear the queue" and "may release a
+ * payment", which on a finance desk are routinely different people.
+ */
 approvalRouter.post(
   "/:id/approve",
-  requirePermission("approvals.act"),
+  requirePermission("approvals.approve"),
+  requireResolvedPermission((req) => transactionPermission(String(req.params.id), "approve")),
   mutationLimiter,
   validate({ params: idParam, body: z.object({ comment: z.string().trim().max(1000).optional() }) }),
   asyncHandler(async (req, res) => {
@@ -104,9 +119,11 @@ approvalRouter.post(
   }),
 );
 
+/** Rejecting is gated the same way as approving — see the note above. */
 approvalRouter.post(
   "/:id/reject",
-  requirePermission("approvals.act"),
+  requirePermission("approvals.reject"),
+  requireResolvedPermission((req) => transactionPermission(String(req.params.id), "reject")),
   mutationLimiter,
   validate({ params: idParam, body: rejectSchema }),
   asyncHandler(async (req, res) => {
@@ -122,7 +139,7 @@ approvalRouter.post(
 
 periodRouter.get(
   "/",
-  requirePermission("period.view"),
+  requirePermission("periods.view"),
   asyncHandler(async (_req, res) => {
     const periods = await FinancialPeriod.find()
       .sort({ startDate: -1 })
@@ -155,7 +172,7 @@ periodRouter.get(
 
 periodRouter.post(
   "/",
-  requirePermission("period.manage"),
+  requirePermission("periods.create"),
   mutationLimiter,
   validate({ body: createPeriodSchema }),
   asyncHandler(async (req, res) => {
@@ -201,7 +218,7 @@ periodRouter.post(
  */
 periodRouter.post(
   "/:id/close",
-  requirePermission("period.manage"),
+  requirePermission("periods.edit"),
   mutationLimiter,
   validate({ params: idParam, body: closePeriodSchema }),
   asyncHandler(async (req, res) => {
@@ -259,7 +276,7 @@ periodRouter.post(
 
 periodRouter.post(
   "/:id/reopen",
-  requirePermission("period.manage"),
+  requirePermission("periods.edit"),
   mutationLimiter,
   validate({ params: idParam, body: reopenPeriodSchema }),
   asyncHandler(async (req, res) => {

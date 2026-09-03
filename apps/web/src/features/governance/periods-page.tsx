@@ -61,7 +61,7 @@ export function PeriodsPage() {
         title="Financial Periods"
         description="Once a period is closed, nothing can be posted into it — including a reversal."
         actions={
-          <Can permission="period.manage">
+          <Can permission="periods.create">
             <Button variant="accent" onClick={() => setCreating(true)}>
               <Plus />
               New period
@@ -126,7 +126,7 @@ export function PeriodsPage() {
                     {p.closedBy ? `${p.closedBy}${p.closedAt ? ` · ${formatDate(p.closedAt)}` : ""}` : "—"}
                   </TableCell>
                   <TableCell>
-                    <Can permission="period.manage">
+                    <Can permission="periods.edit">
                       {p.status === "OPEN" ? (
                         <Button variant="outline" size="sm" onClick={() => setClosing(p)}>
                           <Lock />

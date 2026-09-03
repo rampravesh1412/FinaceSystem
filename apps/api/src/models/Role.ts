@@ -1,5 +1,5 @@
 import { Schema, model, type Document, type Types } from "mongoose";
-import { ALL_PERMISSIONS } from "@amiri/shared";
+import { isPermission, LEGACY_PERMISSION_MAP } from "@amiri/shared";
 import { actorField, baseSchemaOptions } from "./fields.js";
 
 export interface RoleDoc extends Document<Types.ObjectId> {
@@ -13,6 +13,19 @@ export interface RoleDoc extends Document<Types.ObjectId> {
   updatedBy?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * A grant this system understands.
+ *
+ * Legacy strings are accepted, not rejected. Every role in an existing database was
+ * written in the old vocabulary, and a validator that refused them would fail on SAVE —
+ * so the first person to open a role and press Save would be told their own stored
+ * permissions were invalid, with no way to fix it from the screen. They are normalised on
+ * write by the role service and cleared out for good by `migrate:permission-catalogue`.
+ */
+function isKnownGrant(p: string): boolean {
+  return p === "*" || p.endsWith(".*") || isPermission(p) || p in LEGACY_PERMISSION_MAP;
 }
 
 const roleSchema = new Schema<RoleDoc>(
@@ -41,18 +54,9 @@ const roleSchema = new Schema<RoleDoc>(
       type: [String],
       default: [],
       validate: {
-        validator: (perms: string[]) =>
-          perms.every(
-            (p) =>
-              p === "*" ||
-              p.endsWith(".*") ||
-              (ALL_PERMISSIONS as readonly string[]).includes(p),
-          ),
+        validator: (perms: string[]) => perms.every(isKnownGrant),
         message: (props: { value: string[] }) => {
-          const unknown = props.value.filter(
-            (p) =>
-              p !== "*" && !p.endsWith(".*") && !(ALL_PERMISSIONS as readonly string[]).includes(p),
-          );
+          const unknown = props.value.filter((p) => !isKnownGrant(p));
           return `Unknown permission(s): ${unknown.join(", ")}`;
         },
       },

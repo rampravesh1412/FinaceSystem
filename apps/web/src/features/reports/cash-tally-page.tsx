@@ -166,7 +166,7 @@ export function CashTallyPage() {
           </Card>
 
           <div className="space-y-5">
-            <Can permission="finance.cash.tally">
+            <Can permission="cash_tally.create">
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">

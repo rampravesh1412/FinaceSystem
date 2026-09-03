@@ -41,7 +41,12 @@ describe("authentication", () => {
     expect(res.status).toBe(200);
     expect(res.body.data.accessToken).toBeTruthy();
     expect(res.body.data.user.email).toBe("acct@test.co");
-    expect(res.body.data.user.permissions).toContain("finance.payment.create");
+    // The session carries the CURRENT vocabulary, whatever the role document says on
+    // disk — a role still holding `finance.payment.create` resolves to both payment
+    // modules, so a desk mid-migration is never locked out of a screen it could use.
+    expect(res.body.data.user.permissions).toContain("payment_in.create");
+    expect(res.body.data.user.permissions).toContain("payment_out.create");
+    expect(res.body.data.user.permissions).not.toContain("finance.payment.create");
 
     // The refresh token is cookie-only. If it ever appears in the JSON body, any XSS on
     // the client can steal a week-long credential.

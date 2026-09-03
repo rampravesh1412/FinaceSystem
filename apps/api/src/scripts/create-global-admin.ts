@@ -41,14 +41,15 @@ import { Role, User } from "../models/index.js";
  */
 
 /** Administration of the system itself, withheld from the `operations` preset. */
-const ADMIN_ONLY = /^(users|roles|period|settings)\.|^audit\.|^import\./;
+const ADMIN_ONLY = /^(users|roles|periods|settings|audit|import_parties)\./;
 
 function presetPermissions(preset: string): Permission[] {
   if (preset === "full") return [...ALL_PERMISSIONS];
 
   if (preset === "readonly") {
     return ALL_PERMISSIONS.filter(
-      (p) => p.endsWith(".view") || p.startsWith("reports.") || p === "finance.bank.viewFull",
+      // Reading is reading: every view, every export, and the unmasked account digits.
+      (p) => p.endsWith(".view") || p.endsWith(".export") || p === "bank_accounts.viewFull",
     );
   }
 

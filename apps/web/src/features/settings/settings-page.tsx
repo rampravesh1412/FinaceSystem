@@ -70,7 +70,7 @@ export function SettingsPage() {
         </TabsList>
 
         <TabsContent value="organisation">
-          <OrganisationPanel canManage={can("settings.manage")} />
+          <OrganisationPanel canManage={can("settings.edit")} />
         </TabsContent>
         <TabsContent value="approvals">
           {/* Guarded by super-admin on the server, not by a named permission: a branch

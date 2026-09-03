@@ -76,7 +76,7 @@ function ReconciliationList({ onOpen }: { onOpen: (id: string) => void }) {
         title="Bank Reconciliation"
         description="Compare the bank's statement against the ledger. Differences are reported, never absorbed."
         actions={
-          <Can permission="finance.bank.reconcile">
+          <Can permission="reconciliation.create">
             <StartReconciliationDialog onStarted={onOpen} />
           </Can>
         }
@@ -329,7 +329,7 @@ function ReconciliationDetail({ id, onBack }: { id: string; onBack: () => void }
         description={`${formatDate(r.from)} → ${formatDate(r.to)} · opened ${relativeTime(r.createdAt)}`}
         actions={
           isOpen ? (
-            <Can permission="finance.bank.reconcile">
+            <Can permission="reconciliation.edit">
               <ImportStatementDialog reconciliationId={id} />
               <CompleteDialog summary={r} unresolved={unresolved} onCompleted={onBack} />
             </Can>

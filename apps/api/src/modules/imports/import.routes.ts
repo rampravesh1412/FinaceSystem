@@ -29,7 +29,7 @@ const importBody = z.object({
 
 importRouter.post(
   "/parties/preview",
-  requirePermission("import.run"),
+  requirePermission("import_parties.import"),
   exportLimiter,
   validate({ body: importBody }),
   asyncHandler(async (req, res) => {
@@ -41,7 +41,7 @@ importRouter.post(
 
 importRouter.post(
   "/parties/commit",
-  requirePermission("import.run"),
+  requirePermission("import_parties.import"),
   exportLimiter,
   validate({ body: importBody }),
   asyncHandler(async (req, res) => {
@@ -59,7 +59,7 @@ importRouter.post(
 
 importRouter.get(
   "/parties/template",
-  requirePermission("import.run"),
+  requirePermission("import_parties.view"),
   asyncHandler(async (_req, res) => ok(res, importer.partyTemplate())),
 );
 
