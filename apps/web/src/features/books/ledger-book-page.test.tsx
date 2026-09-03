@@ -81,6 +81,61 @@ describe("ledger books", () => {
     expect(paths.some((p) => p.includes("kind=CHARGE"))).toBe(true);
   });
 
+  /**
+   * A charged payment has to be readable off the row.
+   *
+   * ₹1,00,000 leaving the bank against "101, Bank Charges" is the row an operator reads as
+   * an overcharge, because nothing on it says ₹98,500 went to the party and ₹1,500 was our
+   * cost. All three figures belong on the line.
+   */
+  it("shows what each side of a charged payment actually got", async () => {
+    api.list.mockImplementation((path: string) =>
+      String(path).includes("/entries")
+        ? Promise.resolve({
+            items: [
+              {
+                id: "e1",
+                txnNo: "PAY-OUT-2026-000014",
+                transactionType: "PAYMENT_OUT",
+                date: "2026-09-03T00:00:00.000Z",
+                debit: 0,
+                credit: 100_000_00,
+                runningBalance: 0,
+                narration: "Payment made to 101",
+                contra: ["101 (PTY-00002)", "Bank Charges"],
+                contraLines: [
+                  { name: "101 (PTY-00002)", amount: 98_500_00, direction: "DEBIT" },
+                  { name: "Bank Charges", amount: 1_500_00, direction: "DEBIT" },
+                ],
+                reconciledAt: null,
+              },
+            ],
+            meta: { page: 1, limit: 50, total: 1, totalPages: 1, hasNext: false, hasPrev: false },
+          })
+        : Promise.resolve({
+            items: [
+              {
+                id: "a1",
+                code: "BANK-00002",
+                name: "PUNB ••3468 — kumar",
+                kind: "BANK",
+                accountClass: "ASSET",
+                balance: 0,
+              },
+            ],
+            meta: { page: 1, limit: 200, total: 1, totalPages: 1, hasNext: false, hasPrev: false },
+          }),
+    );
+
+    renderWithProviders(<books.BankBookPage />);
+
+    const row = (await screen.findByText("PAY-OUT-2026-000014")).closest("tr")!;
+    // What left the account, and where every paisa of it went.
+    expect(row.textContent).toContain("1,00,000.00");
+    expect(row.textContent).toContain("98,500.00");
+    expect(row.textContent).toContain("1,500.00");
+  });
+
   it("never asks for more than the server's page cap", async () => {
     renderWithProviders(<books.GeneralLedgerPage />);
 

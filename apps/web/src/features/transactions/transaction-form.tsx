@@ -14,6 +14,7 @@ import {
   formatINR,
 } from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
+import { arrangementOf } from "@/features/charges/arrangement";
 import { Money } from "@/components/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -426,9 +427,20 @@ export function TransactionFormDialog({
                   value={chargeRuleId ?? ""}
                   onChange={(v) => form.setValue("chargeRuleId", v === "none" ? undefined : v)}
                   placeholder="No charge"
+                  /**
+                   * Each rule carries its ARRANGEMENT, not just its name.
+                   *
+                   * Two rules called "CC" and "CC deducted" are one click apart and ₹1,500
+                   * of the bank balance apart, and the name alone does not say which is
+                   * which. The hint is the same wording the Charges screen shows.
+                   */
                   options={[
                     { value: "none", label: "No charge" },
-                    ...applicableRules.map((r) => ({ value: r.id, label: r.name })),
+                    ...applicableRules.map((r) => ({
+                      value: r.id,
+                      label: r.name,
+                      hint: arrangementOf(r, r.sampleOn100k).label,
+                    })),
                   ]}
                 />
               )}

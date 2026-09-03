@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Types } from "mongoose";
 import { z } from "zod";
 import { ledgerAccountQuerySchema, ledgerEntryQuerySchema, objectId, type LedgerAccountQuery } from "@amiri/shared";
 import { asyncHandler, escapeRegex, ok, paginated, paging } from "../../lib/http.js";
@@ -119,6 +120,44 @@ ledgerRouter.get(
         : Promise.resolve({ balance: 0 }),
     ]);
 
+    /**
+     * The other side of each row, WITH ITS AMOUNTS.
+     *
+     * A statement row shows one figure — what moved on this account. When a charge is
+     * involved that figure does not explain itself: ₹1,00,000 leaving the bank against
+     * "101, Bank Charges" hides that ₹98,500 went to the party and ₹1,500 was our cost.
+     * Reading the sibling lines gives the split, and doing it here — rather than storing
+     * it — means every row already on the books gets the breakdown too, not just the
+     * ones posted from now on.
+     *
+     * One extra indexed query per page, and only over the transactions on this page.
+     */
+    const txnIds = [...new Set(entries.map((e) => String(e.transactionId)))];
+    const siblings = txnIds.length
+      ? await LedgerEntry.find({ transactionId: { $in: txnIds } })
+          .select("transactionId ledgerAccountId direction amount")
+          .populate<{ ledgerAccountId: { _id: Types.ObjectId; name: string } }>(
+            "ledgerAccountId",
+            "name",
+          )
+          .lean()
+      : [];
+
+    const contraByTxn = new Map<string, Array<{ name: string; amount: number; direction: string }>>();
+    for (const s of siblings) {
+      // Compared by id, not by name: two accounts can share a name, and excluding by
+      // name would drop a legitimate contra line.
+      if (String(s.ledgerAccountId?._id) === String(account._id)) continue;
+      const key = String(s.transactionId);
+      const list = contraByTxn.get(key) ?? [];
+      list.push({
+        name: s.ledgerAccountId?.name ?? "—",
+        amount: s.amount,
+        direction: s.direction,
+      });
+      contraByTxn.set(key, list);
+    }
+
     return paginated(
       res,
       entries.map((e) => ({
@@ -133,6 +172,7 @@ ledgerRouter.get(
         runningBalance: e.runningBalance,
         narration: e.narration,
         contra: e.contra ?? [],
+        contraLines: contraByTxn.get(String(e.transactionId)) ?? [],
         reconciledAt: e.reconciledAt ? e.reconciledAt.toISOString() : null,
         createdAt: e.createdAt.toISOString(),
       })),

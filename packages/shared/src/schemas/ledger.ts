@@ -55,8 +55,22 @@ export interface LedgerEntryRow {
   narration?: string;
   /** The other side(s) of the same transaction — "paid to whom", in one glance. */
   contra: string[];
+  /**
+   * The same other side, with the figures.
+   *
+   * `contra` names the accounts but not the amounts, which is not enough the moment a
+   * charge is involved: ₹1,00,000 leaving the bank against "101, Bank Charges" does not
+   * say that ₹98,500 reached the party and ₹1,500 was our cost. This does.
+   */
+  contraLines: ContraLine[];
   createdBy: { id: string; name: string } | null;
   createdAt: string;
+}
+
+export interface ContraLine {
+  name: string;
+  amount: number;
+  direction: string;
 }
 
 /** A trial balance row (§34). Debits and credits must total to the same figure. */

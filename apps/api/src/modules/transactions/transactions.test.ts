@@ -1208,6 +1208,42 @@ describe("charge arrangements", () => {
     expect(await balanceOfParty(eddigoId)).toBe(partyBefore + 98_500_00);
   });
 
+  /**
+   * The statement has to EXPLAIN the figure in its amount column.
+   *
+   * A ₹1,00,000 credit on the bank against "101, Bank Charges" is arithmetically fine and
+   * humanly useless — it does not say that ₹98,500 reached the party and ₹1,500 was our
+   * cost, and an operator who cannot see the split reads the row as an overcharge. So the
+   * contra comes back with its amounts, and they must sum to the row.
+   */
+  it("breaks the other side down by amount on the statement", async () => {
+    const { txn } = await payOut(await rule("ARR_CONTRA", "SELF", true));
+    const bank = (await BankAccount.findById(hdfcId).lean())!;
+
+    const res = await client.get<{
+      data: Array<{
+        txnNo: string;
+        credit: number;
+        contraLines: Array<{ name: string; amount: number }>;
+      }>;
+    }>(`/ledger/accounts/${String(bank.ledgerAccountId)}/entries?limit=100`, {
+      token: superToken,
+    });
+
+    const row = res.body.data.find((r) => r.txnNo === txn.txnNo)!;
+    expect(row.credit).toBe(1_00_000_00);
+
+    const byName = Object.fromEntries(row.contraLines.map((c) => [c.name, c.amount]));
+    // The party's share and our cost, named and quantified — not one merged figure.
+    expect(byName["Bank Charges"]).toBe(1_500_00);
+    expect(Object.entries(byName).find(([n]) => n !== "Bank Charges")![1]).toBe(98_500_00);
+
+    // And the split must account for the whole movement, or the row lies by omission.
+    expect(row.contraLines.reduce((sum, c) => sum + c.amount, 0)).toBe(row.credit);
+    // This account's own line is never its own contra.
+    expect(row.contraLines.some((c) => c.name === bank.accountName)).toBe(false);
+  });
+
   it("keeps the charge as income when the party bears it", async () => {
     const bankBefore = await balanceOfAccount(hdfcId);
     const partyBefore = await balanceOfParty(eddigoId);

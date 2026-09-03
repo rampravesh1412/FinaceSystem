@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Types } from "mongoose";
 import { z } from "zod";
 import {
   TRANSACTION_TYPE_LABEL,
@@ -284,6 +285,34 @@ exportRouter.get(
 
     const entries = await LedgerEntry.find(filter).sort({ date: 1, _id: 1 }).limit(MAX_ROWS).lean();
 
+    /**
+     * The Contra column carries the AMOUNTS, exactly as the on-screen statement does.
+     *
+     * An exported bank statement whose contra reads "101, Bank Charges" against a
+     * ₹1,00,000 credit sends the reader off to reconstruct the ₹98,500/₹1,500 split by
+     * hand — the same subtraction that gets done wrong on screen, now in a spreadsheet
+     * where nobody can check it against the ledger.
+     */
+    const txnIds = [...new Set(entries.map((e) => String(e.transactionId)))];
+    const siblings = txnIds.length
+      ? await LedgerEntry.find({ transactionId: { $in: txnIds } })
+          .select("transactionId ledgerAccountId amount")
+          .populate<{ ledgerAccountId: { _id: Types.ObjectId; name: string } }>(
+            "ledgerAccountId",
+            "name",
+          )
+          .lean()
+      : [];
+
+    const contraByTxn = new Map<string, string[]>();
+    for (const s of siblings) {
+      if (String(s.ledgerAccountId?._id) === String(account._id)) continue;
+      const key = String(s.transactionId);
+      const list = contraByTxn.get(key) ?? [];
+      list.push(`${s.ledgerAccountId?.name ?? "—"} ${formatINR(s.amount)}`);
+      contraByTxn.set(key, list);
+    }
+
     await audit.recordSafe(audit.auditContextFrom(req), {
       action: "EXPORT",
       entity: "LedgerAccount",
@@ -301,7 +330,7 @@ exportRouter.get(
         { key: "txnNo", header: "Voucher No", width: 120, value: (r) => r.txnNo },
         { key: "type", header: "Type", width: 90, value: (r) => TRANSACTION_TYPE_LABEL[r.transactionType] ?? r.transactionType },
         { key: "narration", header: "Description", width: 220, value: (r) => r.narration ?? "" },
-        { key: "contra", header: "Contra", width: 160, value: (r) => (r.contra ?? []).join(", ") },
+        { key: "contra", header: "Contra", width: 200, value: (r) => (contraByTxn.get(String(r.transactionId)) ?? r.contra ?? []).join(" · ") },
         { key: "debit", header: "Debit", type: "money", width: 100, value: (r) => (r.direction === "DEBIT" ? r.amount : null), total: true },
         { key: "credit", header: "Credit", type: "money", width: 100, value: (r) => (r.direction === "CREDIT" ? r.amount : null), total: true },
         { key: "balance", header: "Balance", type: "money", width: 110, value: (r) => r.runningBalance },

@@ -11,6 +11,7 @@ import {
 import { ApiError, api, qs } from "@/lib/api";
 import { Can } from "@/features/auth/auth-context";
 import { NewChargeRuleButton } from "./charge-form";
+import { arrangementOf } from "./arrangement";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
@@ -121,19 +122,11 @@ export function ChargesPage() {
                         {/* The arrangement, not just the bearer — "Us" alone does not
                             distinguish ₹1,00,000 leaving from ₹1,01,500 leaving. */}
                         <Badge variant={rule.bearer === "SELF" ? "outline" : "default"}>
-                          {rule.bearer === "PARTY"
-                            ? "The party"
-                            : rule.deductFromAmount
-                              ? "Us · from the amount"
-                              : "Us · on top"}
+                          {arrangementOf(rule, rule.sampleOn100k).label}
                         </Badge>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
-                        {rule.bearer === "PARTY"
-                          ? "Our income. On a ₹1,00,000 payment out, ₹98,500 leaves the bank and their full ₹1,00,000 claim is discharged — the ₹1,500 you keep is the commission."
-                          : rule.deductFromAmount
-                            ? "Our expense, taken out of the amount. On a ₹1,00,000 payment out the whole ₹1,00,000 leaves the bank, only ₹98,500 reaches them, and the ₹1,500 is your cost."
-                            : "Our expense, levied on top. On a ₹1,00,000 payment out, ₹1,01,500 leaves the bank and they receive the full ₹1,00,000."}
+                        {arrangementOf(rule, rule.sampleOn100k).explain}
                       </TooltipContent>
                     </Tooltip>
                   </TableCell>
@@ -445,14 +438,22 @@ function EditRuleDialog({
 }) {
   const [name, setName] = React.useState(rule.name);
   const [bearer, setBearer] = React.useState(rule.bearer);
+  const [deduct, setDeduct] = React.useState(rule.deductFromAmount !== false);
   const [rate, setRate] = React.useState(
     rule.rateBps !== undefined ? String(rule.rateBps / 100) : "",
   );
 
   const bps = Math.round(Number(rate.replace(/[^\d.]/g, "")) * 100);
   const validRate = rule.type !== "PERCENTAGE" || (Number.isFinite(bps) && bps > 0);
-  // The worked example, on the amount the operator is actually arguing about.
-  const on100k = Number.isFinite(bps) ? Math.round((100_000_00 * bps) / 10_000) : 0;
+  // The worked example, on the amount the operator is actually arguing about. A flat or
+  // tiered rule has no rate to edit, so its own sample stands in.
+  const on100k =
+    rule.type === "PERCENTAGE"
+      ? Number.isFinite(bps)
+        ? Math.round((100_000_00 * bps) / 10_000)
+        : 0
+      : rule.sampleOn100k;
+  const arrangement = arrangementOf({ bearer, deductFromAmount: deduct }, on100k);
 
   return (
     <Dialog open onOpenChange={(v) => (v ? undefined : onClose())}>
@@ -485,35 +486,54 @@ function EditRuleDialog({
           ) : null}
 
           <div className="space-y-1.5">
-            <Label htmlFor="rule-bearer">Who bears it?</Label>
+            <Label htmlFor="rule-bearer">Whose cost is it?</Label>
             <Select value={bearer} onValueChange={setBearer}>
               <SelectTrigger id="rule-bearer">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="PARTY">The party — deduct it from their payment</SelectItem>
-                <SelectItem value="SELF">We do — pay it on top</SelectItem>
+                <SelectItem value="PARTY">The party — we keep it as income</SelectItem>
+                <SelectItem value="SELF">We do — it is our expense</SelectItem>
               </SelectContent>
             </Select>
-
-            {/* The whole point of the screen, in money, on a payment out. */}
-            <p className="rounded-md border border-border bg-surface-muted/40 p-2.5 text-2xs">
-              On a ₹1,00,000 payment out at a {formatINR(on100k)} charge:{" "}
-              {bearer === "PARTY" ? (
-                <span className="font-medium text-foreground">
-                  {formatINR(100_000_00 - on100k)} leaves the bank
-                </span>
-              ) : (
-                <span className="font-medium text-warning-foreground">
-                  {formatINR(100_000_00 + on100k)} leaves the bank
-                </span>
-              )}
-              {bearer === "PARTY"
-                ? " — the charge comes out of what they receive and is booked as our income."
-                : " — the charge is paid on top and is booked as our expense."}{" "}
-              Either way the party&rsquo;s ₹1,00,000 is fully discharged.
-            </p>
           </div>
+
+          {/**
+           * A SELF charge has TWO arrangements, ₹3,000 apart on the same rate. Offering only
+           * the bearer here is what let a rule sit as "from the amount" while this dialog
+           * insisted ₹1,01,500 would leave the bank.
+           */}
+          {bearer === "SELF" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="rule-deduct">How is it settled?</Label>
+              <Select value={String(deduct)} onValueChange={(v) => setDeduct(v === "true")}>
+                <SelectTrigger id="rule-deduct">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="true">Taken out of the amount</SelectItem>
+                  <SelectItem value="false">Charged on top of the amount</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
+          {/* The whole point of the screen, in money, on a payment out — from the same
+              function the ledger posts with, so it cannot say one thing and post another. */}
+          <p className="rounded-md border border-border bg-surface-muted/40 p-2.5 text-2xs">
+            On a ₹1,00,000 payment out at a {formatINR(on100k)} charge:{" "}
+            <span
+              className={
+                arrangement.accountMoves > 100_000_00
+                  ? "font-medium text-warning-foreground"
+                  : "font-medium text-foreground"
+              }
+            >
+              {formatINR(arrangement.accountMoves)} leaves the account
+            </span>
+            , {formatINR(arrangement.partyDischarged)} of the party&rsquo;s claim is
+            discharged, and the {formatINR(on100k)} is booked as our {arrangement.chargeSide}.
+          </p>
         </div>
 
         <DialogFooter>
@@ -528,6 +548,7 @@ function EditRuleDialog({
               onSave({
                 name: name.trim(),
                 bearer,
+                deductFromAmount: deduct,
                 ...(rule.type === "PERCENTAGE" ? { rateBps: bps } : {}),
               })
             }

@@ -2,7 +2,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { BookOpen, Coins, Layers, PiggyBank, Receipt, Search, Wallet, Users } from "lucide-react";
-import type { AccountKind } from "@amiri/shared";
+import { formatINR, type AccountKind, type ContraLine } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { useDebounced } from "@/hooks/use-debounced";
 import { formatDate } from "@/lib/utils";
@@ -36,6 +36,7 @@ interface LedgerRow {
   runningBalance: number;
   narration?: string;
   contra: string[];
+  contraLines?: ContraLine[];
   reconciledAt: string | null;
 }
 
@@ -287,7 +288,29 @@ export function LedgerBookPage({
                     </TableCell>
                     <TableCell>
                       <div className="text-sm">{row.narration ?? "—"}</div>
-                      {row.contra.length > 0 ? (
+                      {/**
+                       * The other side WITH its figures.
+                       *
+                       * The amount column shows what moved on this account, which on a
+                       * charged payment does not add up on its own — ₹1,00,000 out of the
+                       * bank is ₹98,500 to the party plus ₹1,500 of cost. Naming the
+                       * accounts without the split left the operator to do that
+                       * subtraction, and it is exactly the subtraction people get wrong.
+                       */}
+                      {row.contraLines?.length ? (
+                        <div className="text-2xs text-muted-foreground">
+                          To:{" "}
+                          {row.contraLines.map((c, i) => (
+                            <span key={`${c.name}-${i}`}>
+                              {i > 0 ? " · " : ""}
+                              {c.name}{" "}
+                              <span className="tabular text-foreground">
+                                {formatINR(c.amount)}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : row.contra.length > 0 ? (
                         <div className="truncate text-2xs text-muted-foreground">
                           To: {row.contra.join(", ")}
                         </div>
