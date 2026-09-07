@@ -130,6 +130,12 @@ function ReconciliationList({ onOpen }: { onOpen: (id: string) => void }) {
                     <TableCell className="text-sm font-medium">{r.bankAccount.label}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {formatDate(r.from)} → {formatDate(r.to)}
+                      {/* Line counts are the point of a reconciliation — how much is
+                          still unmatched. Hidden below `lg` they were invisible on every
+                          phone and most tablets. */}
+                      <span className="mt-1 block lg:hidden">
+                        <LineCounts counts={r.counts} />
+                      </span>
                     </TableCell>
                     <TableCell className="text-right"><Money value={r.statementBalance} showIcon={false} /></TableCell>
                     <TableCell className="text-right"><Money value={r.systemBalance} showIcon={false} /></TableCell>
@@ -344,7 +350,7 @@ function ReconciliationDetail({ id, onBack }: { id: string; onBack: () => void }
 
       {/* The three figures, side by side. The difference is never presented alone — an
           operator needs both sides to know which one to go and check. */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <BalanceTile label="Bank statement says" value={r.statementBalance} />
         <BalanceTile label="Our ledger says" value={r.systemBalance} />
         <div
@@ -403,7 +409,7 @@ function ReconciliationDetail({ id, onBack }: { id: string; onBack: () => void }
                 unresolved line that nobody scrolled to is exactly what a reconciliation
                 exists to surface. */}
             <VirtualScroller scrollRef={scrollRef}>
-              <Table className="table-sticky-head" wrapperClassName="overflow-visible">
+              <Table className="table-sticky-head" wrapperClassName="overflow-visible" scrollHint={false}>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-24">Date</TableHead>

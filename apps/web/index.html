@@ -2,10 +2,47 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` lets the app paint under the notch and the home indicator, which
+      is what makes an installed PWA look native rather than letterboxed. It is only safe
+      because every fixed edge of the UI pads itself with the `--safe-*` variables in
+      index.css — without those, the bottom tab bar would sit under the home indicator.
+
+      No `maximum-scale` and no `user-scalable=no`: disabling pinch-zoom fails WCAG 1.4.4,
+      and the iOS focus-zoom it is usually reached for is solved properly in index.css by
+      making form controls 16px on small screens.
+    -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="description" content="AMIRI Finance — financial management and accounting ERP" />
     <title>AMIRI Finance</title>
+
+    <!-- Progressive Web App ------------------------------------------------ -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!--
+      Two theme colours, so the browser/OS chrome around the app matches the palette the
+      user is actually looking at. A single dark theme-color leaves a light-mode Android
+      user with a black status bar above a white app.
+    -->
+    <meta name="theme-color" content="#f7f9fb" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1220" media="(prefers-color-scheme: dark)" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+    <!-- iOS home-screen behaviour. Safari still ignores the manifest for these. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="AMIRI" />
+    <!-- `black-translucent` is what puts the app under the status bar; the safe-area
+         padding in index.css is what stops the topbar hiding behind the clock. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Telephone auto-linking rewrites voucher numbers and amounts as phone links. -->
+    <meta name="format-detection" content="telephone=no" />
+
     <script>
       // Applied before first paint so a dark-mode user never sees a white flash.
       try {

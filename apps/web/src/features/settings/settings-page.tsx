@@ -587,7 +587,7 @@ function SystemPanel() {
         description="Counts, not calculations. Whether the books balance is the trial balance's question, and asking it in two places invites two answers."
       />
 
-      <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Users" value={String(s.users)} note={`${s.activeUsers} active`} />
         <Stat label="Ledger entries" value={s.ledgerEntries.toLocaleString("en-IN")} />
         <Stat label="Oldest entry" value={dateOnly(s.oldestEntry)} />

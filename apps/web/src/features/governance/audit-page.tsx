@@ -11,6 +11,8 @@ import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { ExportMenu } from "@/components/export-menu";
 import { PaginationBar } from "@/components/pagination-bar";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +44,7 @@ export function AuditPage() {
   const [search, setSearch] = React.useState(params.get("q") ?? "");
   const debounced = useDebounced(search, 300);
   const [selected, setSelected] = React.useState<AuditRow | null>(null);
+  const isMobile = useIsMobile();
 
   React.useEffect(() => {
     const next = new URLSearchParams(params);
@@ -137,6 +140,56 @@ export function AuditPage() {
           <EmptyState icon={History} title="Nothing matched" description="Try clearing the filters." />
         ) : (
           <>
+            {isMobile ? (
+              <RecordCardList>
+                {query.data.items.map((row) => (
+                  <RecordCard
+                    key={row.id}
+                    onClick={() => setSelected(row)}
+                    label={`Open audit entry ${formatAction(row.action)}`}
+                    // A failed action keeps its red ground here too — on the table it was
+                    // the row background, and losing it would hide the one thing an
+                    // auditor scans this list for.
+                    className={cn(!row.success && "border-destructive/40 bg-destructive/5")}
+                    title={row.entityLabel ?? row.entity}
+                    subtitle={
+                      <span>
+                        {row.entity}
+                        {row.changedFields?.length ? ` · ${row.changedFields.length} field(s) changed` : ""}
+                      </span>
+                    }
+                    trailing={
+                      <Badge variant={actionVariant(row.action, row.success)}>
+                        {formatAction(row.action)}
+                      </Badge>
+                    }
+                    trailingBelow={
+                      <span className="text-2xs text-muted-foreground">{relativeTime(row.createdAt)}</span>
+                    }
+                    fields={
+                      <>
+                        <RecordField label="By">
+                          {row.userName}
+                          {row.roleName ? (
+                            <span className="text-muted-foreground">
+                              {" "}
+                              · {row.roleName.replace(/_/g, " ").toLowerCase()}
+                            </span>
+                          ) : null}
+                        </RecordField>
+                        <RecordField label="Amount">
+                          {row.amount ? (
+                            <Money value={row.amount} direction="auto" showIcon={false} size="sm" />
+                          ) : (
+                            "—"
+                          )}
+                        </RecordField>
+                      </>
+                    }
+                  />
+                ))}
+              </RecordCardList>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -195,6 +248,7 @@ export function AuditPage() {
                 ))}
               </TableBody>
             </Table>
+            )}
             <PaginationBar meta={query.data.meta} onPageChange={(p) => setParam("page", String(p))} label="entries" />
           </>
         )}

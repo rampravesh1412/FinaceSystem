@@ -33,7 +33,10 @@ const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
-  <div className="flex items-center gap-2 border-b border-border px-3">
+  /* `pr-12` on a phone: the palette is a bottom sheet there, and the Dialog's close
+     button is pinned to this first row. Without the padding the X sat on top of the
+     search text. From `sm` the dialog is centred and the close clears the field. */
+  <div className="flex items-center gap-2 border-b border-border py-1 pl-3 pr-12 sm:py-0 sm:pr-3">
     <Search className="size-4 shrink-0 text-muted-foreground" />
     <CommandPrimitive.Input
       ref={ref}

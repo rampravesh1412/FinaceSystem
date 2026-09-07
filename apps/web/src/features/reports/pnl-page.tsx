@@ -48,11 +48,30 @@ export function ProfitLossPage() {
         title="Profit & Loss"
         description="What the business earned over the period — income less expenses."
         actions={
-          <div className="flex items-center gap-2">
-            <Input type="date" value={from} onChange={(e) => setRange("from", e.target.value)} className="w-auto" aria-label="From" />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input type="date" value={to} onChange={(e) => setRange("to", e.target.value)} className="w-auto" aria-label="To" />
-            <ExportMenu path="/export/profit-loss" params={{ from, to }} />
+          /* Inside a prop expression, so a plain block comment — `{/* … *\/}` is JSX
+             children syntax and is a parse error here.
+
+             The two dates share a row on a phone and the export drops below them; side by
+             side with the export button, none of the three had room. */
+          <div className="grid w-full grid-cols-2 items-center gap-2 sm:flex sm:w-auto">
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setRange("from", e.target.value)}
+              className="h-10 w-full sm:h-9 sm:w-auto"
+              aria-label="From"
+            />
+            <span className="hidden text-xs text-muted-foreground sm:inline">to</span>
+            <Input
+              type="date"
+              value={to}
+              onChange={(e) => setRange("to", e.target.value)}
+              className="h-10 w-full sm:h-9 sm:w-auto"
+              aria-label="To"
+            />
+            <div className="col-span-2 sm:col-auto">
+              <ExportMenu path="/export/profit-loss" params={{ from, to }} />
+            </div>
           </div>
         }
       />
@@ -170,7 +189,14 @@ function Section({
                       <div className="text-sm">{line.name}</div>
                       <div className="font-mono text-2xs text-muted-foreground">{line.code}</div>
                     </TableCell>
-                    <TableCell className="text-right"><Money value={line.amount} showIcon={false} /></TableCell>
+                    <TableCell className="text-right">
+                      <Money value={line.amount} showIcon={false} />
+                      {/* The share BAR needs width this screen does not have, but the
+                          number behind it fits anywhere. */}
+                      <span className="block text-2xs text-muted-foreground sm:hidden">
+                        {line.share.toFixed(1)}% of total
+                      </span>
+                    </TableCell>
                     <TableCell className="hidden sm:table-cell">
                       {/* A share bar rather than a pie: length is far easier to compare
                           than angle, and the percentage is written beside it anyway. */}

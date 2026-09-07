@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AMIRI Finance">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4b4edd"/>
+      <stop offset="1" stop-color="#303296"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#g)"/>
+  <g fill="#fff">
+    <path d="M32 15 47 26.4H17z"/>
+    <rect x="17" y="28.6" width="30" height="2.9" rx="1.45"/>
+    <rect x="17" y="45.6" width="30" height="2.9" rx="1.45"/>
+    <rect x="22.6" y="33.9" width="2.9" height="9.4" rx="1.45"/>
+    <rect x="30.5" y="33.9" width="2.9" height="9.4" rx="1.45"/>
+    <rect x="38.4" y="33.9" width="2.9" height="9.4" rx="1.45"/>
+  </g>
+</svg>

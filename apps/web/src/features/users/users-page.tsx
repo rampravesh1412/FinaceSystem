@@ -11,6 +11,8 @@ import { initials, relativeTime } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { PaginationBar } from "@/components/pagination-bar";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +32,7 @@ export function UsersPage() {
   const [page, setPage] = React.useState(1);
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounced(search, 300);
+  const isMobile = useIsMobile();
 
   React.useEffect(() => setPage(1), [debouncedSearch]);
 
@@ -94,6 +97,44 @@ export function UsersPage() {
           />
         ) : (
           <>
+            {isMobile ? (
+              <RecordCardList>
+                {query.data.items.map((user) => (
+                  <RecordCard
+                    key={user.id}
+                    title={
+                      <span className="flex items-center gap-2">
+                        <Avatar className="size-7 shrink-0">
+                          <AvatarFallback>{initials(user.name)}</AvatarFallback>
+                        </Avatar>
+                        <span className="truncate">{user.name}</span>
+                      </span>
+                    }
+                    subtitle={user.email}
+                    trailing={
+                      <Badge variant={user.status === "ACTIVE" ? "success" : "warning"}>
+                        {user.status.charAt(0) + user.status.slice(1).toLowerCase()}
+                      </Badge>
+                    }
+                    fields={
+                      <>
+                        <RecordField label="Role">
+                          <Badge variant={user.role?.name === "SUPER_ADMIN" ? "accent" : "outline"}>
+                            {user.role?.name === "SUPER_ADMIN" ? <ShieldCheck className="size-3" /> : null}
+                            {user.role?.label ?? "—"}
+                          </Badge>
+                        </RecordField>
+                        <RecordField label="Last sign-in">
+                          {user.lastLoginAt ? relativeTime(user.lastLoginAt) : "Never"}
+                        </RecordField>
+                      </>
+                    }
+                    actions={<UserRowActions user={user} />}
+                    actionsPlacement="corner"
+                  />
+                ))}
+              </RecordCardList>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -139,6 +180,7 @@ export function UsersPage() {
                 ))}
               </TableBody>
             </Table>
+            )}
             <PaginationBar meta={query.data.meta} onPageChange={setPage} label="users" />
           </>
         )}

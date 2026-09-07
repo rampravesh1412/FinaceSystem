@@ -7,6 +7,8 @@ import { formatDate } from "@/lib/utils";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +31,7 @@ export function CreditPage() {
   const bucket = params.get("bucket") ?? "";
   const overdueOnly = params.get("overdueOnly") === "true";
   const overLimit = params.get("overLimit") === "true";
+  const isMobile = useIsMobile();
 
   const query = useQuery({
     queryKey: ["credit", { bucket, overdueOnly, overLimit }],
@@ -54,7 +57,7 @@ export function CreditPage() {
         description="What is owed, how long it has been owed, and who is past their limit."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total outstanding" value={summary?.totalOutstanding} direction="in" loading={query.isPending} />
         <StatCard label="Total overdue" value={summary?.totalOverdue} direction="out" loading={query.isPending} />
         <StatCard label="Due this week" value={summary?.dueThisWeek} loading={query.isPending} />
@@ -67,7 +70,7 @@ export function CreditPage() {
           <CardTitle className="text-base">Aging</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {AGING_BUCKETS.map((b) => {
               const value = summary?.buckets[b.key] ?? 0;
               const active = bucket === b.key;
@@ -140,6 +143,67 @@ export function CreditPage() {
             description="No party sits in this bucket. Clear the filters to see the whole book."
           />
         ) : (
+          isMobile ? (
+            <RecordCardList>
+              {query.data.rows.map((row) => (
+                <RecordCard
+                  key={row.partyId}
+                  to={`/khata/${row.partyId}`}
+                  label={`Open khata for ${row.name}`}
+                  title={row.name}
+                  subtitle={<span className="font-mono">{row.code}</span>}
+                  trailing={<Money value={row.balance} direction="auto" showIcon={false} />}
+                  trailingBelow={
+                    row.daysOverdue > 0 ? (
+                      <Badge variant={row.daysOverdue > 90 ? "danger" : row.daysOverdue > 30 ? "warning" : "outline"}>
+                        {row.daysOverdue}d overdue
+                      </Badge>
+                    ) : null
+                  }
+                  fields={
+                    <>
+                      <RecordField label="Overdue">
+                        {row.overdueAmount ? (
+                          <Money value={row.overdueAmount} showIcon={false} size="sm" className="text-destructive" />
+                        ) : (
+                          "—"
+                        )}
+                      </RecordField>
+                      <RecordField label="Due date">
+                        {row.dueDate ? formatDate(row.dueDate) : "—"}
+                      </RecordField>
+                      <RecordField label="Credit left">
+                        {row.creditLimit > 0 ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Money value={row.availableCredit} showIcon={false} size="sm" />
+                            {row.isOverLimit ? (
+                              <AlertTriangle className="size-3.5 text-warning" aria-label="Over limit" />
+                            ) : null}
+                          </span>
+                        ) : (
+                          "No limit"
+                        )}
+                      </RecordField>
+                      <RecordField label="Mobile">
+                        {row.mobile ? (
+                          <a
+                            href={`tel:${row.mobile}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 text-accent"
+                          >
+                            <Phone className="size-3.5" aria-hidden />
+                            {row.mobile}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </RecordField>
+                    </>
+                  }
+                />
+              ))}
+            </RecordCardList>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -217,6 +281,7 @@ export function CreditPage() {
               ))}
             </TableBody>
           </Table>
+          )
         )}
       </Card>
 

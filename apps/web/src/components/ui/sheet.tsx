@@ -37,7 +37,10 @@ const sheetVariants = cva(
     variants: {
       side: {
         top: "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
-        bottom: "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+        // Capped and rounded, so it reads as a sheet resting over the app rather than a
+        // panel that has replaced it — and so a long list inside it scrolls instead of
+        // pushing its own header off the top of the screen.
+        bottom: "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-2xl border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
         left: "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
         right: "inset-y-0 right-0 h-full w-full border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-xl",
       },
@@ -48,15 +51,30 @@ const sheetVariants = cva(
 
 interface SheetContentProps
   extends React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>,
-    VariantProps<typeof sheetVariants> {}
+    VariantProps<typeof sheetVariants> {
+  /**
+   * Restyles the close button.
+   *
+   * Needed because the navigation drawer renders the always-dark `bg-sidebar` palette
+   * regardless of theme, while the default close is painted with `surface-muted` — a
+   * LIGHT token in the light theme. The result was a bright grey disc floating on navy.
+   * A sheet whose contents opt out of the surface tokens has to say so.
+   */
+  closeClassName?: string;
+}
 
 const SheetContent = React.forwardRef<React.ElementRef<typeof SheetPrimitive.Content>, SheetContentProps>(
-  ({ side = "right", className, children, ...props }, ref) => (
+  ({ side = "right", className, closeClassName, children, ...props }, ref) => (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
         {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <SheetPrimitive.Close
+          className={cn(
+            "absolute right-3 top-3 flex size-9 items-center justify-center rounded-full bg-surface-muted/70 text-muted-foreground backdrop-blur transition-colors hover:bg-surface-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:right-4 sm:top-4 sm:size-auto sm:rounded-sm sm:bg-transparent sm:backdrop-blur-none",
+            closeClassName,
+          )}
+        >
           <X className="size-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>
@@ -67,12 +85,24 @@ const SheetContent = React.forwardRef<React.ElementRef<typeof SheetPrimitive.Con
 SheetContent.displayName = SheetPrimitive.Content.displayName;
 
 const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-1.5 border-b border-border p-5", className)} {...props} />
+  <div
+    className={cn("flex flex-col space-y-1.5 border-b border-border p-4 pr-12 sm:p-5", className)}
+    {...props}
+  />
 );
 SheetHeader.displayName = "SheetHeader";
 
 const SheetFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse gap-2 border-t border-border p-5 sm:flex-row sm:justify-end", className)} {...props} />
+  <div
+    className={cn(
+      "flex flex-col-reverse gap-2 border-t border-border p-4 [&>*]:w-full",
+      // Clears the home indicator: this footer is flush with the bottom of the screen.
+      "pb-[max(1rem,var(--safe-b))]",
+      "sm:flex-row sm:justify-end sm:p-5 sm:[&>*]:w-auto",
+      className,
+    )}
+    {...props}
+  />
 );
 SheetFooter.displayName = "SheetFooter";
 

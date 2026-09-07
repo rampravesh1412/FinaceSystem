@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useAuth } from "@/features/auth/auth-context";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { MobileNav } from "./mobile-nav";
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { RouteFallback } from "@/components/route-fallback";
@@ -15,9 +16,15 @@ const COLLAPSE_KEY = "amiri-sidebar-collapsed";
 /**
  * The authenticated shell.
  *
- * Responsive per §48: a fixed sidebar from `lg` up, and a slide-over drawer below it. The
- * drawer closes on navigation, which sounds obvious and is the single most common defect
- * in mobile admin navigation.
+ * Responsive per §48. Three layouts, not two:
+ *
+ *  - **lg and up** — a fixed sidebar rail, collapsible to icons.
+ *  - **below lg** — a slide-over drawer, opened from the topbar or from "More".
+ *  - **below lg** — additionally, a bottom tab bar carrying the four screens people
+ *    actually live in, plus a quick-add button for posting a transaction.
+ *
+ * The drawer closes on navigation, which sounds obvious and is the single most common
+ * defect in mobile admin navigation.
  */
 export function AppLayout() {
   const { pathname } = useLocation();
@@ -55,7 +62,14 @@ export function AppLayout() {
       </aside>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent side="left" className="w-64 border-sidebar-border p-0">
+        <SheetContent
+          side="left"
+          // `w-[85vw]` rather than the default 75%: on a 360px phone three-quarters is
+          // 270px, and the longer menu labels ("Reconciliation", "Expense Ledger") were
+          // truncating. Capped so it never becomes a full-screen takeover on a tablet.
+          className="w-[85vw] max-w-[19rem] border-sidebar-border p-0"
+          closeClassName="bg-sidebar-border/70 text-sidebar-muted hover:bg-sidebar-border hover:text-sidebar-foreground sm:bg-sidebar-border/70"
+        >
           <Sidebar collapsed={false} onNavigate={() => setMobileNavOpen(false)} />
         </SheetContent>
       </Sheet>
@@ -65,7 +79,12 @@ export function AppLayout() {
           onOpenMobileNav={() => setMobileNavOpen(true)}
           onOpenCommandPalette={() => palette.setOpen(true)}
         />
-        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 sm:py-6">
+        {/*
+          `pb-nav` reserves the height of the bottom tab bar plus the home indicator, so
+          the last row of a table is scrollable clear of it rather than sitting
+          permanently underneath. It is dropped from `lg`, where there is no bar.
+        */}
+        <main className="min-w-0 flex-1 px-4 py-5 pb-nav sm:px-6 sm:py-6 lg:pb-6">
           {/* One boundary for every lazy route, here rather than per-route: the fallback
               is the same page-shaped skeleton whichever screen is arriving. */}
           <React.Suspense fallback={<RouteFallback />}>
@@ -77,6 +96,8 @@ export function AppLayout() {
           </React.Suspense>
         </main>
       </div>
+
+      <MobileNav onOpenMenu={() => setMobileNavOpen(true)} />
 
       <CommandPalette open={palette.open} onOpenChange={palette.setOpen} />
     </div>

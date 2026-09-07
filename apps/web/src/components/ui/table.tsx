@@ -17,11 +17,41 @@ import { cn } from "@/lib/utils";
  */
 interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
   wrapperClassName?: string;
+  /**
+   * Draw the horizontal-overflow fade. On by default; the virtualised report tables set
+   * it false because they hand their scrolling to an outer `VirtualScroller`.
+   */
+  scrollHint?: boolean;
 }
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, wrapperClassName, ...props }, ref) => (
-    <div className={cn("relative w-full overflow-x-auto", wrapperClassName)}>
+  ({ className, wrapperClassName, scrollHint = true, ...props }, ref) => (
+    /*
+     * `scroll-fade-x` marks the horizontal overflow with a soft fade at whichever edge
+     * has more content behind it.
+     *
+     * The report and ledger tables stay as tables at every width — a trial balance IS a
+     * grid and card-ifying it would destroy the column alignment that makes it checkable.
+     * So on a phone they scroll sideways, and without a cue nobody discovers that: the
+     * table simply looks like it ends at the screen edge and the remaining columns are
+     * reported as missing data.
+     *
+     * The fade costs nothing when there is no overflow. It is drawn with
+     * `background-attachment: local`, so the gradient scrolls with the content and is
+     * only visible while there is content to scroll to — no JS scroll listener, and no
+     * fade on a table that already fits.
+     */
+    <div
+      className={cn(
+        "relative w-full overflow-x-auto",
+        // Only where this wrapper is the thing that scrolls. On a wrapper collapsed with
+        // `overflow-visible` there is nothing to scroll, and `background-attachment:
+        // local` would then paint both gradients permanently — shading down each edge of
+        // a report that fits perfectly well.
+        scrollHint && "scroll-fade-x",
+        wrapperClassName,
+      )}
+    >
       <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
     </div>
   ),

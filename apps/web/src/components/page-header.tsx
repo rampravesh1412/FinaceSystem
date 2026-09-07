@@ -22,10 +22,28 @@ export function PageHeader({
   return (
     <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="min-w-0 space-y-1">
-        <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">{title}</h1>
+        {/*
+          `truncate` on a phone cut titles like "Bank Reconciliation" to "Bank Reconcil…"
+          even though there was a whole second line free. It wraps below `sm`, where
+          vertical space is the abundant axis, and truncates from `sm` up, where the
+          header shares its row with the actions.
+        */}
+        <h1 className="text-xl font-semibold tracking-tight text-foreground sm:truncate">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        /*
+          Full-width, side-by-side actions on a phone.
+
+          `[&>*]:flex-1` makes each direct child share the row — a page header's actions
+          are typically one primary ("New party") and one secondary ("Export"), and at
+          their natural widths they sat as two small buttons hugging the left edge under a
+          full-width title.
+        */
+        <div className="flex flex-wrap items-center gap-2 [&>*]:flex-1 sm:shrink-0 sm:[&>*]:flex-none">
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }

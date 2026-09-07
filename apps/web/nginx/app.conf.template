@@ -124,6 +124,42 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 
+    # ── PWA ──────────────────────────────────────────────────────────────────────────
+    # The service worker script must NEVER be cached.
+    #
+    # It is the file that decides what every other file's caching rules are, so a stale
+    # copy pins the whole app to an old build — and unlike /assets it has no content hash
+    # to break the tie. Browsers cap worker-script caching at 24h on their own, which is
+    # still up to a day of users on yesterday's code after a deploy; `no-cache` makes the
+    # browser revalidate on every update check instead.
+    #
+    # (`no-cache` means "revalidate before use", not "do not store" — a 304 is cheap.)
+    location = /sw.js {
+        add_header Cache-Control "no-cache, must-revalidate";
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # The manifest changes with a release but is read on nearly every launch. A short
+    # cache keeps installs fast without holding a renamed app or a new shortcut back for
+    # long.
+    location = /manifest.webmanifest {
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Icons are stable but NOT content-hashed, so they cannot be pinned for a year the way
+    # /assets can — a changed icon would never reach anyone who had already installed.
+    location /icons/ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000";
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

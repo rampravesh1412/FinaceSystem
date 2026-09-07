@@ -10,6 +10,8 @@ import { Can } from "@/features/auth/auth-context";
 import { NewSavingsAccountButton, SavingsTransactionButtons } from "./savings-actions";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,7 @@ export function SavingsPage() {
   const [search, setSearch] = React.useState("");
   const [openId, setOpenId] = React.useState<string | null>(null);
   const debounced = useDebounced(search, 300);
+  const isMobile = useIsMobile();
 
   React.useEffect(() => setPage(1), [debounced]);
 
@@ -56,7 +59,7 @@ export function SavingsPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Held for members" value={meta?.totalSavings} loading={query.isPending} />
         <StatCard label="Today's collection" value={meta?.todayCollection} direction="in" loading={query.isPending} />
         <StatCard label="Today's withdrawal" value={meta?.todayWithdrawal} direction="out" loading={query.isPending} />
@@ -96,6 +99,33 @@ export function SavingsPage() {
           />
         ) : (
           <>
+            {isMobile ? (
+              <RecordCardList>
+                {query.data.items.map((account) => (
+                  <RecordCard
+                    key={account.id}
+                    onClick={() => setOpenId(account.id)}
+                    label={`Open passbook for ${account.memberName}`}
+                    title={account.memberName}
+                    subtitle={<span className="font-mono">{account.accountNo}</span>}
+                    trailing={<Money value={account.balance} showIcon={false} />}
+                    fields={
+                      <>
+                        <RecordField label="Rate">
+                          {account.interestRateBps > 0 ? `${account.interestRateBps / 100}%` : "—"}
+                        </RecordField>
+                        <RecordField label="Last activity">
+                          {account.lastTransactionAt
+                            ? relativeTime(account.lastTransactionAt)
+                            : `Opened ${formatDate(account.openedAt)}`}
+                        </RecordField>
+                      </>
+                    }
+                    actions={<SavingsTransactionButtons account={account} />}
+                  />
+                ))}
+              </RecordCardList>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -151,6 +181,7 @@ export function SavingsPage() {
                 ))}
               </TableBody>
             </Table>
+            )}
             <PaginationBar meta={query.data.meta} onPageChange={setPage} label="members" />
           </>
         )}

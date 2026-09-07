@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MotionProvider } from "@/components/motion";
 import { AuthProvider } from "@/features/auth/auth-context";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { ApiError } from "@/lib/api";
 
 /**
@@ -36,6 +37,7 @@ function createQueryClient(): QueryClient {
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = React.useState(createQueryClient);
+  const isMobile = useIsMobile();
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -43,10 +45,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <MotionProvider>
           <AuthProvider>
             {children}
+            {/*
+              Bottom-right is right on a desktop and wrong on a phone, where that corner
+              is occupied by the bottom tab bar and by the thumb reaching for it. Moving
+              to the top on small screens keeps a toast readable and keeps it from
+              covering the navigation the user is trying to press.
+            */}
             <Toaster
-              position="bottom-right"
+              position={isMobile ? "top-center" : "bottom-right"}
               closeButton
               richColors
+              expand={!isMobile}
+              // Clears the notch on a notched phone, and the topbar underneath it.
+              offset={isMobile ? "calc(env(safe-area-inset-top, 0px) + 0.75rem)" : undefined}
               toastOptions={{ classNames: { toast: "font-sans" } }}
             />
           </AuthProvider>

@@ -5,12 +5,14 @@ import { BadgeIndianRupee, Phone, Search, Undo2 } from "lucide-react";
 import { KHATA_LABEL, type KhataStatement, type PartySummary } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { formatDate } from "@/lib/utils";
 import { Money } from "@/components/money";
 import { Can } from "@/features/auth/auth-context";
 import { NewAdjustmentButton } from "./adjustment-form";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList } from "@/components/record-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -130,6 +132,10 @@ function KhataPartyPicker() {
 }
 
 function KhataStatementView({ partyId }: { partyId: string }) {
+  // Above the loading and error early-returns: a hook called after a conditional return
+  // runs on some renders and not others, and React throws on the render where the order
+  // changes — here, the moment the statement finished loading.
+  const isMobile = useIsMobile();
   const query = useQuery({
     queryKey: ["khata", partyId],
     queryFn: () => api.get<KhataStatement>(`/khata/${partyId}`),
@@ -245,6 +251,84 @@ function KhataStatementView({ partyId }: { partyId: string }) {
             title="No entries yet"
             description="Nothing has been recorded against this party."
           />
+        ) : isMobile ? (
+          /*
+           * The khata as a statement rather than a five-column grid.
+           *
+           * GIVEN / TAKEN / BALANCE at 360px left each amount column about 70px wide, and
+           * "₹1,25,000.00" does not fit in 70px — the figures wrapped mid-number. Each
+           * entry becomes a row with its amount on the right and the running balance
+           * beneath it, which is how a paper khata is read anyway.
+           */
+          <>
+            <RecordCardList>
+              <RecordCard
+                title="Opening balance"
+                trailing={<Money value={k.openingBalance} direction="auto" showIcon={false} />}
+                className="bg-surface-muted/40"
+              />
+
+              {k.entries.map((entry) => (
+                <RecordCard
+                  key={entry.id}
+                  muted={entry.isReversed}
+                  title={
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate">{entry.narration ?? entry.typeLabel}</span>
+                      {entry.isReversed ? (
+                        <Badge variant="warning">
+                          <Undo2 className="size-3" />
+                          Reversed
+                        </Badge>
+                      ) : null}
+                    </span>
+                  }
+                  subtitle={
+                    <span className="font-mono">
+                      {entry.txnNo} · {formatDate(entry.date)}
+                    </span>
+                  }
+                  trailing={
+                    entry.given ? (
+                      <Money value={entry.given} showIcon={false} className="text-money-out" />
+                    ) : entry.taken ? (
+                      <Money value={entry.taken} showIcon={false} className="text-money-in" />
+                    ) : (
+                      <Dash />
+                    )
+                  }
+                  trailingBelow={
+                    <span className="flex items-center gap-1 text-2xs text-muted-foreground">
+                      {/* Which of the two columns this amount came from is carried by the
+                          word, not only by the colour (§43). */}
+                      {entry.given ? "Given" : entry.taken ? "Taken" : ""}
+                      <span aria-hidden>·</span>
+                      <span>bal</span>
+                      <Money value={entry.balance} direction="auto" showIcon={false} size="sm" />
+                    </span>
+                  }
+                />
+              ))}
+            </RecordCardList>
+
+            <div className="space-y-2 border-t border-border bg-surface-muted/40 px-4 py-3">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                {k.closingLabel}
+              </div>
+              <dl className="grid grid-cols-3 gap-2">
+                <Stat label="Given" value={k.totalGiven} />
+                <Stat label="Taken" value={k.totalTaken} />
+                <div>
+                  <dt className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Closing
+                  </dt>
+                  <dd>
+                    <Money value={k.closingBalance} direction="auto" showIcon={false} size="sm" className="font-semibold" />
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </>
         ) : (
           <Table>
             <TableHeader>

@@ -7,9 +7,11 @@ import { Can, useAuth } from "@/features/auth/auth-context";
 import { NewAccountButton } from "./account-form";
 import { BankAccountRowActions, CashAccountRowActions } from "./banking-edit";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { PaginationBar } from "@/components/pagination-bar";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
 import { Money } from "@/components/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +71,7 @@ function BankAccountsTable() {
   const [page, setPage] = React.useState(1);
   const [search, setSearch] = React.useState("");
   const debounced = useDebounced(search, 300);
+  const isMobile = useIsMobile();
 
   React.useEffect(() => setPage(1), [debounced]);
 
@@ -130,6 +133,67 @@ function BankAccountsTable() {
               : "Add a bank account to start recording transfers and payments against it."
           }
         />
+      ) : isMobile ? (
+        /*
+         * Number, IFSC, Type and Available were all `hidden` below `md`/`lg`/`xl`. An
+         * account number that is present but invisible is the worst of the three states:
+         * a user checking which account they are about to pay from had nothing to check.
+         */
+        <>
+          <RecordCardList>
+            {query.data.items.map((account) => (
+              <RecordCard
+                key={account.id}
+                title={
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate">{account.accountName}</span>
+                    {account.isLowBalance ? (
+                      <TriangleAlert className="size-3.5 shrink-0 text-warning" aria-label="Low balance" />
+                    ) : null}
+                  </span>
+                }
+                subtitle={account.bank.shortName ?? account.bank.name}
+                trailing={<Money value={account.balance} direction="auto" showIcon={false} />}
+                trailingBelow={
+                  <Badge variant={account.accountType === "OD" ? "warning" : "default"}>
+                    {account.accountType}
+                  </Badge>
+                }
+                fields={
+                  <>
+                    <RecordField label="Number">
+                      <span className="inline-flex items-center gap-1.5 font-mono text-xs">
+                        {account.accountNumber}
+                        {account.accountNumberMasked ? (
+                          <Lock className="size-3 text-muted-foreground" aria-label="masked" />
+                        ) : null}
+                      </span>
+                    </RecordField>
+                    <RecordField label="IFSC">
+                      <span className="font-mono text-xs">{account.ifsc}</span>
+                    </RecordField>
+                    <RecordField label="Available" wide>
+                      <Money value={account.availableBalance} showIcon={false} size="sm" />
+                    </RecordField>
+                  </>
+                }
+                actions={<BankAccountRowActions account={account} />}
+                actionsPlacement="corner"
+              />
+            ))}
+          </RecordCardList>
+
+          {/* The table keeps this in a footer; a card list has no footer, so the total
+              rides above the pager where it is still tied to the set it sums. */}
+          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              Total across {query.data.meta.total} account{query.data.meta.total === 1 ? "" : "s"}
+            </span>
+            <Money value={totalBalance} direction="auto" showIcon={false} className="font-semibold" />
+          </div>
+
+          <PaginationBar meta={query.data.meta} onPageChange={setPage} label="accounts" />
+        </>
       ) : (
         <>
           <Table>

@@ -95,7 +95,13 @@ export function CashTallyPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" aria-label="Date" />
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-10 w-full sm:h-9 sm:w-auto"
+              aria-label="Date"
+            />
           </div>
         }
       />

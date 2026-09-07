@@ -13,6 +13,8 @@ import { Can, useAuth } from "@/features/auth/auth-context";
 import { formatDate } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +41,7 @@ export function PeriodsPage() {
   const [closing, setClosing] = React.useState<FinancialPeriodSummary | null>(null);
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const isMobile = useIsMobile();
 
   const query = useQuery({
     queryKey: ["periods"],
@@ -88,6 +91,69 @@ export function PeriodsPage() {
             description="Periods are optional. Without any, posting is never blocked by date — define one when you want to close a month or a year."
           />
         ) : (
+          isMobile ? (
+            <RecordCardList>
+              {query.data.map((p) => (
+                <RecordCard
+                  key={p.id}
+                  title={
+                    <span className="flex items-center gap-2">
+                      {p.name}
+                      {p.isCurrent ? <Badge variant="accent">Current</Badge> : null}
+                    </span>
+                  }
+                  subtitle={`${formatDate(p.startDate)} → ${formatDate(p.endDate)}`}
+                  trailing={
+                    <Badge
+                      variant={p.status === "OPEN" ? "success" : p.status === "LOCKED" ? "danger" : "warning"}
+                    >
+                      {p.status === "OPEN" ? <LockOpen className="size-3" /> : <Lock className="size-3" />}
+                      {p.status.charAt(0) + p.status.slice(1).toLowerCase()}
+                    </Badge>
+                  }
+                  fields={
+                    <>
+                      <RecordField label="Transactions">
+                        <span className="tabular">{p.transactionCount}</span>
+                      </RecordField>
+                      <RecordField label="Closed">
+                        {p.closedBy ? `${p.closedBy}${p.closedAt ? ` · ${formatDate(p.closedAt)}` : ""}` : "—"}
+                      </RecordField>
+                    </>
+                  }
+                  actions={
+                    <Can permission="periods.edit">
+                      {p.status === "OPEN" ? (
+                        <Button variant="outline" size="sm" onClick={() => setClosing(p)}>
+                          <Lock />
+                          Close
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={p.status === "LOCKED" && !user?.isSuperAdmin}
+                          onClick={() => {
+                            const reason = window.prompt(
+                              "Why is this period being reopened? (recorded in the audit log)",
+                            );
+                            if (reason && reason.trim().length >= 10) {
+                              reopen.mutate({ id: p.id, reason: reason.trim() });
+                            } else if (reason !== null) {
+                              toast.error("Give a reason of at least 10 characters.");
+                            }
+                          }}
+                        >
+                          <LockOpen />
+                          Reopen
+                        </Button>
+                      )}
+                    </Can>
+                  }
+                />
+              ))}
+            </RecordCardList>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -161,6 +227,7 @@ export function PeriodsPage() {
               ))}
             </TableBody>
           </Table>
+          )
         )}
       </Card>
 

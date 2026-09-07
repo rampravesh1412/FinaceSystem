@@ -23,31 +23,41 @@ export function PaginationBar({
   const last = Math.min(meta.page * meta.limit, meta.total);
 
   return (
-    <div className="screen-only flex flex-col-reverse items-center justify-between gap-3 border-t border-border px-4 py-3 sm:flex-row">
-      <p className="text-xs text-muted-foreground">
+    <div className="screen-only flex flex-col-reverse items-stretch justify-between gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center">
+      <p className="text-center text-xs text-muted-foreground sm:text-left">
         Showing <span className="tabular font-medium text-foreground">{first}</span>–
         <span className="tabular font-medium text-foreground">{last}</span> of{" "}
         <span className="tabular font-medium text-foreground">{meta.total.toLocaleString("en-IN")}</span>{" "}
         {label}
       </p>
 
+      {/*
+        Prev and Next grow to fill the row on a phone.
+
+        As 32px-tall auto-width buttons they were two small targets floating in the middle
+        of a wide bar — and paging is the most repeated action on any of these screens.
+        Full-width, 40px tall, with the page counter between them, they are reachable with
+        a thumb without looking.
+      */}
       <div className="flex items-center gap-2">
         <Button
           variant="outline"
           size="sm"
+          className="h-10 flex-1 sm:h-8 sm:flex-none"
           disabled={!meta.hasPrev}
           onClick={() => onPageChange(meta.page - 1)}
         >
           <ChevronLeft />
           Previous
         </Button>
-        <span className="px-1 text-xs text-muted-foreground">
+        <span className="shrink-0 px-1 text-center text-xs text-muted-foreground">
           Page <span className="tabular font-medium text-foreground">{meta.page}</span> of{" "}
           <span className="tabular font-medium text-foreground">{meta.totalPages}</span>
         </span>
         <Button
           variant="outline"
           size="sm"
+          className="h-10 flex-1 sm:h-8 sm:flex-none"
           disabled={!meta.hasNext}
           onClick={() => onPageChange(meta.page + 1)}
         >

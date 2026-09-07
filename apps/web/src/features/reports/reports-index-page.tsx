@@ -38,14 +38,26 @@ export function ReportsIndexPage() {
         description="Everything derived from the ledger. Choose a period once and it carries across the exports below."
       />
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
         <div className="space-y-1.5">
           <Label htmlFor="from">From</Label>
-          <Input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" />
+          <Input
+            id="from"
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="h-10 w-full sm:h-9 sm:w-auto"
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="to">To</Label>
-          <Input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" />
+          <Input
+            id="to"
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="h-10 w-full sm:h-9 sm:w-auto"
+          />
         </div>
       </div>
 

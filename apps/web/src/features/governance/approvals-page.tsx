@@ -67,7 +67,7 @@ export function ApprovalsPage() {
         description="Transactions held for sign-off. Nothing here has touched a balance."
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatCard label="Awaiting approval" value={query.data?.meta.total} asCount icon={ClipboardCheck} loading={query.isPending} />
         <StatCard label="Total value held" value={meta?.totalValue} loading={query.isPending} />
         <StatCard

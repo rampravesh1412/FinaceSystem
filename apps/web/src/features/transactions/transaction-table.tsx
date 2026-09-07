@@ -6,6 +6,7 @@ import type { BadgeProps } from "@/components/ui/badge";
 import type { TransactionRow } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { formatDate } from "@/lib/utils";
 import { Money } from "@/components/money";
 import { EmptyState } from "@/components/empty-state";
@@ -16,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
 import { TransactionDrawer } from "./transaction-drawer";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +68,7 @@ export function TransactionTable({
   const [search, setSearch] = React.useState(params.get("q") ?? "");
   const debounced = useDebounced(search, 300);
   const [openId, setOpenId] = React.useState<string | null>(null);
+  const isMobile = useIsMobile();
 
   React.useEffect(() => {
     const next = new URLSearchParams(params);
@@ -100,38 +103,64 @@ export function TransactionTable({
   return (
     <>
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
-          <div className="relative max-w-sm flex-1">
+        <div className="flex flex-col gap-3 border-b border-border p-3 sm:p-4 lg:flex-row lg:items-center">
+          <div className="relative lg:max-w-sm lg:flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={searchPlaceholder}
-              className="pl-9"
+              className="h-10 pl-9 sm:h-9"
               aria-label="Search transactions"
+              inputMode="search"
+              enterKeyHint="search"
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Input
-              type="date"
-              value={from}
-              onChange={(e) => setParam("from", e.target.value)}
-              className="w-auto"
-              aria-label="From date"
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="date"
-              value={to}
-              onChange={(e) => setParam("to", e.target.value)}
-              className="w-auto"
-              aria-label="To date"
-            />
+          {/*
+            A grid on a phone rather than a flex row.
+
+            `<input type="date">` on mobile Safari and Chrome renders at its own intrinsic
+            width and ignores `w-auto`; two of them plus the word "to" plus a Clear button
+            overflowed a 360px card and pushed the whole toolbar sideways. Two equal
+            columns fit, and the labels move above the fields where they are readable.
+          */}
+          <div className="grid grid-cols-2 items-end gap-2 lg:flex lg:items-center">
+            <div className="min-w-0">
+              <label htmlFor="txn-from" className="mb-1 block text-2xs font-medium uppercase tracking-wider text-muted-foreground lg:hidden">
+                From
+              </label>
+              <Input
+                id="txn-from"
+                type="date"
+                value={from}
+                onChange={(e) => setParam("from", e.target.value)}
+                className="h-10 w-full sm:h-9 lg:w-auto"
+                aria-label="From date"
+              />
+            </div>
+
+            <span className="hidden text-xs text-muted-foreground lg:inline">to</span>
+
+            <div className="min-w-0">
+              <label htmlFor="txn-to" className="mb-1 block text-2xs font-medium uppercase tracking-wider text-muted-foreground lg:hidden">
+                To
+              </label>
+              <Input
+                id="txn-to"
+                type="date"
+                value={to}
+                onChange={(e) => setParam("to", e.target.value)}
+                className="h-10 w-full sm:h-9 lg:w-auto"
+                aria-label="To date"
+              />
+            </div>
+
             {(from || to) ? (
               <Button
                 variant="ghost"
                 size="sm"
+                className="col-span-2 h-9"
                 onClick={() => {
                   const next = new URLSearchParams(params);
                   next.delete("from");
@@ -139,7 +168,7 @@ export function TransactionTable({
                   setParams(next);
                 }}
               >
-                Clear
+                Clear dates
               </Button>
             ) : null}
           </div>
@@ -147,7 +176,7 @@ export function TransactionTable({
 
         {/* Totals across the whole filtered set, not just the visible page. */}
         {meta && (meta.moneyIn || meta.moneyOut) ? (
-          <div className="grid gap-4 border-b border-border bg-surface-muted/40 px-4 py-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-border bg-surface-muted/40 px-4 py-3 sm:grid-cols-4">
             <Total label="Money In" value={meta.moneyIn ?? 0} direction="in" />
             <Total label="Money Out" value={meta.moneyOut ?? 0} direction="out" />
             <Total label="Charges" value={meta.charges ?? 0} direction="neutral" />
@@ -178,6 +207,74 @@ export function TransactionTable({
             title={debounced || from || to ? "Nothing matched" : emptyTitle}
             description={debounced || from || to ? "Try widening the date range or clearing the search." : emptyDescription}
           />
+        ) : isMobile ? (
+          /*
+           * The same rows, re-shaped.
+           *
+           * Note what is NOT dropped here: Mode and Charges were `hidden xl:table-cell`
+           * and `hidden lg:table-cell` in the table, meaning a phone user could not see
+           * that a payment carried a charge at all. Both are fields on the card.
+           */
+          <>
+            <RecordCardList>
+              {query.data.items.map((txn) => (
+                <RecordCard
+                  key={txn.id}
+                  onClick={() => setOpenId(txn.id)}
+                  muted={txn.status === "REVERSED"}
+                  title={txn.party?.name ?? txn.accountLabel}
+                  subtitle={
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono">{txn.txnNo}</span>
+                      {txn.isReversal ? (
+                        <Undo2 className="size-3 shrink-0 text-warning" aria-label="reversal" />
+                      ) : null}
+                      <span aria-hidden>·</span>
+                      <span className="truncate">{formatDate(txn.date)}</span>
+                    </span>
+                  }
+                  trailing={
+                    txn.moneyIn ? (
+                      <Money value={txn.moneyIn} direction="in" />
+                    ) : txn.moneyOut ? (
+                      <Money value={txn.moneyOut} direction="out" />
+                    ) : (
+                      <Dash />
+                    )
+                  }
+                  trailingBelow={
+                    <Badge variant={statusVariant(txn.status)}>
+                      {txn.status.charAt(0) + txn.status.slice(1).toLowerCase()}
+                    </Badge>
+                  }
+                  fields={
+                    <>
+                      <RecordField label="Account">
+                        {txn.party ? txn.accountLabel : (txn.narration ?? "—")}
+                      </RecordField>
+                      {showType ? (
+                        <RecordField label="Type">
+                          <Badge variant="outline">{txn.typeLabel}</Badge>
+                        </RecordField>
+                      ) : null}
+                      <RecordField label="Mode">
+                        {txn.paymentMode ? txn.paymentMode.replace(/_/g, " ") : "—"}
+                      </RecordField>
+                      <RecordField label="Charges">
+                        {txn.chargeAmount ? (
+                          <Money value={txn.chargeAmount} showIcon={false} size="sm" />
+                        ) : (
+                          "—"
+                        )}
+                      </RecordField>
+                    </>
+                  }
+                />
+              ))}
+            </RecordCardList>
+
+            <PaginationBar meta={query.data.meta} onPageChange={(p) => setParam("page", String(p))} label="transactions" />
+          </>
         ) : (
           <>
             <Table>

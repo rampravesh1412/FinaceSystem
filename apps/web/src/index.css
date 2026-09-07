@@ -78,6 +78,24 @@
     --sidebar-border: 224 35% 22%;
 
     --radius: 0.625rem;
+
+    /**
+     * Safe-area insets, resolved once.
+     *
+     * `env()` is only legal in a property value, never inside `calc()` in an arbitrary
+     * Tailwind class, and it evaluates to nothing at all in a browser that does not know
+     * it — which silently breaks the whole declaration it sits in. Capturing it in a
+     * variable with a `0px` fallback means every consumer can write
+     * `padding-bottom: var(--safe-b)` and get correct behaviour on a notched iPhone and
+     * on a desktop alike.
+     */
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+
+    /** Height of the mobile bottom tab bar, so content can clear it. */
+    --bottom-nav-h: 3.5rem;
   }
 
   .dark {
@@ -200,6 +218,66 @@
       transition-duration: 0.01ms !important;
     }
   }
+
+  /* ── Touch and mobile behaviour ─────────────────────────────────────────── */
+
+  html {
+    /* Removes the ~300ms click delay legacy mobile browsers add while they wait to see
+       whether a tap is a double-tap-to-zoom. Applied at the root rather than per control
+       so a newly added button is never accidentally the slow one. */
+    touch-action: manipulation;
+  }
+
+  body {
+    /*
+     * A financial table is wide. Without this, one un-wrapped column pushes the BODY
+     * wider than the viewport and the entire app — sidebar, topbar, every screen — scrolls
+     * sideways as a unit, which reads as a broken layout rather than a wide table. Tables
+     * own their own horizontal scroll (see `Table`), so clipping here costs nothing and
+     * makes an accidental overflow visibly local instead of global.
+     */
+    overflow-x: clip;
+    /* No rubber-band chaining to the document when a drawer or list hits its end. In a
+       standalone PWA that bounce exposes the blank page behind the app and looks like a
+       rendering fault. */
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /*
+   * iOS Safari ZOOMS the viewport when a form control smaller than 16px receives focus,
+   * and it does not zoom back out. Every input in this app is `text-sm` (14px), so on an
+   * iPhone tapping the amount field left the user zoomed in, scrolled sideways, and
+   * hunting for the Save button.
+   *
+   * Fixed by raising the font — not by `maximum-scale=1` on the viewport meta, which
+   * disables pinch-zoom for everyone and fails WCAG 1.4.4. 16px is also simply a better
+   * size to type an amount into on a phone.
+   */
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+
+  /* Momentum scrolling inside every scroll container, and no chaining out of one. */
+  [data-scroll-container],
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Scrollbars are a pointer affordance; on a touch device they only steal pixels. */
+  @media (pointer: coarse) {
+    ::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  }
 }
 
 @layer components {
@@ -216,6 +294,103 @@
      scroll under it. */
   .table-sticky-head th {
     @apply sticky top-0 z-10 bg-surface-muted/95 backdrop-blur supports-[backdrop-filter]:bg-surface-muted/80;
+  }
+
+  /**
+   * A horizontally scrollable strip of filter chips.
+   *
+   * Filter groups wrapped onto four lines on a 360px phone and pushed the table below the
+   * fold. Scrolling them sideways keeps the toolbar one row tall; the scrollbar is hidden
+   * because the partially visible next chip is the affordance, and a 10px bar under a row
+   * of chips just looks like a rendering artefact.
+   */
+  .chip-scroller {
+    @apply -mx-1 flex snap-x snap-mandatory gap-1 overflow-x-auto px-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0;
+    scrollbar-width: none;
+  }
+  .chip-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  .chip-scroller > * {
+    @apply shrink-0 snap-start;
+  }
+
+  /**
+   * A 44x44 minimum hit target, on touch pointers only.
+   *
+   * The design's 32-36px controls are right for a mouse and below both Apple's and WCAG
+   * 2.5.8's minimum for a finger. Rather than inflating every button everywhere — which
+   * would wreck the density the ledger screens are built around — the target is grown
+   * with a pseudo-element that extends the touchable area WITHOUT changing the painted
+   * size or the layout box. The control looks identical; it is simply easier to hit.
+   *
+   * It lives in `components`, not `utilities`, and that placement is load-bearing: the
+   * rule needs a positioned ancestor for the pseudo-element, but plenty of the controls
+   * that want a bigger target are `absolute` (the password reveal, a card's dismiss
+   * button). From the utilities layer this `position: relative` was winning over
+   * Tailwind's `absolute` and dropping those controls back into the document flow —
+   * which is exactly how the install card's close button ended up in the middle of the
+   * card instead of its corner. In `components` the cascade puts every Tailwind
+   * positioning utility above it, and `relative` applies only where nothing else does.
+   */
+  @media (pointer: coarse) {
+    .touch-target {
+      position: relative;
+    }
+    .touch-target::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      min-width: 44px;
+      min-height: 44px;
+      /* Behind the control's own content so it never eats a click meant for a child. */
+      z-index: -1;
+    }
+  }
+}
+
+@layer utilities {
+  /* ── Safe area ──────────────────────────────────────────────────────────── */
+
+  .pb-safe {
+    padding-bottom: var(--safe-b);
+  }
+  .pt-safe {
+    padding-top: var(--safe-t);
+  }
+  .px-safe {
+    padding-left: var(--safe-l);
+    padding-right: var(--safe-r);
+  }
+  /* For content that must clear the fixed bottom tab bar AND the home indicator. */
+  .pb-nav {
+    padding-bottom: calc(var(--bottom-nav-h) + var(--safe-b));
+  }
+  .mb-nav {
+    margin-bottom: calc(var(--bottom-nav-h) + var(--safe-b));
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /**
+   * Marks the edge of a horizontally scrollable region with a soft fade, so a table that
+   * continues past the right edge of a phone LOOKS scrollable. Without a cue, users
+   * simply never discover the columns and report the data as missing.
+   */
+  .scroll-fade-x {
+    background:
+      linear-gradient(to right, hsl(var(--card)) 30%, transparent) left / 24px 100% no-repeat,
+      linear-gradient(to left, hsl(var(--card)) 30%, transparent) right / 24px 100% no-repeat,
+      radial-gradient(farthest-side at 0 50%, hsl(var(--shadow) / 0.12), transparent) left / 12px 100% no-repeat,
+      radial-gradient(farthest-side at 100% 50%, hsl(var(--shadow) / 0.12), transparent) right / 12px 100% no-repeat;
+    background-attachment: local, local, scroll, scroll;
   }
 }
 
@@ -260,6 +435,7 @@
   aside,
   header,
   nav,
+  [data-mobile-nav],
   [data-sonner-toaster],
   [role="dialog"] {
     display: none !important;
@@ -267,6 +443,9 @@
 
   main {
     padding: 0 !important;
+    /* The screen layout reserves room for the bottom tab bar; on paper that is a blank
+       band at the foot of every page. */
+    margin-bottom: 0 !important;
   }
 
   /*

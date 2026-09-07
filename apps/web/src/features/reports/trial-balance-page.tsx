@@ -51,7 +51,13 @@ export function TrialBalancePage() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="asOf">As at</Label>
-          <Input id="asOf" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+          <Input
+            id="asOf"
+            type="date"
+            value={asOf}
+            onChange={(e) => setAsOf(e.target.value)}
+            className="h-10 w-full sm:h-9 sm:w-auto"
+          />
         </div>
 
         {tb ? (
@@ -108,7 +114,7 @@ export function TrialBalancePage() {
             {/* Windowed above 150 rows: a chart of accounts with five thousand parties is
                 five thousand rows, and the report is worthless if it shows a subset. */}
             <VirtualScroller scrollRef={scrollRef}>
-              <Table className="table-sticky-head" wrapperClassName="overflow-visible">
+              <Table className="table-sticky-head" wrapperClassName="overflow-visible" scrollHint={false}>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-28">Code</TableHead>
@@ -123,7 +129,15 @@ export function TrialBalancePage() {
                     {(row) => (
                       <TableRow key={row.ledgerAccountId}>
                         <TableCell className="font-mono text-xs text-muted-foreground">{row.code}</TableCell>
-                        <TableCell className="text-sm">{row.name}</TableCell>
+                        <TableCell className="text-sm">
+                          {row.name}
+                          {/* The Class column is dropped below `sm` to keep four columns
+                              of figures aligned. The value still has to be readable, so
+                              it moves under the name rather than disappearing. */}
+                          <span className="block text-2xs uppercase tracking-wider text-muted-foreground sm:hidden">
+                            {row.accountClass.toLowerCase()}
+                          </span>
+                        </TableCell>
                         <TableCell className="hidden sm:table-cell">
                           <Badge variant="outline" className="text-2xs">
                             {row.accountClass.toLowerCase()}

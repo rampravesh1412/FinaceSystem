@@ -4,13 +4,15 @@ import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Phone, Search, Users } from "lucide-react";
 import { KHATA_LABEL, type PartySummary } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
-import { Can } from "@/features/auth/auth-context";
+import { Can, useAuth } from "@/features/auth/auth-context";
 import { NewPartyButton } from "./party-form";
 import { PartyRowActions } from "./party-edit";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { PaginationBar } from "@/components/pagination-bar";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
 import { Money } from "@/components/money";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
@@ -46,6 +48,12 @@ export function PartiesPage() {
 
   const [search, setSearch] = React.useState(params.get("q") ?? "");
   const debounced = useDebounced(search, 300);
+  const isMobile = useIsMobile();
+  // Checked here rather than letting PartyRowActions return null on its own: the card
+  // draws a divider above its action row, and an empty ruled strip on every card is what
+  // a read-only user would otherwise see.
+  const { can } = useAuth();
+  const canEdit = can("parties.edit");
 
   // Keep the URL authoritative so the view is shareable and back/forward behave.
   React.useEffect(() => {
@@ -96,7 +104,7 @@ export function PartiesPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatCard
           label="Total receivable — Lena Hai"
           value={meta?.totalReceivable}
@@ -122,19 +130,23 @@ export function PartiesPage() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative max-w-sm flex-1">
+        <div className="flex flex-col gap-3 border-b border-border p-3 sm:p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative lg:max-w-sm lg:flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name, code, mobile or GSTIN…"
-              className="pl-9"
+              className="h-10 pl-9 sm:h-9"
               aria-label="Search parties"
+              inputMode="search"
+              enterKeyHint="search"
             />
           </div>
 
-          <div className="flex flex-wrap gap-1 rounded-lg bg-surface-muted p-1" role="group" aria-label="Balance filter">
+          {/* `chip-scroller` keeps these on one line and scrolls them; wrapped, four
+              chips became three rows and pushed the list below the fold. */}
+          <div className="chip-scroller rounded-lg bg-surface-muted p-1" role="group" aria-label="Balance filter">
             {FILTERS.map((f) => (
               <Tooltip key={f.key}>
                 <TooltipTrigger asChild>
@@ -143,7 +155,7 @@ export function PartiesPage() {
                     onClick={() => setFilter(f.key)}
                     aria-pressed={balance === f.key}
                     className={cn(
-                      "rounded-md px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1",
                       balance === f.key
                         ? "bg-surface text-foreground shadow-subtle"
                         : "text-muted-foreground hover:text-foreground",
@@ -194,6 +206,84 @@ export function PartiesPage() {
               ) : undefined
             }
           />
+        ) : isMobile ? (
+          /*
+           * Type, Contact and Credit left were `hidden lg:/md:/xl:table-cell` — invisible
+           * on a phone with nothing to indicate they existed. All three are fields here,
+           * and the over-limit warning keeps its icon AND gains a text label, because a
+           * tooltip is unreachable without a hover.
+           */
+          <>
+            <RecordCardList>
+              {query.data.items.map((party) => (
+                <RecordCard
+                  key={party.id}
+                  to={`/parties/${party.id}`}
+                  label={`Open ${party.name}`}
+                  title={party.name}
+                  actions={canEdit ? <PartyRowActions party={party} /> : undefined}
+                  actionsPlacement="corner"
+                  subtitle={<span className="font-mono">{party.code}</span>}
+                  trailing={
+                    <Money
+                      value={Math.abs(party.balance)}
+                      direction={party.direction === "LENA" ? "in" : party.direction === "DENA" ? "out" : "neutral"}
+                      showIcon={false}
+                    />
+                  }
+                  trailingBelow={
+                    <div className="flex items-center gap-1.5">
+                      {party.isOverLimit ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-warning/12 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                          <AlertTriangle className="size-3" aria-hidden />
+                          Over limit
+                        </span>
+                      ) : null}
+                      <Badge
+                        variant={
+                          party.direction === "LENA" ? "success" : party.direction === "DENA" ? "danger" : "default"
+                        }
+                      >
+                        {KHATA_LABEL[party.direction]}
+                      </Badge>
+                    </div>
+                  }
+                  fields={
+                    <>
+                      <RecordField label="Type">
+                        {party.type.charAt(0) + party.type.slice(1).toLowerCase()}
+                      </RecordField>
+                      <RecordField label="Credit left">
+                        {party.creditLimit > 0 ? (
+                          <Money value={party.availableCredit} showIcon={false} size="sm" />
+                        ) : (
+                          "No limit"
+                        )}
+                      </RecordField>
+                      <RecordField label="Mobile" wide>
+                        {party.mobile ? (
+                          /* `stopPropagation` so tapping the number dials instead of
+                             navigating into the party — the card is a link. */
+                          <a
+                            href={`tel:${party.mobile}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 text-accent"
+                          >
+                            <Phone className="size-3.5" aria-hidden />
+                            {party.mobile}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </RecordField>
+                    </>
+                  }
+                />
+              ))}
+            </RecordCardList>
+
+            <PaginationBar meta={query.data.meta} onPageChange={setPage} label="parties" />
+          </>
         ) : (
           <>
             <Table>

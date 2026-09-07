@@ -228,10 +228,24 @@ export function LedgerBookPage({
             </SelectContent>
           </Select>
 
-          <div className="flex items-center gap-2">
-            <Input type="date" value={from} onChange={(e) => setParam("from", e.target.value)} className="w-auto" aria-label="From" />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input type="date" value={to} onChange={(e) => setParam("to", e.target.value)} className="w-auto" aria-label="To" />
+          {/* Two equal columns on a phone: a date input renders at its own intrinsic
+              width and ignores `w-auto`, so the pair plus the word "to" overflowed. */}
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex">
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setParam("from", e.target.value)}
+              className="h-10 w-full sm:h-9 sm:w-auto"
+              aria-label="From"
+            />
+            <span className="hidden text-xs text-muted-foreground sm:inline">to</span>
+            <Input
+              type="date"
+              value={to}
+              onChange={(e) => setParam("to", e.target.value)}
+              className="h-10 w-full sm:h-9 sm:w-auto"
+              aria-label="To"
+            />
           </div>
         </div>
 

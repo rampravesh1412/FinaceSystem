@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router-dom";
-import { LogOut, Menu, Moon, Search, Sun, User as UserIcon } from "lucide-react";
+import { Landmark, LogOut, Menu, Moon, Search, Sun, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/features/auth/auth-context";
 import { NotificationBell } from "@/components/notification-bell";
+import { InstallAppButton } from "@/components/install-prompt";
 import { useTheme } from "@/hooks/use-theme";
 import { initials } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -32,16 +33,36 @@ export function Topbar({
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-4">
+    /*
+     * `pt-safe` matters here specifically because the app declares
+     * `apple-mobile-web-app-status-bar-style: black-translucent`, which paints the page
+     * UNDER the iPhone status bar. Without the inset the clock and battery sit on top of
+     * the hamburger button. The height is added to rather than replaced, so the bar is
+     * still 56px of usable chrome below the notch.
+     */
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/85 px-2 pt-safe backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:gap-2 sm:px-4">
       <Button
         variant="ghost"
         size="icon"
-        className="lg:hidden"
+        className="size-10 lg:hidden"
         onClick={onOpenMobileNav}
         aria-label="Open navigation"
       >
-        <Menu />
+        <Menu className="size-5" />
       </Button>
+
+      {/*
+        The wordmark only appears below `lg`. Above it the sidebar already carries the
+        brand; below it the sidebar is off-screen and the topbar was otherwise a row of
+        anonymous icons with no indication of which app you were in — which reads badly
+        once the thing is installed to a home screen and opened without a URL bar.
+      */}
+      <div className="flex min-w-0 items-center gap-2 lg:hidden">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/12">
+          <Landmark className="size-4 text-accent" aria-hidden />
+        </div>
+        <span className="truncate text-sm font-semibold tracking-tight">AMIRI</span>
+      </div>
 
       <div className="flex-1" />
 
@@ -58,20 +79,26 @@ export function Topbar({
         </kbd>
       </button>
 
-      <Button variant="ghost" size="icon" className="sm:hidden" onClick={onOpenCommandPalette} aria-label="Search">
-        <Search />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-10 sm:hidden"
+        onClick={onOpenCommandPalette}
+        aria-label="Search"
+      >
+        <Search className="size-5" />
       </Button>
 
       <NotificationBell />
 
       <ThemeToggle />
 
-      <Separator orientation="vertical" className="mx-1 h-6" />
+      <Separator orientation="vertical" className="mx-1 hidden h-6 sm:block" />
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
-            <Avatar className="size-7">
+          <Button variant="ghost" className="h-10 gap-2 px-1 sm:h-9 sm:px-2">
+            <Avatar className="size-8 sm:size-7">
               <AvatarFallback>{initials(user.name)}</AvatarFallback>
             </Avatar>
             <div className="hidden min-w-0 text-left leading-tight sm:block">
@@ -89,6 +116,18 @@ export function Topbar({
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <Badge variant={user.isSuperAdmin ? "accent" : "outline"}>{user.role.label}</Badge>
             </div>
+          </div>
+
+          {/*
+            A second, permanent home for "Install app".
+
+            The login screen's card can be dismissed, and a user who is already signed in
+            on this device never sees the login screen again — without this, changing your
+            mind about installing would mean signing out to find the button. Renders
+            nothing at all once installed, or on a browser that cannot install.
+          */}
+          <div className="px-2 pb-2 empty:hidden">
+            <InstallAppButton className="w-full" />
           </div>
 
           <DropdownMenuSeparator />
@@ -112,7 +151,7 @@ function ThemeToggle() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
+        <Button variant="ghost" size="icon" className="size-10 sm:size-9" onClick={toggle} aria-label="Toggle theme">
           {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
       </TooltipTrigger>

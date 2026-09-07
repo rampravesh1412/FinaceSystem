@@ -15,6 +15,8 @@ import { arrangementOf } from "./arrangement";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,6 +45,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
  * rendered from the integer; nothing on this page stores or sends a float.
  */
 export function ChargesPage() {
+  const isMobile = useIsMobile();
   const query = useQuery({
     queryKey: ["charge-rules"],
     queryFn: () => api.get<ChargeRuleSummary[]>(`/charges${qs({ limit: 200 })}`),
@@ -82,6 +85,75 @@ export function ChargesPage() {
             description="A charge rule turns a rate into a posting. Until one exists, every transaction is recorded at its gross amount with no commission."
           />
         ) : (
+          isMobile ? (
+            <RecordCardList>
+              {rules.map((rule) => (
+                <RecordCard
+                  key={rule.id}
+                  title={rule.name}
+                  subtitle={<span className="font-mono">{rule.code}</span>}
+                  trailing={<Money value={rule.sampleOn100k} showIcon={false} />}
+                  trailingBelow={
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-2xs text-muted-foreground">on ₹1,00,000</span>
+                      <Badge variant={rule.status === "ACTIVE" ? "success" : "outline"}>
+                        {rule.status === "ACTIVE" ? "Active" : "Inactive"}
+                      </Badge>
+                    </span>
+                  }
+                  fields={
+                    <>
+                      <RecordField label="Rate">
+                        <RateCell rule={rule} />
+                      </RecordField>
+                      <RecordField label="Borne by">
+                        {/* The tooltip that explains this on desktop is unreachable by
+                            touch, so the label carries the whole arrangement. */}
+                        <Badge variant={rule.bearer === "SELF" ? "outline" : "default"}>
+                          {arrangementOf(rule, rule.sampleOn100k).label}
+                        </Badge>
+                      </RecordField>
+                      <RecordField label="Bounds" wide>
+                        {rule.minCharge || rule.maxCharge ? (
+                          <>
+                            {rule.minCharge ? <>min {formatINR(rule.minCharge)}</> : null}
+                            {rule.minCharge && rule.maxCharge ? " · " : null}
+                            {rule.maxCharge ? <>max {formatINR(rule.maxCharge)}</> : null}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </RecordField>
+                      <RecordField label="Applies to" wide>
+                        <span className="flex flex-wrap gap-1">
+                          {rule.appliesTo.length === 0 ? (
+                            "Any transaction"
+                          ) : (
+                            rule.appliesTo.map((t) => (
+                              <Badge key={t} variant="outline" className="text-2xs">
+                                {t.replace(/_/g, " ").toLowerCase()}
+                              </Badge>
+                            ))
+                          )}
+                        </span>
+                      </RecordField>
+                      {rule.chargeAccount ? (
+                        <RecordField label="Posted to" wide>
+                          {rule.chargeAccount.name}
+                        </RecordField>
+                      ) : null}
+                    </>
+                  }
+                  actions={
+                    <Can permission="charges.edit">
+                      <RuleActions rule={rule} />
+                    </Can>
+                  }
+                  actionsPlacement="corner"
+                />
+              ))}
+            </RecordCardList>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -165,6 +237,7 @@ export function ChargesPage() {
               ))}
             </TableBody>
           </Table>
+          )
         )}
       </Card>
     </div>

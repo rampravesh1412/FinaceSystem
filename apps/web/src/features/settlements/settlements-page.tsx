@@ -10,6 +10,8 @@ import { ExecuteSettlementButton, NewSettlementButton } from "./settlement-actio
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { PaginationBar } from "@/components/pagination-bar";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
  */
 export function SettlementsPage() {
   const [page, setPage] = React.useState(1);
+  const isMobile = useIsMobile();
 
   const query = useQuery({
     queryKey: ["settlements", page],
@@ -47,7 +50,7 @@ export function SettlementsPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatCard label="Outstanding to settle" value={meta?.pendingAmount} direction="out" loading={query.isPending} />
         <StatCard label="Settlements" value={query.data?.meta.total} asCount icon={Handshake} loading={query.isPending} />
         <StatCard
@@ -78,6 +81,61 @@ export function SettlementsPage() {
           />
         ) : (
           <>
+            {isMobile ? (
+              <RecordCardList>
+                {query.data.items.map((s) => {
+                  const remaining = s.netAmount - s.settledAmount;
+                  return (
+                    <RecordCard
+                      key={s.id}
+                      title={<span className="font-mono">{s.settlementNo}</span>}
+                      subtitle={
+                        <span>
+                          {s.kind.toLowerCase()} · {formatDate(s.date)}
+                        </span>
+                      }
+                      trailing={<Money value={s.amount} showIcon={false} />}
+                      trailingBelow={
+                        <Badge
+                          variant={
+                            s.status === "COMPLETED" ? "success"
+                            : s.status === "PARTIAL" ? "warning"
+                            : s.status === "CANCELLED" ? "danger" : "default"
+                          }
+                        >
+                          {s.status.charAt(0) + s.status.slice(1).toLowerCase()}
+                        </Badge>
+                      }
+                      fields={
+                        <>
+                          <RecordField label="Between" wide>
+                            {s.party?.name ?? s.destinationLabel}
+                            {s.sourceLabel !== "—" ? (
+                              <span className="text-muted-foreground"> · from {s.sourceLabel}</span>
+                            ) : null}
+                          </RecordField>
+                          <RecordField label="Settled">
+                            <Money value={s.settledAmount} direction="in" showIcon={false} size="sm" />
+                          </RecordField>
+                          <RecordField label="Remaining">
+                            {/* The gap, always visible — this is what a status alone hides. */}
+                            {remaining > 0 ? (
+                              <Money value={remaining} direction="out" showIcon={false} size="sm" />
+                            ) : (
+                              "—"
+                            )}
+                          </RecordField>
+                          <RecordField label="Charges" wide>
+                            {s.charges ? <Money value={s.charges} showIcon={false} size="sm" /> : "—"}
+                          </RecordField>
+                        </>
+                      }
+                      actions={<ExecuteSettlementButton settlement={s} />}
+                    />
+                  );
+                })}
+              </RecordCardList>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -144,6 +202,7 @@ export function SettlementsPage() {
                 })}
               </TableBody>
             </Table>
+            )}
             <PaginationBar meta={query.data.meta} onPageChange={setPage} label="settlements" />
           </>
         )}

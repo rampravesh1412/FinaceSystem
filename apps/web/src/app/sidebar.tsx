@@ -28,7 +28,9 @@ export function Sidebar({
   const sections = filterNavigation(can);
 
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+    // `pt-safe` matters when this is the mobile drawer: it spans the full height under a
+    // translucent iOS status bar, so without the inset the logo sits behind the clock.
+    <div className="flex h-full flex-col bg-sidebar pt-safe text-sidebar-foreground">
       <div
         className={cn(
           "flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4",
@@ -48,7 +50,7 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 overscroll-contain">
         <nav className={cn("space-y-5 py-4", collapsed ? "px-2" : "px-3")} aria-label="Main">
           {sections.map((section) => (
             <div key={section.label} className="space-y-1">
@@ -74,7 +76,7 @@ export function Sidebar({
       </ScrollArea>
 
       {onToggleCollapsed ? (
-        <div className="shrink-0 border-t border-sidebar-border p-2">
+        <div className="shrink-0 border-t border-sidebar-border p-2 pb-[max(0.5rem,var(--safe-b))]">
           <Button
             variant="ghost"
             size={collapsed ? "icon" : "sm"}
@@ -107,7 +109,10 @@ function SidebarLink({
   const Icon = item.icon;
 
   const base = cn(
-    "group relative flex items-center gap-2.5 rounded-md px-2 py-2 text-sm transition-colors",
+    "group relative flex items-center gap-2.5 rounded-md px-2 text-sm transition-colors",
+    // Taller rows on a touch pointer. A 32px menu row is a coin-flip to hit with a thumb,
+    // and this drawer is the primary navigation for every screen the tab bar omits.
+    "py-2.5 [@media(pointer:coarse)]:py-3",
     collapsed && "justify-center px-0",
   );
 

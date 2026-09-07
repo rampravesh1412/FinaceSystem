@@ -165,7 +165,7 @@ export function ImportPage() {
         <Card className="space-y-4 p-4">
           <StepHeading n={2} title="What this would do" done={Boolean(result)} />
 
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <CountTile label="Will be created" value={preview.valid} tone="good" />
             <CountTile label="Already exist" value={preview.duplicates} tone="warn" />
             <CountTile label="Invalid" value={preview.invalid} tone="bad" />
@@ -247,7 +247,7 @@ export function ImportPage() {
         <Card className="space-y-4 p-4">
           <StepHeading n={3} title="What happened" done />
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <CountTile label="Imported" value={result.imported} tone="good" />
             <CountTile label="Skipped" value={result.skipped} tone={result.skipped > 0 ? "warn" : undefined} />
             <CountTile label="Rows in file" value={result.totalRows} />

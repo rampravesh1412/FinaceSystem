@@ -13,6 +13,8 @@ import { Can } from "@/features/auth/auth-context";
 import { Money } from "@/components/money";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { RecordCard, RecordCardList, RecordField } from "@/components/record-card";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,6 +104,7 @@ export function HeadsPage() {
 
 function HeadsTable({ kind }: { kind: Kind }) {
   const [includeInactive, setIncludeInactive] = React.useState(false);
+  const isMobile = useIsMobile();
   const [creating, setCreating] = React.useState(false);
 
   const query = useQuery({
@@ -147,6 +150,51 @@ function HeadsTable({ kind }: { kind: Kind }) {
             description="Add one before recording anything — a transaction has to be posted against a head, and the head is what the Profit & Loss groups by."
           />
         ) : (
+          isMobile ? (
+            <>
+              <RecordCardList>
+                {rows.map((row) => (
+                  <RecordCard
+                    key={row.id}
+                    title={row.name}
+                    subtitle={
+                      <span>
+                        <span className="font-mono">{row.code}</span>
+                        {row.description ? ` · ${row.description}` : ""}
+                      </span>
+                    }
+                    trailing={
+                      row.balance ? <Money value={row.balance} showIcon={false} /> : <span className="text-sm text-muted-foreground">—</span>
+                    }
+                    trailingBelow={
+                      <Badge variant={row.status === "ACTIVE" ? "success" : "outline"}>
+                        {row.status === "ACTIVE" ? "Active" : "Retired"}
+                      </Badge>
+                    }
+                    fields={
+                      <>
+                        <RecordField label="Under">{row.parentName ?? "—"}</RecordField>
+                        <RecordField label="Entries">{row.entryCount}</RecordField>
+                      </>
+                    }
+                    actions={
+                      <Can permission={permission as never}>
+                        <HeadActions kind={kind} head={row} parents={rows} />
+                      </Can>
+                    }
+                    actionsPlacement="corner"
+                  />
+                ))}
+              </RecordCardList>
+
+              <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Total across {rows.length} head{rows.length === 1 ? "" : "s"}
+                </span>
+                <Money value={total} showIcon={false} className="font-semibold" />
+              </div>
+            </>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -210,6 +258,7 @@ function HeadsTable({ kind }: { kind: Kind }) {
               </TableRow>
             </TableFooter>
           </Table>
+          )
         )}
       </Card>
 

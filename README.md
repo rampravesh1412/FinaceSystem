@@ -72,6 +72,12 @@ npm run db:local     # MongoDB replica set without Docker
 npm run db:reset     # drop the Docker volume and start clean
 ```
 
+Regenerating the app icons after editing the mark:
+
+```bash
+python3 scripts/generate-pwa-icons.py   # needs Pillow; writes apps/web/public/
+```
+
 ---
 
 ## Layout
@@ -83,6 +89,8 @@ packages/shared   contracts used by BOTH sides — money maths, the permission
                   differently from how it was computed.
 apps/api          Express 5 + Mongoose 8
 apps/web          Vite + React 18 + Tailwind + shadcn-style primitives
+                  public/  the PWA payload — manifest, service worker, icons
+scripts/          dev utilities; generate-pwa-icons.py renders every app icon
 docs/ARCHITECTURE.md   the design, the data model, and the phase plan
 ```
 
@@ -139,6 +147,22 @@ the difference stays on the record afterwards.
 three separate ledger effects, and rates are integer basis points (1.75% is `175`). A
 commission that drifts by a paisa per transaction is a month-end reconciliation problem
 nobody can explain.
+
+**A phone gets the same data, not a subset.** The desktop tables hid their narrow columns
+below a breakpoint, which meant a phone user checking whether a payment carried a charge
+saw no charge column at all — indistinguishable from there being no charge. Below `md`
+every list re-shapes into `RecordCard`s (`apps/web/src/components/record-card.tsx`) that
+carry *every* field the table had, and the report grids that must stay grids — trial
+balance, P&L, the ledger books — scroll sideways with a fade marking the overflow, with
+their one dropped column reprinted under the row's primary cell. Cards and table are
+alternatives, never both mounted: the pages switch on `useIsMobile()`.
+
+**Nothing under `/api` is ever cached.** The service worker
+(`apps/web/public/sw.js`) caches the app shell so the installed app opens instantly and
+survives a bad connection, and it deliberately does not cache a single ledger read. A
+stale balance is not a degraded experience, it is a wrong number on a financial screen,
+and a user cannot tell the difference between yesterday's figure and today's. Offline you
+get the app and an honest "you are offline" — never numbers that might be true.
 
 ---
 

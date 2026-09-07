@@ -87,7 +87,7 @@ export function DashboardPage() {
       {/* ── Position: what we hold right now ──────────────────────────────── */}
       <section className="space-y-3">
         <SectionLabel>Position</SectionLabel>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Total balance" value={m?.totalBalance} icon={Scale} loading={loading} to="/bank-accounts" />
           <StatCard label="Bank" value={m?.bankBalance} icon={CreditCard} loading={loading} to="/bank-accounts" />
           <StatCard label="Cash in hand" value={m?.cashBalance} icon={Wallet} loading={loading} to="/bank-accounts" />
@@ -99,7 +99,7 @@ export function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-3">
           <SectionLabel hint="What moved through the accounts today.">Cash flow</SectionLabel>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <StatCard label="Money in" value={m?.todayIn} direction="in" loading={loading} to="/payment-in" />
             <StatCard label="Money out" value={m?.todayOut} direction="out" loading={loading} to="/payment-out" />
             <StatCard label="Net movement" value={m?.todayNet} direction="auto" loading={loading} to="/daybook" />
@@ -108,7 +108,7 @@ export function DashboardPage() {
 
         <section className="space-y-3">
           <SectionLabel hint="What the business actually earned today.">Profit</SectionLabel>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <StatCard label="Income" value={m?.todayIncome} direction="in" loading={loading} to="/income" />
             <StatCard label="Expenses" value={m?.todayExpenses} direction="out" loading={loading} to="/expenses" />
             <StatCard label="Today's profit" value={m?.todayProfit} direction="auto" loading={loading} to="/reports/profit-loss" />
@@ -171,7 +171,7 @@ export function DashboardPage() {
       {/* ── Receivable, payable and attention ─────────────────────────────── */}
       <section className="space-y-3">
         <SectionLabel>Owed and owing</SectionLabel>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Receivable — Lena Hai" value={m?.receivable} direction="in" loading={loading} to="/parties?balance=lena" />
           <StatCard label="Payable — Dena Hai" value={m?.payable} direction="out" loading={loading} to="/parties?balance=dena" />
           <StatCard label="Overdue" value={m?.overdueAmount} direction="out" loading={loading} to="/credit?overdueOnly=true" />

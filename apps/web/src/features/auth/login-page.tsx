@@ -10,6 +10,7 @@ import { useAuth } from "./auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { InstallAppCard } from "@/components/install-prompt";
 
 export function LoginPage() {
   const { login, status } = useAuth();
@@ -55,7 +56,7 @@ export function LoginPage() {
   });
 
   return (
-    <div className="grid min-h-dvh lg:grid-cols-2">
+    <div className="grid min-h-dvh px-safe lg:grid-cols-2">
       {/* Brand panel — hidden on small screens where the form should own the viewport. */}
       <div className="relative hidden overflow-hidden bg-sidebar lg:flex lg:flex-col lg:justify-between lg:p-12">
         <div
@@ -101,23 +102,28 @@ export function LoginPage() {
       </div>
 
       {/* Form panel */}
-      <div className="flex items-center justify-center px-5 py-10 sm:px-8">
+      <div className="flex items-center justify-center px-5 pb-[max(2.5rem,var(--safe-b))] pt-[max(2.5rem,var(--safe-t))] sm:px-8">
         <m.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
           className="w-full max-w-sm"
         >
-          <div className="mb-8 lg:hidden">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-accent/12">
-                <Landmark className="size-5 text-accent" aria-hidden />
+          <div className="mb-7 lg:hidden">
+            <div className="flex items-center gap-3">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-b from-accent to-accent/70 shadow-subtle">
+                <Landmark className="size-6 text-accent-foreground" aria-hidden />
               </div>
-              <span className="text-sm font-semibold tracking-tight">AMIRI Finance</span>
+              <div className="leading-tight">
+                <div className="text-base font-semibold tracking-tight">AMIRI Finance</div>
+                <div className="text-2xs uppercase tracking-widest text-muted-foreground">
+                  Financial Operating System
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="mb-7 space-y-1.5">
+          <div className="mb-6 space-y-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
             <p className="text-sm text-muted-foreground">
               Use the account issued to you by your administrator.
@@ -143,6 +149,13 @@ export function LoginPage() {
                 autoComplete="username"
                 autoFocus
                 placeholder="you@company.co"
+                // A phone keyboard should not capitalise or autocorrect an address.
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="email"
+                enterKeyHint="next"
+                className="h-11 sm:h-9"
                 aria-invalid={Boolean(errors.email)}
                 aria-describedby={errors.email ? "email-error" : undefined}
                 {...register("email")}
@@ -161,7 +174,8 @@ export function LoginPage() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
-                  className="pr-10"
+                  enterKeyHint="go"
+                  className="h-11 pr-12 sm:h-9 sm:pr-10"
                   aria-invalid={Boolean(errors.password)}
                   aria-describedby={errors.password ? "password-error" : undefined}
                   {...register("password")}
@@ -169,7 +183,7 @@ export function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-0 top-0 flex h-9 w-10 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="absolute right-0 top-0 flex h-11 w-12 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-10"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -182,10 +196,25 @@ export function LoginPage() {
               ) : null}
             </div>
 
-            <Button type="submit" variant="accent" className="w-full" loading={isSubmitting}>
+            <Button
+              type="submit"
+              variant="accent"
+              className="h-11 w-full text-[0.9375rem] sm:h-9 sm:text-sm"
+              loading={isSubmitting}
+            >
               Sign in
             </Button>
           </form>
+
+          {/*
+            Below the form, not above it.
+
+            Somebody arriving at this screen came to sign in; an install card in front of
+            the password field is an obstacle. Placed underneath, it is found by everyone
+            who is going to care about it and ignored by everyone else — and it hides
+            itself entirely once the app is installed or on a browser that cannot.
+          */}
+          <InstallAppCard className="mt-7" />
 
           <p className="mt-6 text-2xs leading-relaxed text-muted-foreground">
             Forgotten your password? An administrator must reset it — for audit reasons
