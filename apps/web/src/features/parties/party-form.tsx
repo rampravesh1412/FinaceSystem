@@ -14,7 +14,6 @@ import {
 import { ApiError, api } from "@/lib/api";
 import { AmountField, NotesField, SelectField, TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -128,7 +127,7 @@ function PartyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: 
             <TabsList>
               <TabsTrigger value="identity">Identity</TabsTrigger>
               <TabsTrigger value="contact">Contact</TabsTrigger>
-              <TabsTrigger value="terms">Opening & credit</TabsTrigger>
+              <TabsTrigger value="terms">Credit</TabsTrigger>
             </TabsList>
 
             <TabsContent value="identity" className="space-y-4">
@@ -167,26 +166,6 @@ function PartyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: 
                 />
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField form={form} name="gstin" label="GSTIN" placeholder="10ABCDE1234F1Z5" className="uppercase" />
-                <TextField form={form} name="pan" label="PAN" placeholder="ABCDE1234F" className="uppercase" />
-              </div>
-            </TabsContent>
-
-            <TabsContent value="contact" className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField form={form} name="mobile" label="Mobile" inputMode="numeric" placeholder="9812345670" />
-                <TextField form={form} name="email" label="Email" type="email" />
-              </div>
-              <TextField form={form} name="address" label="Address" />
-              <div className="grid gap-4 sm:grid-cols-3">
-                <TextField form={form} name="city" label="City" placeholder="Patna" />
-                <TextField form={form} name="state" label="State" placeholder="Bihar" />
-                <TextField form={form} name="pincode" label="PIN code" inputMode="numeric" maxLength={6} />
-              </div>
-            </TabsContent>
-
-            <TabsContent value="terms" className="space-y-4">
               <div className="space-y-3 rounded-md border border-border bg-surface-muted/40 p-3">
                 <p className="text-xs font-medium">Opening balance</p>
 
@@ -236,8 +215,26 @@ function PartyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: 
                 ) : null}
               </div>
 
-              <Separator />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField form={form} name="gstin" label="GSTIN" placeholder="10ABCDE1234F1Z5" className="uppercase" />
+                <TextField form={form} name="pan" label="PAN" placeholder="ABCDE1234F" className="uppercase" />
+              </div>
+            </TabsContent>
 
+            <TabsContent value="contact" className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField form={form} name="mobile" label="Mobile" inputMode="numeric" placeholder="9812345670" />
+                <TextField form={form} name="email" label="Email" type="email" />
+              </div>
+              <TextField form={form} name="address" label="Address" />
+              <div className="grid gap-4 sm:grid-cols-3">
+                <TextField form={form} name="city" label="City" placeholder="Patna" />
+                <TextField form={form} name="state" label="State" placeholder="Bihar" />
+                <TextField form={form} name="pincode" label="PIN code" inputMode="numeric" maxLength={6} />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="terms" className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <AmountField
                   form={form}

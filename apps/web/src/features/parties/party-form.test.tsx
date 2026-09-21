@@ -62,7 +62,6 @@ describe("party form — opening balance sign", () => {
     const user = await openForm();
 
     await user.type(screen.getByLabelText(/party name/i), "Sharma Traders");
-    await user.click(screen.getByRole("tab", { name: /opening & credit/i }));
 
     const amount = screen.getByLabelText(/^amount/i);
     await user.clear(amount);
@@ -85,7 +84,6 @@ describe("party form — opening balance sign", () => {
     const user = await openForm();
 
     await user.type(screen.getByLabelText(/party name/i), "Verma Supplies");
-    await user.click(screen.getByRole("tab", { name: /opening & credit/i }));
 
     const amount = screen.getByLabelText(/^amount/i);
     await user.clear(amount);
@@ -104,7 +102,6 @@ describe("party form — opening balance sign", () => {
     const user = await openForm();
 
     await user.type(screen.getByLabelText(/party name/i), "Double Negative Traders");
-    await user.click(screen.getByRole("tab", { name: /opening & credit/i }));
 
     const amount = screen.getByLabelText(/^amount/i);
     await user.clear(amount);
@@ -122,7 +119,6 @@ describe("party form — opening balance sign", () => {
   it("states the Lena/Dena reading back before submission", async () => {
     const user = await openForm();
 
-    await user.click(screen.getByRole("tab", { name: /opening & credit/i }));
     const amount = screen.getByLabelText(/^amount/i);
     await user.clear(amount);
     await user.type(amount, "88500");
