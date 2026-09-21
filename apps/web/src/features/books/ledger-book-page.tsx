@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { PaginationBar } from "@/components/pagination-bar";
 import { ExportMenu } from "@/components/export-menu";
+import { StatCard } from "@/components/stat-card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -38,7 +39,24 @@ interface LedgerRow {
   contra: string[];
   contraLines?: ContraLine[];
   reconciledAt: string | null;
+  account?: { id: string; name: string; code: string };
 }
+
+/**
+ * A book that totals what was posted in the window — the Expense and Income ledgers.
+ *
+ * Turning it on also adds the "All" option (every head at once) and lists the latest
+ * entry first, which is how these two books are read: "what did we spend lately".
+ */
+export interface BookSummary {
+  /** "Total expense", "Total income". */
+  label: string;
+  /** The side that INCREASES this book's total: DEBIT for expense, CREDIT for income. */
+  normal: "DEBIT" | "CREDIT";
+}
+
+/** The Select value for "every account in this book". Radix refuses an empty value. */
+const ALL = "all";
 
 /**
  * Every ledger book (§34, §4.1).
@@ -75,14 +93,18 @@ export function LedgerBookPage({
   title,
   description,
   icon,
+  summary,
 }: {
   kinds: AccountKind[];
   title: string;
   description: string;
   icon: typeof BookOpen;
+  summary?: BookSummary;
 }) {
   const [params, setParams] = useSearchParams();
-  const accountId = params.get("account") ?? "";
+  const accountId = params.get("account") ?? (summary ? ALL : "");
+  const isAll = accountId === ALL;
+  const newest = Boolean(summary);
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const page = Number(params.get("page") ?? 1);
@@ -131,28 +153,57 @@ export function LedgerBookPage({
     },
   });
 
+  // No local filtering: the server already applied the search. Filtering again on the
+  // partially-loaded page would hide matches that are on the server's next page.
+  const filtered = accounts.data?.items ?? [];
+  const totalAccounts = accounts.data?.total ?? 0;
+  const truncated = totalAccounts > filtered.length;
+
   React.useEffect(() => {
     if (!accountId && filtered.length) setParam("account", filtered[0]!.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.data]);
 
   const statement = useQuery({
-    queryKey: ["ledger-entries", { accountId, from, to, page }],
+    queryKey: ["ledger-entries", { accountId, kinds, from, to, page, newest }],
     queryFn: () =>
-      api.list<LedgerRow>(`/ledger/accounts/${accountId}/entries${qs({ from, to, page, limit: 50 })}`),
+      isAll
+        ? api.list<LedgerRow>(
+            `/ledger/entries${qs({ kinds: kinds.join(","), from, to, page, limit: 50, newest: newest || undefined })}`,
+          )
+        : api.list<LedgerRow>(
+            `/ledger/accounts/${accountId}/entries${qs({ from, to, page, limit: 50, newest: newest || undefined })}`,
+          ),
     enabled: Boolean(accountId),
     placeholderData: (prev) => prev,
   });
 
   const meta = statement.data?.meta as
-    | { account?: { name: string; code: string; balance: number }; openingBalance?: number }
+    | {
+        account?: { name: string; code: string; balance: number };
+        openingBalance?: number;
+        totals?: { debit: number; credit: number };
+        total?: number;
+      }
     | undefined;
 
-  // No local filtering: the server already applied the search. Filtering again on the
-  // partially-loaded page would hide matches that are on the server's next page.
-  const filtered = accounts.data?.items ?? [];
-  const totalAccounts = accounts.data?.total ?? 0;
-  const truncated = totalAccounts > filtered.length;
+  const totals = meta?.totals ?? { debit: 0, credit: 0 };
+  const net = summary?.normal === "CREDIT" ? totals.credit - totals.debit : totals.debit - totals.credit;
+  const selectedName = isAll ? "All heads" : filtered.find((a) => a.id === accountId)?.name ?? meta?.account?.name;
+  const windowLabel = from || to ? `${from ? formatDate(from) : "start"} – ${to ? formatDate(to) : "today"}` : "All time";
+
+  // Brought forward is the OLDEST row, so with the latest first it sits at the bottom.
+  const broughtForward = !isAll ? (
+    <TableRow className="bg-surface-muted/40">
+      <TableCell colSpan={3} className="text-sm font-medium">
+        Balance brought forward
+      </TableCell>
+      <TableCell /><TableCell />
+      <TableCell className="text-right">
+        <Money value={meta?.openingBalance ?? 0} direction="auto" showIcon={false} />
+      </TableCell>
+    </TableRow>
+  ) : null;
 
   return (
     <div className="space-y-5">
@@ -160,7 +211,7 @@ export function LedgerBookPage({
         title={title}
         description={description}
         actions={
-          accountId ? (
+          accountId && !isAll ? (
             <ExportMenu
               path={`/export/ledger/${accountId}`}
               params={{ from, to }}
@@ -169,6 +220,20 @@ export function LedgerBookPage({
           ) : null
         }
       />
+
+      {summary && accountId ? (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard
+            label={`${summary.label} — ${selectedName ?? "…"}`}
+            value={net}
+            direction={summary.normal === "DEBIT" ? "out" : "in"}
+            loading={statement.isPending}
+          />
+          <StatCard label="Debit" value={totals.debit} loading={statement.isPending} />
+          <StatCard label="Credit" value={totals.credit} loading={statement.isPending} />
+          <StatCard label={`Entries · ${windowLabel}`} value={meta?.total ?? 0} asCount loading={statement.isPending} />
+        </div>
+      ) : null}
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
@@ -188,6 +253,11 @@ export function LedgerBookPage({
               <SelectValue placeholder={accounts.isPending ? "Loading…" : "Choose an account"} />
             </SelectTrigger>
             <SelectContent>
+              {summary ? (
+                <SelectItem value={ALL}>
+                  <span className="font-medium">All</span>
+                </SelectItem>
+              ) : null}
               {/*
                * Grouped by kind once more than one is in play. A flat list of every account
                * in the chart — banks, parties, expense heads, equity — is not a list anyone
@@ -271,21 +341,13 @@ export function LedgerBookPage({
                   <TableHead>Particulars</TableHead>
                   <TableHead className="text-right">Debit</TableHead>
                   <TableHead className="text-right">Credit</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="text-right">{isAll ? "Head" : "Balance"}</TableHead>
                 </TableRow>
               </TableHeader>
 
               <TableBody>
                 {/* Brought forward, so the running balance starts where it should. */}
-                <TableRow className="bg-surface-muted/40">
-                  <TableCell colSpan={3} className="text-sm font-medium">
-                    Balance brought forward
-                  </TableCell>
-                  <TableCell /><TableCell />
-                  <TableCell className="text-right">
-                    <Money value={meta?.openingBalance ?? 0} direction="auto" showIcon={false} />
-                  </TableCell>
-                </TableRow>
+                {newest ? null : broughtForward}
 
                 {statement.data.items.map((row) => (
                   <TableRow key={row.id}>
@@ -337,21 +399,46 @@ export function LedgerBookPage({
                       {row.credit ? <Money value={row.credit} showIcon={false} /> : <Dash />}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Money value={row.runningBalance} direction="auto" showIcon={false} />
+                      {isAll ? (
+                        // A running balance across different heads adds unlike things; the
+                        // head each row belongs to is what the All view needs instead.
+                        <span className="text-xs">{row.account?.name ?? "—"}</span>
+                      ) : (
+                        <Money value={row.runningBalance} direction="auto" showIcon={false} />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
+                {newest ? broughtForward : null}
               </TableBody>
 
               <TableFooter>
-                <TableRow>
-                  <TableCell colSpan={5} className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Closing balance — {meta?.account?.name}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Money value={meta?.account?.balance ?? 0} direction="auto" showIcon={false} className="font-semibold" />
-                  </TableCell>
-                </TableRow>
+                {summary ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-xs uppercase tracking-wider text-muted-foreground">
+                      {summary.label} — {selectedName} · {windowLabel}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Money value={totals.debit} showIcon={false} className="font-semibold" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Money value={totals.credit} showIcon={false} className="font-semibold" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Money value={net} showIcon={false} className="font-semibold" />
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {!isAll ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Closing balance — {meta?.account?.name}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Money value={meta?.account?.balance ?? 0} direction="auto" showIcon={false} className="font-semibold" />
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableFooter>
             </Table>
 
@@ -423,6 +510,7 @@ export function ExpenseLedgerPage() {
       title="Expense Ledger"
       description="What has been posted against each expense head, and against charges and commission."
       icon={Receipt}
+      summary={{ label: "Total expense", normal: "DEBIT" }}
     />
   );
 }
@@ -434,6 +522,7 @@ export function IncomeLedgerPage() {
       title="Income Ledger"
       description="What has been earned under each income head."
       icon={Coins}
+      summary={{ label: "Total income", normal: "CREDIT" }}
     />
   );
 }

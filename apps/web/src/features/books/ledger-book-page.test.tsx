@@ -177,3 +177,62 @@ describe("ledger books", () => {
     expect(accountCalls[0]).not.toContain("kind=");
   });
 });
+
+/**
+ * The Expense and Income ledgers open on "All", list the latest entry first, and total
+ * what was posted in the window — the figure the page exists to answer.
+ */
+const pageMeta = { page: 1, limit: 50, total: 2, totalPages: 1, hasNext: false, hasPrev: false };
+
+describe("expense and income ledger", () => {
+  beforeEach(() => {
+    api.list.mockImplementation(async (path: string) => {
+      if (path.startsWith("/ledger/accounts?") || path.startsWith("/ledger/accounts%3F")) {
+        return { items: [{ id: "h1", code: "EXP-1", name: "IMPS", kind: "EXPENSE", balance: 0 }], meta: pageMeta };
+      }
+      if (path.startsWith("/ledger/entries")) {
+        return {
+          items: [
+            {
+              id: "e2", txnNo: "EXP-2026-000002", transactionType: "EXPENSE", date: "2026-09-21T00:00:00.000Z",
+              debit: 1_500_00, credit: 0, runningBalance: 0, contra: [], reconciledAt: null,
+              account: { id: "h1", name: "IMPS", code: "EXP-1" },
+            },
+            {
+              id: "e1", txnNo: "EXP-2026-000001", transactionType: "EXPENSE", date: "2026-09-20T00:00:00.000Z",
+              debit: 500_00, credit: 0, runningBalance: 0, contra: [], reconciledAt: null,
+              account: { id: "h2", name: "Bank Charges", code: "EXP-BANK-CHARGES" },
+            },
+          ],
+          meta: { ...pageMeta, totals: { debit: 2_000_00, credit: 0 } },
+        };
+      }
+      return { items: [], meta: { ...pageMeta, total: 0 } };
+    });
+  });
+
+  it("opens on All, newest first, with the total expense for the window", async () => {
+    renderWithProviders(<books.ExpenseLedgerPage />);
+
+    await waitFor(() =>
+      expect(api.list.mock.calls.some(([p]) => String(p).startsWith("/ledger/entries"))).toBe(true),
+    );
+    const path = String(api.list.mock.calls.find(([p]) => String(p).startsWith("/ledger/entries"))![0]);
+    expect(path).toContain("kinds=EXPENSE%2CCHARGE");
+    expect(path).toContain("newest=true");
+
+    expect(await screen.findByText(/total expense — all heads/i)).toBeInTheDocument();
+    // Each row names the head it was posted to.
+    expect(screen.getAllByText("Bank Charges").length).toBeGreaterThan(0);
+    // The newest voucher is the first row.
+    const vouchers = screen.getAllByText(/^EXP-2026-/).map((el) => el.textContent);
+    expect(vouchers).toEqual(["EXP-2026-000002", "EXP-2026-000001"]);
+  });
+
+  it("totals income on the credit side", async () => {
+    renderWithProviders(<books.IncomeLedgerPage />);
+    expect(await screen.findByText(/total income — all heads/i)).toBeInTheDocument();
+    const path = String(api.list.mock.calls.find(([p]) => String(p).startsWith("/ledger/entries"))![0]);
+    expect(path).toContain("kinds=INCOME");
+  });
+});

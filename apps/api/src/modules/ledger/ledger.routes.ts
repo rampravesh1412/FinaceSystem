@@ -1,7 +1,15 @@
 import { Router } from "express";
 import { Types } from "mongoose";
 import { z } from "zod";
-import { ledgerAccountQuerySchema, ledgerEntryQuerySchema, objectId, type LedgerAccountQuery } from "@amiri/shared";
+import {
+  ledgerAccountQuerySchema,
+  ledgerKindEntriesQuerySchema,
+  ledgerStatementQuerySchema,
+  objectId,
+  type LedgerAccountQuery,
+  type LedgerKindEntriesQuery,
+  type LedgerStatementQuery,
+} from "@amiri/shared";
 import { asyncHandler, escapeRegex, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
 import {
@@ -146,30 +154,121 @@ ledgerRouter.get(
  * Entries come back oldest-first, because a running-balance column only reads correctly
  * in posting order — newest-first would show the balance running backwards.
  */
+/**
+ * One page of entries over a set of accounts, with the contra split on each row and the
+ * period's debit and credit totals.
+ *
+ * Shared by the single-account statement and the "All" view of a ledger book, so the
+ * contra arithmetic and the totals exist once.
+ */
+async function entriesPage(
+  accountIds: Types.ObjectId[],
+  query: { page: number; limit: number; from?: Date; to?: Date; newest?: boolean },
+) {
+  const filter: Record<string, unknown> = {
+    ledgerAccountId: accountIds.length === 1 ? accountIds[0] : { $in: accountIds },
+  };
+  if (query.from || query.to) {
+    filter.date = {
+      ...(query.from ? { $gte: query.from } : {}),
+      ...(query.to ? { $lte: query.to } : {}),
+    };
+  }
+
+  const skip = (query.page - 1) * query.limit;
+  const dir = query.newest ? -1 : 1;
+
+  const [entries, total, [totals]] = await Promise.all([
+    LedgerEntry.find(filter).sort({ date: dir, _id: dir }).skip(skip).limit(query.limit).lean(),
+    LedgerEntry.countDocuments(filter),
+    // Over the WHOLE filtered window, not this page — a total that only covered the
+    // visible rows would change as you paged.
+    LedgerEntry.aggregate<{ debit: number; credit: number }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          debit: { $sum: { $cond: [{ $eq: ["$direction", "DEBIT"] }, "$amount", 0] } },
+          credit: { $sum: { $cond: [{ $eq: ["$direction", "CREDIT"] }, "$amount", 0] } },
+        },
+      },
+    ]),
+  ]);
+
+  /**
+   * The other side of each row, WITH ITS AMOUNTS.
+   *
+   * A statement row shows one figure — what moved on this account. When a charge is
+   * involved that figure does not explain itself: ₹1,00,000 leaving the bank against
+   * "101, Bank Charges" hides that ₹98,500 went to the party and ₹1,500 was our cost.
+   * Reading the sibling lines gives the split, and doing it here — rather than storing
+   * it — means every row already on the books gets the breakdown too, not just the
+   * ones posted from now on.
+   *
+   * One extra indexed query per page, and only over the transactions on this page.
+   */
+  const txnIds = [...new Set(entries.map((e) => String(e.transactionId)))];
+  const siblings = txnIds.length
+    ? await LedgerEntry.find({ transactionId: { $in: txnIds } })
+        .select("transactionId ledgerAccountId direction amount")
+        .populate<{ ledgerAccountId: { _id: Types.ObjectId; name: string; code: string } }>(
+          "ledgerAccountId",
+          "name code",
+        )
+        .lean()
+    : [];
+
+  const siblingsByTxn = new Map<string, typeof siblings>();
+  for (const s of siblings) {
+    const key = String(s.transactionId);
+    siblingsByTxn.set(key, [...(siblingsByTxn.get(key) ?? []), s]);
+  }
+  const accountById = new Map(
+    siblings.map((s) => [String(s.ledgerAccountId?._id), s.ledgerAccountId] as const),
+  );
+
+  const items = entries.map((e) => {
+    const own = String(e.ledgerAccountId);
+    const account = accountById.get(own);
+    return {
+      id: String(e._id),
+      transactionId: String(e.transactionId),
+      txnNo: e.txnNo,
+      transactionType: e.transactionType,
+      date: e.date.toISOString(),
+      direction: e.direction,
+      debit: e.direction === "DEBIT" ? e.amount : 0,
+      credit: e.direction === "CREDIT" ? e.amount : 0,
+      runningBalance: e.runningBalance,
+      narration: e.narration,
+      account: account ? { id: own, name: account.name, code: account.code } : { id: own, name: "—", code: "" },
+      contra: e.contra ?? [],
+      // Compared by id, not by name: two accounts can share a name, and excluding by
+      // name would drop a legitimate contra line.
+      contraLines: (siblingsByTxn.get(String(e.transactionId)) ?? [])
+        .filter((s) => String(s.ledgerAccountId?._id) !== own)
+        .map((s) => ({ name: s.ledgerAccountId?.name ?? "—", amount: s.amount, direction: s.direction })),
+      reconciledAt: e.reconciledAt ? e.reconciledAt.toISOString() : null,
+      createdAt: e.createdAt.toISOString(),
+    };
+  });
+
+  return { items, total, totals: { debit: totals?.debit ?? 0, credit: totals?.credit ?? 0 } };
+}
+
 ledgerRouter.get(
   "/accounts/:id/entries",
   requireResolvedPermission(statementPermission),
-  validate({ params: idParam, query: ledgerEntryQuerySchema }),
+  validate({ params: idParam, query: ledgerStatementQuerySchema }),
   asyncHandler(async (req, res) => {
     const { id } = req.valid.params as z.infer<typeof idParam>;
-    const query = req.valid.query as { page: number; limit: number; from?: Date; to?: Date };
+    const query = req.valid.query as LedgerStatementQuery;
 
     const account = await LedgerAccount.findById(id).lean();
     if (!account) throw new NotFoundError("Ledger account", id);
 
-    const filter: Record<string, unknown> = { ledgerAccountId: account._id };
-    if (query.from || query.to) {
-      filter.date = {
-        ...(query.from ? { $gte: query.from } : {}),
-        ...(query.to ? { $lte: query.to } : {}),
-      };
-    }
-
-    const skip = (query.page - 1) * query.limit;
-
-    const [entries, total, opening] = await Promise.all([
-      LedgerEntry.find(filter).sort({ date: 1, _id: 1 }).skip(skip).limit(query.limit).lean(),
-      LedgerEntry.countDocuments(filter),
+    const [{ items, total, totals }, opening] = await Promise.all([
+      entriesPage([account._id], query),
       // Balance brought forward: everything strictly before the window. Without it a
       // date-filtered statement starts from zero and every running balance is wrong.
       query.from
@@ -177,77 +276,50 @@ ledgerRouter.get(
         : Promise.resolve({ balance: 0 }),
     ]);
 
-    /**
-     * The other side of each row, WITH ITS AMOUNTS.
-     *
-     * A statement row shows one figure — what moved on this account. When a charge is
-     * involved that figure does not explain itself: ₹1,00,000 leaving the bank against
-     * "101, Bank Charges" hides that ₹98,500 went to the party and ₹1,500 was our cost.
-     * Reading the sibling lines gives the split, and doing it here — rather than storing
-     * it — means every row already on the books gets the breakdown too, not just the
-     * ones posted from now on.
-     *
-     * One extra indexed query per page, and only over the transactions on this page.
-     */
-    const txnIds = [...new Set(entries.map((e) => String(e.transactionId)))];
-    const siblings = txnIds.length
-      ? await LedgerEntry.find({ transactionId: { $in: txnIds } })
-          .select("transactionId ledgerAccountId direction amount")
-          .populate<{ ledgerAccountId: { _id: Types.ObjectId; name: string } }>(
-            "ledgerAccountId",
-            "name",
-          )
-          .lean()
-      : [];
-
-    const contraByTxn = new Map<string, Array<{ name: string; amount: number; direction: string }>>();
-    for (const s of siblings) {
-      // Compared by id, not by name: two accounts can share a name, and excluding by
-      // name would drop a legitimate contra line.
-      if (String(s.ledgerAccountId?._id) === String(account._id)) continue;
-      const key = String(s.transactionId);
-      const list = contraByTxn.get(key) ?? [];
-      list.push({
-        name: s.ledgerAccountId?.name ?? "—",
-        amount: s.amount,
-        direction: s.direction,
-      });
-      contraByTxn.set(key, list);
-    }
-
-    return paginated(
-      res,
-      entries.map((e) => ({
-        id: String(e._id),
-        transactionId: String(e.transactionId),
-        txnNo: e.txnNo,
-        transactionType: e.transactionType,
-        date: e.date.toISOString(),
-        direction: e.direction,
-        debit: e.direction === "DEBIT" ? e.amount : 0,
-        credit: e.direction === "CREDIT" ? e.amount : 0,
-        runningBalance: e.runningBalance,
-        narration: e.narration,
-        contra: e.contra ?? [],
-        contraLines: contraByTxn.get(String(e.transactionId)) ?? [],
-        reconciledAt: e.reconciledAt ? e.reconciledAt.toISOString() : null,
-        createdAt: e.createdAt.toISOString(),
-      })),
-      total,
-      query.page,
-      query.limit,
-      {
-        account: {
-          id: String(account._id),
-          code: account.code,
-          name: account.name,
-          kind: account.kind,
-          accountClass: account.accountClass,
-          balance: account.cachedBalance,
-        },
-        openingBalance: opening.balance,
+    return paginated(res, items, total, query.page, query.limit, {
+      account: {
+        id: String(account._id),
+        code: account.code,
+        name: account.name,
+        kind: account.kind,
+        accountClass: account.accountClass,
+        balance: account.cachedBalance,
       },
+      openingBalance: opening.balance,
+      totals,
+    });
+  }),
+);
+
+/**
+ * Every entry across all accounts of the given kinds — the "All" option on a ledger book.
+ *
+ * Needs the ledger view for EVERY kind asked for (or the General Ledger key), so the All
+ * view never shows an account the caller could not open on its own.
+ */
+ledgerRouter.get(
+  "/entries",
+  requireResolvedPermission(async (req) => {
+    const granted = req.auth?.permissions ?? [];
+    if (hasPermission(granted, "general_ledger.view")) return null;
+    const parsed = ledgerKindEntriesQuerySchema.safeParse(req.query);
+    if (!parsed.success) return null; // validation answers with a 422
+    const needed = [...new Set(parsed.data.kinds.map((k) => LEDGER_MODULE_OF_KIND[k] ?? "general_ledger"))]
+      .map((m) => `${m}.view` as Permission);
+    return needed.find((p) => !hasPermission(granted, p)) ?? null;
+  }),
+  validate({ query: ledgerKindEntriesQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const query = req.valid.query as LedgerKindEntriesQuery;
+    const accounts = await LedgerAccount.find({ kind: { $in: query.kinds } }).select("_id").lean();
+    const { items, total, totals } = await entriesPage(
+      accounts.map((a) => a._id),
+      query,
     );
+    return paginated(res, items, total, query.page, query.limit, {
+      totals,
+      accountCount: accounts.length,
+    });
   }),
 );
 

@@ -27,6 +27,28 @@ export const ledgerEntryQuerySchema = listQuery
   .and(dateRange);
 export type LedgerEntryQuery = z.infer<typeof ledgerEntryQuerySchema>;
 
+/**
+ * A statement page. `newest` lists the latest entry first; the running balance on each
+ * row is still the balance AFTER that entry, so it reads correctly in either order.
+ */
+export const ledgerStatementQuerySchema = ledgerEntryQuerySchema.and(
+  z.object({ newest: booleanFlag.optional() }),
+);
+export type LedgerStatementQuery = z.infer<typeof ledgerStatementQuerySchema>;
+
+/** Entries across every account of the given kinds — the "All" view of a ledger book. */
+export const ledgerKindEntriesQuerySchema = ledgerStatementQuerySchema.and(
+  z.object({
+    kinds: z
+      .string()
+      .trim()
+      .min(1)
+      .transform((v) => v.split(",").map((k) => k.trim()).filter(Boolean))
+      .pipe(z.array(z.nativeEnum(ACCOUNT_KIND)).min(1)),
+  }),
+);
+export type LedgerKindEntriesQuery = z.infer<typeof ledgerKindEntriesQuerySchema>;
+
 export interface LedgerAccountSummary {
   id: string;
   code: string;

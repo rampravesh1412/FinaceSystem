@@ -763,6 +763,61 @@ describe("income (§17)", () => {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
+describe("expense and income ledger books", () => {
+  type Row = { date: string; debit: number; credit: number; account: { name: string } };
+  type Page = { data: Row[]; meta: { total: number; totals: { debit: number; credit: number } } };
+
+  it("lists every expense and charge head together, with totals for the whole window", async () => {
+    const all = await client.get<Page>("/ledger/entries?kinds=EXPENSE,CHARGE&newest=true", { token: superToken });
+
+    expect(all.status).toBe(200);
+    expect(all.body.data.length).toBeGreaterThan(0);
+    // More than one head appears — the whole point of "All".
+    expect(new Set(all.body.data.map((r) => r.account.name)).size).toBeGreaterThan(1);
+
+    // Totals cover every matching entry, not just this page.
+    const heads = await LedgerAccount.find({ kind: { $in: ["EXPENSE", "CHARGE"] } }).select("_id").lean();
+    const entries = await LedgerEntry.find({ ledgerAccountId: { $in: heads.map((h) => h._id) } }).lean();
+    const debit = entries.filter((e) => e.direction === "DEBIT").reduce((sum, e) => sum + e.amount, 0);
+    const credit = entries.filter((e) => e.direction === "CREDIT").reduce((sum, e) => sum + e.amount, 0);
+    expect(all.body.meta.totals).toEqual({ debit, credit });
+    expect(all.body.meta.total).toBe(entries.length);
+
+    // Newest first.
+    const dates = all.body.data.map((r) => r.date);
+    expect([...dates].sort().reverse()).toEqual(dates);
+  });
+
+  it("narrows the totals to the date window", async () => {
+    const outside = await client.get<Page>("/ledger/entries?kinds=INCOME&from=2020-01-01&to=2020-12-31", {
+      token: superToken,
+    });
+    expect(outside.body.data).toHaveLength(0);
+    expect(outside.body.meta.totals).toEqual({ debit: 0, credit: 0 });
+
+    const inside = await client.get<Page>("/ledger/entries?kinds=INCOME", { token: superToken });
+    expect(inside.body.meta.totals.credit).toBeGreaterThan(0);
+  });
+
+  it("orders a single account's statement newest first on request, with totals", async () => {
+    const head = await IncomeHead.findById(commissionHeadId).lean();
+    const id = String(head!.ledgerAccountId);
+
+    const res = await client.get<Page>(`/ledger/accounts/${id}/entries?newest=true`, { token: superToken });
+    expect(res.status).toBe(200);
+    expect(res.body.meta.totals.credit).toBeGreaterThan(0);
+    const dates = res.body.data.map((r) => r.date);
+    expect([...dates].sort().reverse()).toEqual(dates);
+  });
+
+  it("refuses an unknown kind", async () => {
+    const res = await client.get("/ledger/entries?kinds=NOPE", { token: superToken });
+    expect(res.status).toBe(422);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
 describe("party to party transfer", () => {
   it("moves a balance from one khata to another without touching any bank", async () => {
     const fromBefore = await balanceOfParty(ramanujId);
