@@ -324,7 +324,7 @@ export async function listBankAccounts(
 function toBankAccountSummary(
   d: {
     _id: unknown;
-    bankId: { _id: unknown; name: string; shortName?: string };
+    bankId: { _id: unknown; name: string; shortName?: string } | null;
     accountName: string;
     accountNumber: string;
     ifsc: string;
@@ -333,19 +333,24 @@ function toBankAccountSummary(
     overdraftLimit: number;
     lowBalanceThreshold: number;
     status: string;
-    ledgerAccountId: { _id: unknown; cachedBalance: number };
-    createdAt: Date;
+    ledgerAccountId: { _id: unknown; cachedBalance: number } | null;
+    createdAt?: Date;
   },
   canSeeFullNumbers: boolean,
 ): BankAccountSummary {
   {
+    // A populate that finds nothing yields null, not the id. One account whose bank or
+    // ledger row has gone must not take the whole list down with it — it renders as an
+    // unknown bank with a zero balance, which is visibly wrong and fixable.
     const balance = d.ledgerAccountId?.cachedBalance ?? 0;
+    const overdraftLimit = d.overdraftLimit ?? 0;
+    const lowBalanceThreshold = d.lowBalanceThreshold ?? 0;
     return {
       id: String(d._id),
       bank: {
-        id: String(d.bankId._id),
-        name: d.bankId.name,
-        shortName: d.bankId.shortName,
+        id: d.bankId ? String(d.bankId._id) : "",
+        name: d.bankId?.name ?? "Unknown bank",
+        shortName: d.bankId?.shortName,
       },
       accountName: d.accountName,
       // Masked on the SERVER. An unauthorised caller never receives the digits at all —
@@ -356,13 +361,14 @@ function toBankAccountSummary(
       bankBranchName: d.bankBranchName,
       accountType: d.accountType,
       balance,
-      availableBalance: balance + d.overdraftLimit,
-      overdraftLimit: d.overdraftLimit,
-      lowBalanceThreshold: d.lowBalanceThreshold,
-      isLowBalance: d.lowBalanceThreshold > 0 && balance < d.lowBalanceThreshold,
+      availableBalance: balance + overdraftLimit,
+      overdraftLimit,
+      lowBalanceThreshold,
+      isLowBalance: lowBalanceThreshold > 0 && balance < lowBalanceThreshold,
       status: d.status,
-      ledgerAccountId: String(d.ledgerAccountId._id),
-      createdAt: d.createdAt.toISOString(),
+      ledgerAccountId: d.ledgerAccountId ? String(d.ledgerAccountId._id) : "",
+      // Rows written past the model can lack timestamps; the ObjectId still carries one.
+      createdAt: (d.createdAt ?? (d._id as Types.ObjectId).getTimestamp()).toISOString(),
     } satisfies BankAccountSummary;
   }
 }

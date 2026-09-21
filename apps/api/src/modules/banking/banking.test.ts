@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Express } from "express";
+import { Types } from "mongoose";
 import { createApp } from "../../app.js";
 import { BankAccount, LedgerAccount, LedgerEntry, Party, Transaction } from "../../models/index.js";
 import { ensureSystemAccounts } from "../../services/ledger.service.js";
@@ -229,6 +230,39 @@ describe("bank accounts", () => {
     // Both callers see the same books, because there is only one set of them.
     expect(scoped.body.meta.totalBalance).toBe(unscoped.body.meta.totalBalance);
     expect(unscoped.body.meta.totalBalance).toBe(700_000_00);
+  });
+
+  it("still lists when an account's bank or ledger reference no longer resolves", async () => {
+    // Written past the model, as a restore or a hand-edit would: a bank that is gone and
+    // a ledger account that is gone. One such row used to 500 the whole list.
+    const orphan = new Types.ObjectId();
+    await BankAccount.collection.insertOne({
+      _id: orphan,
+      bankId: new Types.ObjectId(),
+      ledgerAccountId: new Types.ObjectId(),
+      accountName: "Orphaned Account",
+      accountNumber: "909090909090",
+      ifsc: "ICIC0009090",
+      accountType: "CURRENT",
+      overdraftLimit: 0,
+      lowBalanceThreshold: 0,
+      status: "ACTIVE",
+    });
+
+    try {
+      const res = await client.get<{ data: Array<{ id: string; balance: number; bank: { name: string } }> }>(
+        "/bank-accounts",
+        { token: superToken },
+      );
+
+      expect(res.status).toBe(200);
+      const row = res.body.data.find((a) => a.id === String(orphan));
+      expect(row).toBeTruthy();
+      expect(row!.balance).toBe(0);
+      expect(row!.bank.name).toBe("Unknown bank");
+    } finally {
+      await BankAccount.collection.deleteOne({ _id: orphan });
+    }
   });
 });
 
