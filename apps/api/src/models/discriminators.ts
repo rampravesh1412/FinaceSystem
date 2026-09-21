@@ -103,6 +103,34 @@ export const BankTransfer = Transaction.discriminator<BankTransferDoc>(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Party to party transfer                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A balance moved from one party's khata to another's. No bank or cash account is
+ * involved. The labels reuse the bank transfer's field names so the DayBook renders
+ * "A → B" without knowing about this type.
+ */
+export interface PartyTransferDoc extends TransactionDoc {
+  sourcePartyId: Types.ObjectId;
+  sourceLabel: string;
+  destinationPartyId: Types.ObjectId;
+  destinationLabel: string;
+}
+
+export const PartyTransfer = Transaction.discriminator<PartyTransferDoc>(
+  TRANSACTION_TYPE.PARTY_TRANSFER,
+  new Schema<PartyTransferDoc>({
+    sourcePartyId: { type: Schema.Types.ObjectId, ref: "Party", required: true },
+    sourceLabel: { type: String, required: true },
+    destinationPartyId: { type: Schema.Types.ObjectId, ref: "Party", required: true },
+    destinationLabel: { type: String, required: true },
+  })
+    .index({ sourcePartyId: 1, date: -1 }, { name: "partytransfer_source_date" })
+    .index({ destinationPartyId: 1, date: -1 }, { name: "partytransfer_destination_date" }),
+);
+
+/* -------------------------------------------------------------------------- */
 /* Expense (§16)                                                              */
 /* -------------------------------------------------------------------------- */
 

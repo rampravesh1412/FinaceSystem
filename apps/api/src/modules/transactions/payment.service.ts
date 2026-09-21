@@ -5,6 +5,7 @@ import {
   chargeEffect,
   settlementNet,
   type CreateBankTransferInput,
+  type CreatePartyTransferInput,
   type CreatePaymentInInput,
   type CreatePaymentOutInput,
   type PaymentEditResult,
@@ -481,6 +482,76 @@ export async function createBankTransfer(
 
     return txn;
   }, { label: "bankTransfer.create" });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Party to party transfer                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Move an amount from one party's khata to another's.
+ *
+ *     DR  To party        50,000     their balance rises, as if we had paid them
+ *         CR  From party             50,000     their balance falls, as if they had paid us
+ *
+ * No bank or cash account moves, so there is no charge and nothing on the DayBook's money
+ * columns. The TO party is debited, which pushes them toward "they owe us" — so their
+ * credit limit applies exactly as it would to a Payment Out.
+ */
+export async function createPartyTransfer(
+  input: CreatePartyTransferInput,
+  ctx: audit.AuditContext,
+): Promise<TransactionDoc> {
+  if (input.fromPartyId === input.toPartyId) {
+    throw new BadRequestError("Choose two different parties", "toPartyId");
+  }
+
+  return withTransaction(async (session) => {
+    // Sequential — one in-flight operation per session (see createBankTransfer).
+    const from = await accounts.resolveParty(input.fromPartyId, session);
+    const to = await accounts.resolveParty(input.toPartyId, session);
+
+    if (to.creditLimit > 0) {
+      const toAccount = await LedgerAccount.findById(to.ledgerAccountId)
+        .select("cachedBalance")
+        .session(session);
+      const wouldBe = (toAccount?.cachedBalance ?? 0) + input.amount;
+      if (wouldBe > to.creditLimit) {
+        throw new CreditLimitExceededError(to.name, to.creditLimit, wouldBe);
+      }
+    }
+
+    const fromLabel = `${from.name} (${from.code})`;
+    const toLabel = `${to.name} (${to.code})`;
+
+    return postOrSubmit(
+      {
+        type: "PARTY_TRANSFER",
+        date: input.date,
+        lines: [
+          { ledgerAccountId: to.ledgerAccountId, direction: "DEBIT", amount: input.amount },
+          { ledgerAccountId: from.ledgerAccountId, direction: "CREDIT", amount: input.amount },
+        ],
+        grossAmount: input.amount,
+        chargeAmount: 0,
+        netAmount: input.amount,
+        referenceNo: input.referenceNo,
+        narration: input.narration ?? `Transfer from ${fromLabel} to ${toLabel}`,
+        partyId: from.id,
+        createdBy: ctx.userId!,
+        attachments: input.attachments,
+        notes: input.notes ? [{ text: input.notes, createdBy: ctx.userId, createdAt: new Date() }] : [],
+        details: {
+          sourcePartyId: from.id,
+          sourceLabel: fromLabel,
+          destinationPartyId: to.id,
+          destinationLabel: toLabel,
+        },
+      },
+      ctx,
+      session,
+    );
+  }, { label: "partyTransfer.create" });
 }
 
 /**

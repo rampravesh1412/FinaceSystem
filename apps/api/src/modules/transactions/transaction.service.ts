@@ -37,7 +37,11 @@ function buildFilter(filters: TransactionListFilters): FilterQuery<TransactionDo
 
   if (filters.type) filter.type = filters.type;
   if (filters.status) filter.status = filters.status;
-  if (filters.partyId) filter.partyId = new Types.ObjectId(filters.partyId);
+  if (filters.partyId) {
+    const id = new Types.ObjectId(filters.partyId);
+    // A party-to-party transfer names two parties; either side should find it.
+    filter.$and = [{ $or: [{ partyId: id }, { sourcePartyId: id }, { destinationPartyId: id }] }];
+  }
   if (filters.paymentMode) filter.paymentMode = filters.paymentMode;
   if (filters.createdBy) filter.createdBy = new Types.ObjectId(filters.createdBy);
 
@@ -72,7 +76,11 @@ function buildFilter(filters: TransactionListFilters): FilterQuery<TransactionDo
     const search = [{ txnNo: rx }, { referenceNo: rx }, { narration: rx }];
     // Combine with any existing $or rather than overwriting it, or an account filter plus
     // a search term would silently drop the account constraint.
-    filter.$and = filter.$or ? [{ $or: filter.$or }, { $or: search }] : [{ $or: search }];
+    filter.$and = [
+      ...(filter.$and ?? []),
+      ...(filter.$or ? [{ $or: filter.$or }] : []),
+      { $or: search },
+    ];
     delete filter.$or;
   }
 

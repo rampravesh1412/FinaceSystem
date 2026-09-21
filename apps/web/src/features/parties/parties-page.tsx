@@ -6,6 +6,7 @@ import { KHATA_LABEL, type PartySummary } from "@amiri/shared";
 import { ApiError, api, qs } from "@/lib/api";
 import { Can, useAuth } from "@/features/auth/auth-context";
 import { NewPartyButton } from "./party-form";
+import { PartyTransferButton } from "./party-transfer-form";
 import { PartyRowActions } from "./party-edit";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useIsMobile } from "@/hooks/use-media-query";
@@ -98,9 +99,14 @@ export function PartiesPage() {
         title="Parties"
         description="Customers, vendors, distributors and agents — one ledger account each."
         actions={
-          <Can permission="parties.create">
-            <NewPartyButton />
-          </Can>
+          <div className="flex flex-wrap gap-2">
+            <Can permission="adjustments.create">
+              <PartyTransferButton />
+            </Can>
+            <Can permission="parties.create">
+              <NewPartyButton />
+            </Can>
+          </div>
         }
       />
 

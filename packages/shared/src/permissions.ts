@@ -744,6 +744,8 @@ export const MODULE_OF_TRANSACTION_TYPE: Record<string, string> = {
   PAYMENT_IN: "payment_in",
   PAYMENT_OUT: "payment_out",
   BANK_TRANSFER: "bank_transfer",
+  /** A balance moved between two khatas — a reclass, owned where adjustments are. */
+  PARTY_TRANSFER: "adjustments",
   EXPENSE: "expenses",
   INCOME: "income",
   ADJUSTMENT: "adjustments",

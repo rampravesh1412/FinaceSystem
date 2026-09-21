@@ -4,6 +4,7 @@ import {
   booleanFlag,
   chargeRuleQuerySchema,
   createBankTransferSchema,
+  createPartyTransferSchema,
   createChargeRuleSchema,
   createExpenseCategorySchema,
   createExpenseSchema,
@@ -16,6 +17,7 @@ import {
   reverseTransactionSchema,
   transactionQuerySchema,
   type CreateBankTransferInput,
+  type CreatePartyTransferInput,
   type CreateChargeRuleInput,
   type CreateExpenseInput,
   type CreateIncomeInput,
@@ -52,13 +54,14 @@ import { transactionPermission } from "./transaction-permissions.js";
 export const paymentInRouter: Router = Router();
 export const paymentOutRouter: Router = Router();
 export const transferRouter: Router = Router();
+export const partyTransferRouter: Router = Router();
 export const expenseRouter: Router = Router();
 export const incomeRouter: Router = Router();
 export const chargeRouter: Router = Router();
 export const transactionRouter: Router = Router();
 
 for (const r of [
-  paymentInRouter, paymentOutRouter, transferRouter, expenseRouter,
+  paymentInRouter, paymentOutRouter, transferRouter, partyTransferRouter, expenseRouter,
   incomeRouter, chargeRouter, transactionRouter,
 ]) {
   r.use(requireAuth);
@@ -208,6 +211,29 @@ transferRouter.post(
   asyncHandler(async (req, res) => {
     const input = req.valid.body as CreateBankTransferInput;
     const txn = await payments.createBankTransfer(input, auditContextFrom(req));
+    return created(res, txn, `${txn.txnNo} posted`);
+  }),
+);
+
+/* ── Party to party transfer ─────────────────────────────────────────────── */
+
+// Owned by the adjustments module: moving a balance between two khatas is a reclass,
+// and whoever may adjust a party's balance may move it to another party.
+partyTransferRouter.get(
+  "/",
+  requirePermission("adjustments.view"),
+  validate({ query: transactionQuerySchema }),
+  listHandler("PARTY_TRANSFER"),
+);
+
+partyTransferRouter.post(
+  "/",
+  requirePermission("adjustments.create"),
+  mutationLimiter,
+  validate({ body: createPartyTransferSchema }),
+  asyncHandler(async (req, res) => {
+    const input = req.valid.body as CreatePartyTransferInput;
+    const txn = await payments.createPartyTransfer(input, auditContextFrom(req));
     return created(res, txn, `${txn.txnNo} posted`);
   }),
 );

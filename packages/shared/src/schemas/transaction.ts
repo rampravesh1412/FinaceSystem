@@ -98,6 +98,31 @@ export const createBankTransferSchema = z
 export type CreateBankTransferInput = z.infer<typeof createBankTransferSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Party to party transfer                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Move an amount from one party's khata to another's. No bank or cash account moves.
+ *
+ * The FROM party is credited (their balance falls, as if they had paid us) and the TO
+ * party is debited (their balance rises, as if we had paid them) — "A paid B on our
+ * behalf", or a debt handed from one party to another.
+ */
+export const createPartyTransferSchema = z
+  .object({
+    ...baseTransactionFields,
+    fromPartyId: objectId,
+    toPartyId: objectId,
+    amount: positiveMoney,
+    notes: note(1000),
+  })
+  .refine((v) => v.fromPartyId !== v.toPartyId, {
+    message: "Choose two different parties",
+    path: ["toPartyId"],
+  });
+export type CreatePartyTransferInput = z.infer<typeof createPartyTransferSchema>;
+
+/* -------------------------------------------------------------------------- */
 /* Expense (§16)                                                              */
 /* -------------------------------------------------------------------------- */
 

@@ -763,6 +763,97 @@ describe("income (§17)", () => {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
+describe("party to party transfer", () => {
+  it("moves a balance from one khata to another without touching any bank", async () => {
+    const fromBefore = await balanceOfParty(ramanujId);
+    const toBefore = await balanceOfParty(eddigoId);
+    const bankBefore = await balanceOfAccount(hdfcId);
+
+    const res = await client.post<{ data: { id: string; txnNo: string } }>(
+      "/party-transfers",
+      { date: "2026-08-19", fromPartyId: ramanujId, toPartyId: eddigoId, amount: "25,000" },
+      { token: superToken },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.txnNo).toMatch(/^PTY-TRF-2026-\d{6}$/);
+
+    // FROM is credited (balance falls), TO is debited (balance rises).
+    expect(await balanceOfParty(ramanujId)).toBe(fromBefore - 25_000_00);
+    expect(await balanceOfParty(eddigoId)).toBe(toBefore + 25_000_00);
+    expect(await balanceOfAccount(hdfcId)).toBe(bankBefore);
+  });
+
+  it("lists as From → To, outside the money columns, and under either party", async () => {
+    const list = await client.get<{
+      data: Array<{ type: string; accountLabel: string; moneyIn: number; moneyOut: number }>;
+    }>("/party-transfers", { token: superToken });
+
+    expect(list.status).toBe(200);
+    expect(list.body.data.length).toBeGreaterThan(0);
+    const row = list.body.data[0]!;
+    expect(row.type).toBe("PARTY_TRANSFER");
+    expect(row.accountLabel).toContain("→");
+    expect(row.moneyIn).toBe(0);
+    expect(row.moneyOut).toBe(0);
+
+    for (const partyId of [ramanujId, eddigoId]) {
+      const byParty = await client.get<{ data: Array<{ type: string }> }>(
+        `/transactions?partyId=${partyId}&type=PARTY_TRANSFER`,
+        { token: superToken },
+      );
+      expect(byParty.body.data.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("refuses a transfer to the same party", async () => {
+    const res = await client.post<{ error: { code: string } }>(
+      "/party-transfers",
+      { date: "2026-08-19", fromPartyId: ramanujId, toPartyId: ramanujId, amount: "1,000" },
+      { token: superToken },
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it("respects the receiving party's credit limit", async () => {
+    const limited = await client.post<{ data: { id: string } }>(
+      "/parties",
+      { name: "Limited Transferee", type: "CUSTOMER", creditLimit: "10,000" },
+      { token: superToken },
+    );
+
+    const res = await client.post<{ error: { code: string } }>(
+      "/party-transfers",
+      { date: "2026-08-19", fromPartyId: ramanujId, toPartyId: limited.body.data.id, amount: "50,000" },
+      { token: superToken },
+    );
+    expect(res.status).toBe(422);
+    expect(await balanceOfParty(limited.body.data.id)).toBe(0);
+  });
+
+  it("reverses back to exactly where both parties were", async () => {
+    const fromBefore = await balanceOfParty(ramanujId);
+    const toBefore = await balanceOfParty(eddigoId);
+
+    const created = await client.post<{ data: { id: string } }>(
+      "/party-transfers",
+      { date: "2026-08-19", fromPartyId: ramanujId, toPartyId: eddigoId, amount: "7,777" },
+      { token: superToken },
+    );
+    const reversed = await client.post(
+      `/transactions/${created.body.data.id}/reverse`,
+      { reason: "Posted against the wrong party by mistake" },
+      { token: superToken },
+    );
+
+    expect(reversed.status).toBe(200);
+    expect(await balanceOfParty(ramanujId)).toBe(fromBefore);
+    expect(await balanceOfParty(eddigoId)).toBe(toBefore);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
 describe("reversal (§28)", () => {
   it("restores every balance exactly and keeps the original visible", async () => {
     const bankBefore = await balanceOfAccount(hdfcId);

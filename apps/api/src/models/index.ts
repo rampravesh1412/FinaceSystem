@@ -36,6 +36,6 @@ export {
 /* Transaction discriminators. Importing this registers them with the base model, which
    must happen before any query runs or Mongoose will not apply the right schema. */
 export {
-  PaymentIn, PaymentOut, BankTransfer, Expense, Income, Adjustment, OpeningBalance,
-  type PaymentDoc, type BankTransferDoc, type ExpenseDoc, type IncomeDoc, type AdjustmentDoc,
+  PaymentIn, PaymentOut, BankTransfer, PartyTransfer, Expense, Income, Adjustment, OpeningBalance,
+  type PaymentDoc, type BankTransferDoc, type PartyTransferDoc, type ExpenseDoc, type IncomeDoc, type AdjustmentDoc,
 } from "./discriminators.js";

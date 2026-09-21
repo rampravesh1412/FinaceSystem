@@ -6,7 +6,7 @@ import { bankRouter, bankAccountRouter, cashAccountRouter } from "./modules/bank
 import { partyRouter } from "./modules/parties/party.routes.js";
 import { ledgerRouter } from "./modules/ledger/ledger.routes.js";
 import {
-  paymentInRouter, paymentOutRouter, transferRouter, expenseRouter,
+  paymentInRouter, paymentOutRouter, transferRouter, partyTransferRouter, expenseRouter,
   incomeRouter, chargeRouter, transactionRouter,
 } from "./modules/transactions/transaction.routes.js";
 import {
@@ -52,6 +52,7 @@ apiRouter.use("/ledger", ledgerRouter);
 apiRouter.use("/payment-in", paymentInRouter);
 apiRouter.use("/payment-out", paymentOutRouter);
 apiRouter.use("/bank-transfers", transferRouter);
+apiRouter.use("/party-transfers", partyTransferRouter);
 apiRouter.use("/expenses", expenseRouter);
 apiRouter.use("/income", incomeRouter);
 apiRouter.use("/charges", chargeRouter);
