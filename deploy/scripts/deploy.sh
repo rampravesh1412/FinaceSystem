@@ -6,8 +6,8 @@
 #   /srv/amiri/deploy/scripts/deploy.sh ghcr.io/…/finacesystem-api:<tag> \
 #                                       ghcr.io/…/finacesystem-web:<tag>
 #
-# Nothing is built here. The box has 1 vCPU's worth of ambition and a Vite build on it
-# would take the site down with it; CI builds, the server only pulls.
+# Nothing is built here. The box has two shared vCPUs' worth of ambition and a Vite build
+# on it would take the site down with it; CI builds, the server only pulls.
 #
 # On any failure after the pull, the previous tags are put back and brought up again. A
 # half-deployed accounting system is worse than an old one.

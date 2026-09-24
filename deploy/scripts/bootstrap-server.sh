@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# One-time server bootstrap for account.amiri247.in — EC2 i-06ea805fe87ab2d93, t3.small,
-# eu-north-1.
+# One-time server bootstrap for account.amiri247.in — EC2 i-0fe4eb206bd226cc5, t2.medium,
+# ap-south-1.
 #
 #   scp -i amiri.pem deploy/scripts/bootstrap-server.sh ec2-user@<IP>:/tmp/
 #   ssh -i amiri.pem ec2-user@<IP> 'sudo bash /tmp/bootstrap-server.sh'
@@ -50,7 +50,7 @@ log "Detected ${PRETTY_NAME:-unknown} — using $PKG"
 
 # ---------------------------------------------------------------------------------------
 log "Swap"
-# t3.small is 2 GB. mongod, node and the nginx container fit, but with little headroom —
+# t2.medium is 4 GB. mongod, node and the nginx container fit with some headroom —
 # and the failure mode without swap is the OOM killer choosing mongod mid-transaction.
 # Swap here is a safety net, not capacity; if it is in steady use, the box is too small.
 if ! swapon --show | grep -q .; then

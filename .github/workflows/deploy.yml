@@ -1,6 +1,6 @@
 name: Deploy
 
-# main → account.amiri247.in (16.16.129.104)
+# main → account.amiri247.in (13.204.36.228)
 #
 #   test    the same CI workflow a PR runs, called rather than duplicated
 #   build   two images, pushed to GHCR and tagged with the commit sha

@@ -1,6 +1,6 @@
 # Deployment — account.amiri247.in
 
-`main` → GitHub Actions → GHCR → `16.16.129.104`.
+`main` → GitHub Actions → GHCR → `13.204.36.228`.
 
 ```
  push to main
@@ -18,7 +18,7 @@
 ```
 
 The server never builds. It pulls the exact images CI tested, which is what makes a
-rollback a one-line change of tag rather than a rebuild on a box with one vCPU.
+rollback a one-line change of tag rather than a rebuild on a box with two shared vCPUs.
 
 ## What runs on the server
 
@@ -58,8 +58,14 @@ out from under a running Mongo and log every user out.
 
 ## The server
 
-EC2 `i-06ea805fe87ab2d93` (`amiri-finace`), t3.small, **Amazon Linux**, eu-north-1,
-`16.16.129.104` (private `172.31.30.218`). Login user is `ec2-user`; root SSH is disabled.
+EC2 `i-0fe4eb206bd226cc5` (`Accounts`), t2.medium, **Amazon Linux 2023**, ap-south-1
+(Mumbai), Elastic IP `13.204.36.228` (private `172.31.0.40`). Login user is `ec2-user`
+with `sumit.pem`; root SSH is disabled.
+
+Moved here on 2026-09-24 from `i-06ea805fe87ab2d93` (`amiri-finace`, t3.small, eu-north-1,
+`16.16.129.104`), which is gone. Nothing was migrated off it — this box was bootstrapped
+and deployed from scratch, so its Mongo password, JWT secrets and CI deploy key are all
+new. Anyone who had a session on the old box is logged out, and the ledger starts empty.
 
 The **security group must allow 80 and 443** from `0.0.0.0/0`, and 22 from wherever you
 administer from. Without 80 the ACME challenge cannot be answered and there is no
@@ -69,13 +75,12 @@ since Docker's published ports bypass a host firewall's INPUT chain.
 
 ## First-time setup
 
-**1. DNS — exactly one A record.** `account.amiri247.in` currently resolves to two
-addresses, `16.16.129.104` and `13.207.8.236`. Delete the second at GoDaddy. Two records
-means round-robin: half of all traffic, and half of every ACME validation, lands on a
-machine that is not running this app.
+**1. DNS — exactly one A record.** `account.amiri247.in` must resolve to this box and to
+nothing else. Two records means round-robin: half of all traffic, and half of every ACME
+validation, lands on a machine that is not running this app.
 
 ```bash
-dig +short account.amiri247.in     # exactly one line: 16.16.129.104
+dig +short account.amiri247.in     # exactly one line: 13.204.36.228
 ```
 
 **2. Bootstrap the server** — installs Docker and the compose plugin, adds a 2 GB
@@ -83,8 +88,8 @@ swapfile, creates the `deploy` user, generates secrets and installs the renewal 
 timers. It detects Amazon Linux vs Ubuntu and adapts.
 
 ```bash
-scp -i amiri.pem deploy/scripts/bootstrap-server.sh ec2-user@16.16.129.104:/tmp/
-ssh -i amiri.pem ec2-user@16.16.129.104 \
+scp -i sumit.pem deploy/scripts/bootstrap-server.sh ec2-user@13.204.36.228:/tmp/
+ssh -i sumit.pem ec2-user@13.204.36.228 \
   'sudo DOMAIN=account.amiri247.in bash /tmp/bootstrap-server.sh'
 ```
 
@@ -95,7 +100,7 @@ Copy them before closing the terminal.
 
 | Secret | Value |
 |---|---|
-| `SSH_HOST` | `16.16.129.104` |
+| `SSH_HOST` | `13.204.36.228` |
 | `SSH_USER` | `deploy` |
 | `SSH_PRIVATE_KEY` | the key printed by bootstrap, `BEGIN`/`END` lines included |
 | `SSH_KNOWN_HOSTS` | the host-key line printed by bootstrap |
@@ -110,7 +115,7 @@ certificate; the site works, the browser warns.
 package it, and the official image behaves the same on every distribution.
 
 ```bash
-ssh -i amiri.pem ec2-user@16.16.129.104 \
+ssh -i sumit.pem ec2-user@13.204.36.228 \
   'sudo LETSENCRYPT_EMAIL=you@example.com /srv/amiri/deploy/scripts/issue-cert.sh'
 ```
 
@@ -121,7 +126,7 @@ is this box — a failed challenge costs an hour of rate limit, a refusal costs 
 interactive shell rather than as a one-line `ssh` command:
 
 ```bash
-ssh -i amiri.pem ec2-user@16.16.129.104
+ssh -i sumit.pem ec2-user@13.204.36.228
 sudo -u deploy /srv/amiri/deploy/scripts/bootstrap-admin.sh \
   --email you@amiri247.in --name "Your Name"
 ```
@@ -136,19 +141,19 @@ again once an admin exists.
 
 ```bash
 # what is live
-ssh deploy@16.16.129.104 'grep IMAGE /srv/amiri/deploy/.env'
+ssh deploy@13.204.36.228 'grep IMAGE /srv/amiri/deploy/.env'
 
 # logs
-ssh deploy@16.16.129.104 \
+ssh deploy@13.204.36.228 \
   'docker compose -f /srv/amiri/deploy/docker-compose.prod.yml logs -f --tail=100 api'
 
 # manual rollback to any previously built commit
-ssh deploy@16.16.129.104 '/srv/amiri/deploy/scripts/deploy.sh \
+ssh deploy@13.204.36.228 '/srv/amiri/deploy/scripts/deploy.sh \
   ghcr.io/rampravesh1412/finacesystem-api:sha-<commit> \
   ghcr.io/rampravesh1412/finacesystem-web:sha-<commit>'
 
 # backup now
-ssh deploy@16.16.129.104 /srv/amiri/deploy/scripts/backup.sh
+ssh deploy@13.204.36.228 /srv/amiri/deploy/scripts/backup.sh
 ```
 
 Re-running the Deploy workflow from the Actions tab with **skip_tests** checked is the
