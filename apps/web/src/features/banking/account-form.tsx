@@ -342,7 +342,7 @@ function CashAccountForm({ onDone }: { onDone: () => void }) {
 }
 
 /** Parse a typed amount for preview only — the server's parse is the one that counts. */
-function useParsedAmount(raw: string | number | undefined): number {
+export function useParsedAmount(raw: string | number | undefined): number {
   return React.useMemo(() => {
     try {
       return parseAmount(String(raw ?? 0));

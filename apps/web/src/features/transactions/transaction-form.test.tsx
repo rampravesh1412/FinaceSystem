@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = {
@@ -257,6 +257,69 @@ describe("transaction form", () => {
     await user.click(screen.getByRole("button", { name: /record receipt/i }));
 
     await waitFor(() => expect(screen.queryAllByRole("alert").length).toBeGreaterThan(0));
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A head missing from the dropdown no longer means abandoning a half-filled entry: the
+   * last option adds one by name and selects it, and the transaction still waits for its
+   * own button.
+   */
+  it("adds an expense head from the dropdown and posts against it", async () => {
+    const NEW_HEAD_ID = "6501aa00000000000000000a";
+    // A server with state: once added, the head is in every later list, as it would be.
+    const heads = [{ id: HEAD_ID, name: "Salaries", code: "EXP-001" }];
+    const getReference = api.get.getMockImplementation()!;
+    api.get.mockImplementation((path: string) =>
+      String(path).startsWith("/expenses/categories") ? Promise.resolve([...heads]) : getReference(path),
+    );
+    api.post.mockImplementation((path: string) => {
+      if (path !== "/expenses/categories") return Promise.resolve({ txnNo: "TEST-000001" });
+      const head = { id: NEW_HEAD_ID, name: "Panel Expense", code: "EXP-002" };
+      heads.push(head);
+      return Promise.resolve(head);
+    });
+    const user = await openForm("EXPENSE", "Record Expense");
+
+    await user.click(screen.getByRole("combobox", { name: /expense head/i }));
+    await user.click(await screen.findByRole("option", { name: /add new head/i }));
+    const dialog = await screen.findByRole("dialog", { name: /new expense head/i });
+    await user.type(within(dialog).getByLabelText(/^name/i), "Panel Expense");
+    await user.click(within(dialog).getByRole("button", { name: /add head/i }));
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/expenses/categories", { name: "Panel Expense" }),
+    );
+    // Adding the head posted nothing else — no half-filled expense went with it.
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: /expense head/i })).toHaveTextContent("Panel Expense"),
+    );
+
+    await user.type(screen.getByLabelText(/^amount/i), "1200");
+    await user.click(screen.getByRole("combobox", { name: /paid from/i }));
+    await user.click(await screen.findByRole("option", { name: /hdfc/i }));
+    await user.click(screen.getByRole("button", { name: /record expense/i }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+    const [path, payload] = api.post.mock.calls[1]!;
+    expect(path).toBe("/expenses");
+    expect(payload).toHaveProperty("categoryId", NEW_HEAD_ID);
+  });
+
+  /** Names are not unique on the server, so the form is what stops a second "Salaries". */
+  it("picks the existing head instead of adding one with the same name", async () => {
+    const user = await openForm("EXPENSE", "Record Expense");
+
+    await user.click(screen.getByRole("combobox", { name: /expense head/i }));
+    await user.click(await screen.findByRole("option", { name: /add new head/i }));
+    const dialog = await screen.findByRole("dialog", { name: /new expense head/i });
+    await user.type(within(dialog).getByLabelText(/^name/i), "  salaries ");
+    await user.click(within(dialog).getByRole("button", { name: /add head/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: /expense head/i })).toHaveTextContent("Salaries"),
+    );
     expect(api.post).not.toHaveBeenCalled();
   });
 });

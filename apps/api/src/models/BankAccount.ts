@@ -29,6 +29,14 @@ export interface BankAccountDoc extends Document<Types.ObjectId> {
   status: RecordStatus;
   notes?: string;
 
+  /**
+   * Soft delete. A deleted account is hidden from every list and picker and takes no new
+   * postings, but the document, its ledger account and every entry stay — the reports and
+   * the audit trail still have to explain the history it carried.
+   */
+  deletedAt?: Date | null;
+  deletedBy?: Types.ObjectId;
+
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
   createdAt: Date;
@@ -63,6 +71,9 @@ const bankAccountSchema = new Schema<BankAccountDoc>(
 
     status: { type: String, enum: Object.values(RECORD_STATUS), default: RECORD_STATUS.ACTIVE, index: true },
     notes: { type: String, trim: true, maxlength: 500 },
+
+    deletedAt: { type: Date, default: null },
+    deletedBy: actorField(),
 
     createdBy: actorField(),
     updatedBy: actorField(),

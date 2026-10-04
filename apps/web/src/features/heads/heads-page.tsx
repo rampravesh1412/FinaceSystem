@@ -114,7 +114,6 @@ function HeadsTable({ kind }: { kind: Kind }) {
 
   const rows = query.data ?? [];
   const total = rows.reduce((sum, r) => sum + r.balance, 0);
-  const permission = kind === "EXPENSE" ? "finance.expense.manageCategories" : "finance.income.manageHeads";
 
   return (
     <div className="space-y-4">
@@ -124,7 +123,10 @@ function HeadsTable({ kind }: { kind: Kind }) {
           Show retired heads
         </label>
 
-        <Can permission={permission as never}>
+        {/* The same keys the routes check. This used to ask for the retired
+            `finance.expense.manageCategories`, which no session carries any more, so the
+            button was hidden from everyone — Super Admin included. */}
+        <Can permission="heads.create">
           <Button variant="accent" onClick={() => setCreating(true)}>
             <Plus />
             New {kind === "EXPENSE" ? "expense" : "income"} head
@@ -178,7 +180,7 @@ function HeadsTable({ kind }: { kind: Kind }) {
                       </>
                     }
                     actions={
-                      <Can permission={permission as never}>
+                      <Can permission="heads.edit">
                         <HeadActions kind={kind} head={row} parents={rows} />
                       </Can>
                     }
@@ -238,7 +240,7 @@ function HeadsTable({ kind }: { kind: Kind }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="screen-only text-right">
-                    <Can permission={permission as never}>
+                    <Can permission="heads.edit">
                       <HeadActions kind={kind} head={row} parents={rows} />
                     </Can>
                   </TableCell>

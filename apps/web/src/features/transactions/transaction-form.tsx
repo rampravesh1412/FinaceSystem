@@ -7,6 +7,7 @@ import { AlertCircle, Plus, Trash2 } from "lucide-react";
 import {
   PAYMENT_MODE_LABEL,
   createBankTransferSchema,
+  createExpenseCategorySchema,
   createExpenseSchema,
   createIncomeSchema,
   createPaymentInSchema,
@@ -14,8 +15,10 @@ import {
   formatINR,
 } from "@amiri/shared";
 import { ApiError, api } from "@/lib/api";
+import { useAuth } from "@/features/auth/auth-context";
 import { arrangementOf } from "@/features/charges/arrangement";
 import { Money } from "@/components/money";
+import { TextField, applyServerErrors } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +28,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   useAccounts, useChargePreview, useChargeRules, useExpenseCategories,
@@ -101,7 +104,9 @@ export function TransactionFormDialog({
 }) {
   const config = MODE_CONFIG[mode];
   const queryClient = useQueryClient();
+  const { can } = useAuth();
   const [confirming, setConfirming] = React.useState(false);
+  const [addingHead, setAddingHead] = React.useState<HeadKind | null>(null);
 
   /**
    * A receipt or a payment — the two modes that record money moving with a party.
@@ -307,6 +312,11 @@ export function TransactionFormDialog({
                     onChange={(v) => form.setValue("categoryId", v, { shouldValidate: true })}
                     placeholder="Choose a head"
                     options={(categories.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
+                    createOption={
+                      can("heads.create")
+                        ? { label: "Add new head", onSelect: () => setAddingHead("EXPENSE") }
+                        : undefined
+                    }
                   />
                 )}
               </Field>
@@ -364,6 +374,11 @@ export function TransactionFormDialog({
                     onChange={(v) => form.setValue("headId", v, { shouldValidate: true })}
                     placeholder="Choose a head"
                     options={(incomeHeads.data ?? []).map((h) => ({ value: h.id, label: h.name }))}
+                    createOption={
+                      can("heads.create")
+                        ? { label: "Add new head", onSelect: () => setAddingHead("INCOME") }
+                        : undefined
+                    }
                   />
                 )}
               </Field>
@@ -568,6 +583,136 @@ export function TransactionFormDialog({
             </Button>
           </DialogFooter>
         </form>
+
+        {/* Outside the <form> on purpose: a portal moves the DOM node, but React still
+            bubbles events up its own tree, so a submit from a dialog nested inside the
+            form would post the transaction as well. */}
+        {addingHead ? (
+          <QuickHeadDialog
+            kind={addingHead}
+            onClose={() => setAddingHead(null)}
+            onPicked={(head) =>
+              form.setValue(addingHead === "EXPENSE" ? "categoryId" : "headId", head.id, {
+                shouldValidate: true,
+              })
+            }
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Adding a head mid-entry (§16, §17) ─────────────────────────────────── */
+
+type HeadKind = "EXPENSE" | "INCOME";
+
+interface HeadOption {
+  id: string;
+  name: string;
+  code: string;
+}
+
+const HEAD_ENDPOINT: Record<HeadKind, string> = {
+  EXPENSE: "/expenses/categories",
+  INCOME: "/income/heads",
+};
+
+/** The query keys the dropdowns above read, from `use-reference-data`. */
+const HEAD_OPTIONS_KEY: Record<HeadKind, string> = {
+  EXPENSE: "expense-categories",
+  INCOME: "income-heads",
+};
+
+/**
+ * Add a head without abandoning the entry.
+ *
+ * A head missing from the list used to mean cancelling a half-filled form to go and create
+ * it — or filing the cost under whichever head was closest, which misstates the P&L from
+ * then on. Only the name is asked: the server generates the code, and a sub-head or a
+ * description can be set later on the Heads screen.
+ */
+function QuickHeadDialog({
+  kind,
+  onClose,
+  onPicked,
+}: {
+  kind: HeadKind;
+  onClose: () => void;
+  onPicked: (head: HeadOption) => void;
+}) {
+  const queryClient = useQueryClient();
+  const form = useForm<{ name: string }>({
+    resolver: zodResolver(createExpenseCategorySchema.pick({ name: true })),
+    defaultValues: { name: "" },
+  });
+
+  const mutation = useMutation({
+    mutationFn: (values: { name: string }) => api.post<HeadOption>(HEAD_ENDPOINT[kind], values),
+    onSuccess: async (head) => {
+      // Into the dropdown's list before it is selected, so the trigger shows the name at
+      // once rather than going blank until the refetch lands.
+      queryClient.setQueryData<HeadOption[]>([HEAD_OPTIONS_KEY[kind]], (old) => [...(old ?? []), head]);
+      onPicked(head);
+      toast.success(`${head.name} added`, {
+        description: "Selected for this entry. It is a ledger account now, and shows on the P&L.",
+      });
+      onClose();
+      await queryClient.invalidateQueries({ queryKey: [HEAD_OPTIONS_KEY[kind]] });
+      await queryClient.invalidateQueries({ queryKey: ["heads"] });
+    },
+    onError: (error) => {
+      applyServerErrors(form, error);
+      toast.error(error instanceof ApiError ? error.message : "Could not add the head.");
+    },
+  });
+
+  const submit = form.handleSubmit(({ name }) => {
+    /**
+     * Names are not unique on the server — only codes are — so a second "Salary" would be
+     * accepted and split one cost across two lines of the P&L. Typing the name of a head
+     * that already exists picks that head instead.
+     */
+    const existing = queryClient
+      .getQueryData<HeadOption[]>([HEAD_OPTIONS_KEY[kind]])
+      ?.find((h) => h.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      onPicked(existing);
+      toast.info(`${existing.name} already exists`, { description: "Selected it instead of adding a duplicate." });
+      onClose();
+      return;
+    }
+    mutation.mutate({ name });
+  });
+
+  return (
+    <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New {kind === "EXPENSE" ? "expense" : "income"} head</DialogTitle>
+          <DialogDescription>
+            Everything posted against it appears under this name in the Profit &amp; Loss.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-4" noValidate>
+          <TextField
+            form={form}
+            name="name"
+            label="Name"
+            required
+            placeholder={kind === "EXPENSE" ? "Panel Expense" : "Commission Income"}
+          />
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="accent" loading={mutation.isPending}>
+              Add head
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -659,11 +804,15 @@ function Field({
   );
 }
 
+/** Never a real id, so choosing it can only mean the create entry. */
+const CREATE_OPTION = "__create__";
+
 function SelectField({
   value,
   onChange,
   placeholder,
   options,
+  createOption,
   id,
   describedBy,
 }: {
@@ -671,12 +820,27 @@ function SelectField({
   onChange: (v: string) => void;
   placeholder: string;
   options: Array<{ value: string; label: string; hint?: string }>;
+  /**
+   * A last entry that opens a create dialog instead of selecting. It is a real item rather
+   * than a button in the popover, so the keyboard reaches it the same way as the options.
+   */
+  createOption?: { label: string; onSelect: () => void };
   /** Supplied by `Field` so the trigger carries the label's association. */
   id?: string;
   describedBy?: string;
 }) {
   return (
-    <Select value={value ?? ""} onValueChange={onChange}>
+    <Select
+      value={value ?? ""}
+      onValueChange={(v) => {
+        if (v === CREATE_OPTION) createOption?.onSelect();
+        // Inside a <form>, Radix mirrors the value into a hidden native <select> and
+        // reports "" when the value arrives in the same render as its option — which is
+        // exactly what selecting a just-created head does, and it wiped the selection.
+        // No item here has an empty value, so "" is never a choice somebody made.
+        else if (v !== "") onChange(v);
+      }}
+    >
       <SelectTrigger id={id} aria-describedby={describedBy}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
@@ -689,6 +853,17 @@ function SelectField({
             </span>
           </SelectItem>
         ))}
+        {createOption ? (
+          <>
+            {options.length > 0 ? <SelectSeparator /> : null}
+            <SelectItem value={CREATE_OPTION} className="font-medium text-accent focus:text-accent">
+              <span className="flex items-center gap-1.5">
+                <Plus className="size-3.5" aria-hidden />
+                {createOption.label}
+              </span>
+            </SelectItem>
+          </>
+        ) : null}
       </SelectContent>
     </Select>
   );

@@ -113,6 +113,35 @@ export const updateBankAccountSchema = createBankAccountSchema
   .partial();
 export type UpdateBankAccountInput = z.infer<typeof updateBankAccountSchema>;
 
+/* -------------------------------------------------------------------------- */
+/* Opening balance correction                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Correct a bank account's or drawer's opening balance.
+ *
+ * Accepted only while nothing but the opening has been posted to the account — see
+ * `OpeningBalanceState.editable`. The amount is in the account's own terms, exactly as on
+ * create: negative only for a bank account that starts overdrawn.
+ */
+export const changeOpeningBalanceSchema = z.object({
+  openingBalance: money,
+  reason: z.string().trim().max(300).optional(),
+});
+export type ChangeOpeningBalanceInput = z.infer<typeof changeOpeningBalanceSchema>;
+
+export interface OpeningBalanceState {
+  /** The opening currently on the books, in the account's own terms. 0 when none was posted. */
+  amount: number;
+  /** Date of the live opening posting; null when the account opened at zero. */
+  date: string | null;
+  txnNo: string | null;
+  /** True while every posting on the account is an opening balance or its reversal. */
+  editable: boolean;
+  /** Postings other than the opening — the reason it is locked, when it is. */
+  otherEntryCount: number;
+}
+
 export const bankAccountQuerySchema = listQuery.extend({
   bankId: objectId.optional(),
   accountType: z.nativeEnum(BANK_ACCOUNT_TYPE).optional(),

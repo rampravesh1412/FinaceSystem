@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   bankAccountQuerySchema,
+  changeOpeningBalanceSchema,
   createBankAccountSchema,
   createBankSchema,
   createCashAccountSchema,
@@ -12,6 +13,7 @@ import {
   updateBankSchema,
   updateCashAccountSchema,
   type BankAccountQuery,
+  type ChangeOpeningBalanceInput,
   type CreateBankAccountInput,
   type CreateBankInput,
   type CreateCashAccountInput,
@@ -21,7 +23,7 @@ import {
 } from "@amiri/shared";
 import { asyncHandler, created, ok, paginated, paging } from "../../lib/http.js";
 import { validate } from "../../middleware/validate.js";
-import { requireAuth, requirePermission } from "../../middleware/auth.js";
+import { requireAuth, requirePermission, requireSuperAdmin } from "../../middleware/auth.js";
 import { mutationLimiter } from "../../middleware/security.js";
 import { auditContextFrom } from "../../services/audit.service.js";
 import * as service from "./banking.service.js";
@@ -140,6 +142,52 @@ bankAccountRouter.patch(
   }),
 );
 
+/**
+ * The opening balance, and whether it can still be corrected.
+ *
+ * Its own route rather than a field on the list: answering "has anything else been posted"
+ * costs a query per account, and only the edit dialog asks it.
+ */
+bankAccountRouter.get(
+  "/:id/opening-balance",
+  requirePermission("bank_accounts.view"),
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    return ok(res, await service.getOpeningBalance("BANK", id));
+  }),
+);
+
+bankAccountRouter.put(
+  "/:id/opening-balance",
+  requirePermission("bank_accounts.edit"),
+  mutationLimiter,
+  validate({ params: idParam, body: changeOpeningBalanceSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const state = await service.changeOpeningBalance(
+      "BANK",
+      id,
+      req.valid.body as ChangeOpeningBalanceInput,
+      auditContextFrom(req),
+    );
+    return ok(res, state, "Opening balance updated");
+  }),
+);
+
+/** Soft delete, super admin only. Hidden from the UI; nothing is erased. */
+bankAccountRouter.delete(
+  "/:id",
+  requireSuperAdmin,
+  mutationLimiter,
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    await service.deleteAccount("BANK", id, auditContextFrom(req));
+    return ok(res, { id }, "Bank account deleted");
+  }),
+);
+
 /* ── Cash accounts ───────────────────────────────────────────────────────── */
 
 cashAccountRouter.get(
@@ -183,5 +231,45 @@ cashAccountRouter.patch(
       auditContextFrom(req),
     );
     return ok(res, await service.getCashAccountSummary(String(account._id)), `${account.name} updated`);
+  }),
+);
+
+/** See the bank account routes above — the same three, for a drawer. */
+cashAccountRouter.get(
+  "/:id/opening-balance",
+  requirePermission("bank_accounts.view"),
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    return ok(res, await service.getOpeningBalance("CASH", id));
+  }),
+);
+
+cashAccountRouter.put(
+  "/:id/opening-balance",
+  requirePermission("bank_accounts.edit"),
+  mutationLimiter,
+  validate({ params: idParam, body: changeOpeningBalanceSchema }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    const state = await service.changeOpeningBalance(
+      "CASH",
+      id,
+      req.valid.body as ChangeOpeningBalanceInput,
+      auditContextFrom(req),
+    );
+    return ok(res, state, "Opening balance updated");
+  }),
+);
+
+cashAccountRouter.delete(
+  "/:id",
+  requireSuperAdmin,
+  mutationLimiter,
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.valid.params as z.infer<typeof idParam>;
+    await service.deleteAccount("CASH", id, auditContextFrom(req));
+    return ok(res, { id }, "Cash drawer deleted");
   }),
 );

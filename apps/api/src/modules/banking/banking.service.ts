@@ -1,11 +1,14 @@
 import { Types, type ClientSession, type FilterQuery } from "mongoose";
 import {
+  formatINR,
   maskAccountNumber,
   type BankAccountSummary,
   type CashAccountSummary,
+  type ChangeOpeningBalanceInput,
   type CreateBankAccountInput,
   type CreateBankInput,
   type CreateCashAccountInput,
+  type OpeningBalanceState,
   type UpdateBankAccountInput,
   type UpdateCashAccountInput,
   type UpdateBankInput,
@@ -15,16 +18,20 @@ import {
   BankAccount,
   CashAccount,
   LedgerAccount,
+  LedgerEntry,
+  Transaction,
   nextSequence,
   type BankAccountDoc,
   type BankDoc,
   type CashAccountDoc,
+  type TransactionDoc,
 } from "../../models/index.js";
 import { BadRequestError, ConflictError, NotFoundError, translateDuplicate } from "../../lib/errors.js";
 import { escapeRegex, type Paging } from "../../lib/http.js";
 import { withTransaction } from "../../lib/unitOfWork.js";
 import * as ledger from "../../services/ledger.service.js";
 import * as audit from "../../services/audit.service.js";
+import * as reversals from "../transactions/reversal.service.js";
 
 /**
  * Banks, bank accounts and cash accounts.
@@ -159,6 +166,15 @@ export async function createBankAccount(
     );
   }
 
+  // A deleted account keeps its number, so the unique index would refuse this anyway —
+  // with a message about a duplicate nobody can see. Say which account holds it.
+  if (await BankAccount.exists({ bankId: input.bankId, accountNumber: input.accountNumber, deletedAt: { $ne: null } })) {
+    throw new ConflictError(
+      "That account number belongs to a deleted account at this bank. A deleted account keeps its number so its history stays traceable.",
+      "accountNumber",
+    );
+  }
+
   return withTransaction(async (session) => {
     try {
       const code = await ledgerCode("BANK", session);
@@ -275,7 +291,9 @@ export async function listBankAccounts(
   page: Paging,
   canSeeFullNumbers: boolean,
 ): Promise<{ items: BankAccountSummary[]; total: number; totalBalance: number }> {
-  const filter: FilterQuery<BankAccountDoc> = {};
+  // Soft-deleted accounts are gone from the UI. This list feeds every account picker too,
+  // so filtering here is what keeps them out of the entry forms as well.
+  const filter: FilterQuery<BankAccountDoc> = { deletedAt: null };
 
   if (filters.bankId) filter.bankId = new Types.ObjectId(filters.bankId);
   if (filters.accountType) filter.accountType = filters.accountType;
@@ -462,7 +480,8 @@ export async function updateCashAccount(
   ctx: audit.AuditContext,
 ): Promise<CashAccountDoc> {
   const account = await CashAccount.findById(id);
-  if (!account) throw new NotFoundError("Cash account", id);
+  // A deleted drawer cannot be edited back into use through its status.
+  if (!account || account.deletedAt) throw new NotFoundError("Cash account", id);
 
   const before = { name: account.name, code: account.code, status: account.status };
 
@@ -498,7 +517,8 @@ export async function updateBankAccount(
 ): Promise<BankAccountDoc> {
   return withTransaction(async (session) => {
     const account = await BankAccount.findById(id).session(session);
-    if (!account) throw new NotFoundError("Bank account", id);
+    // A deleted account cannot be edited back into use through its status.
+    if (!account || account.deletedAt) throw new NotFoundError("Bank account", id);
 
     const before = {
       accountName: account.accountName,
@@ -550,11 +570,18 @@ export async function createCashAccount(
   input: CreateCashAccountInput,
   ctx: audit.AuditContext,
 ): Promise<CashAccountDoc> {
+  // Names are unique and a deleted drawer keeps its own; say so instead of reporting a
+  // duplicate nobody can see.
+  if (await CashAccount.exists({ name: input.name, deletedAt: { $ne: null } })) {
+    throw new ConflictError(`A deleted drawer is still called “${input.name}”. Pick another name.`, "name");
+  }
+
   return withTransaction(async (session) => {
     try {
       const code = await ledgerCode("CASH", session);
-      // The first drawer opened becomes the default one.
-      const existing = await CashAccount.countDocuments({}).session(session);
+      // The first drawer opened becomes the default one. Deleted drawers do not count —
+      // deleting the default hands the flag on, or leaves none to hand.
+      const existing = await CashAccount.countDocuments({ deletedAt: null }).session(session);
 
       const ledgerAccount = await ledger.createLedgerAccount(
         {
@@ -628,7 +655,8 @@ export async function createCashAccount(
 export async function listCashAccounts(
   page: Paging,
 ): Promise<{ items: CashAccountSummary[]; total: number; totalBalance: number }> {
-  const filter: FilterQuery<CashAccountDoc> = {};
+  // Feeds every drawer picker as well as the Accounts screen — see `listBankAccounts`.
+  const filter: FilterQuery<CashAccountDoc> = { deletedAt: null };
 
   const [docs, total] = await Promise.all([
     CashAccount.find(filter)
@@ -678,4 +706,271 @@ export async function getCashAccountSummary(id: string): Promise<CashAccountSumm
     ledgerAccountId: String(d.ledgerAccountId._id),
     createdAt: d.createdAt.toISOString(),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Opening balance correction and soft delete                                 */
+/* -------------------------------------------------------------------------- */
+
+type AccountKey = "BANK" | "CASH";
+
+/** Either master, with the few things the opening-balance and delete paths need. */
+async function loadAccount(kind: AccountKey, id: string, session?: ClientSession) {
+  if (kind === "BANK") {
+    const account = await BankAccount.findById(id)
+      .populate<{ bankId: { name: string; shortName?: string } }>("bankId", "name shortName")
+      .session(session ?? null)
+      .lean();
+    if (!account || account.deletedAt) throw new NotFoundError("Bank account", id);
+    return {
+      id: account._id,
+      ledgerAccountId: account.ledgerAccountId,
+      name: account.accountName,
+      status: account.status,
+      isDefault: false,
+      createdAt: account.createdAt,
+      // The label `createBankAccount` posted the original opening under.
+      label: `${account.bankId?.shortName ?? account.bankId?.name ?? "Bank"} ••${account.accountNumber.slice(-4)}`,
+      entity: "BankAccount" as const,
+    };
+  }
+
+  const account = await CashAccount.findById(id).session(session ?? null).lean();
+  if (!account || account.deletedAt) throw new NotFoundError("Cash account", id);
+  return {
+    id: account._id,
+    ledgerAccountId: account.ledgerAccountId,
+    name: account.name,
+    status: account.status,
+    isDefault: account.isDefault,
+    createdAt: account.createdAt,
+    label: `Cash — ${account.name}`,
+    entity: "CashAccount" as const,
+  };
+}
+
+/**
+ * What the opening balance is, and whether anything else has been posted since.
+ *
+ * An opening and every reversal of one share the OPENING_BALANCE type, so "nothing else
+ * posted" is simply no entry of any other type. The live opening is the one neither
+ * reversed nor itself a reversal.
+ */
+async function openingStateOf(ledgerAccountId: Types.ObjectId, session?: ClientSession) {
+  const account = await LedgerAccount.findById(ledgerAccountId)
+    .select("accountClass")
+    .session(session ?? null)
+    .lean();
+  if (!account) throw new NotFoundError("Ledger account", String(ledgerAccountId));
+
+  // Sequential, not Promise.all: concurrent operations on one session abort the transaction.
+  const otherEntryCount = await LedgerEntry.countDocuments({
+    ledgerAccountId,
+    transactionType: { $ne: "OPENING_BALANCE" },
+  }).session(session ?? null);
+
+  const openingEntries = await LedgerEntry.find({ ledgerAccountId, transactionType: "OPENING_BALANCE" })
+    .select("transactionId direction amount")
+    .session(session ?? null)
+    .lean();
+
+  const live: TransactionDoc[] = await Transaction.find({
+    _id: { $in: openingEntries.map((e) => e.transactionId) },
+    status: "COMPLETED",
+    reversalOf: null,
+  })
+    .sort({ date: 1 })
+    .session(session ?? null);
+
+  const liveIds = new Set(live.map((t) => String(t._id)));
+  const amount = openingEntries
+    .filter((e) => liveIds.has(String(e.transactionId)))
+    .reduce((sum, e) => sum + ledger.signedDelta(account.accountClass, e.direction, e.amount), 0);
+
+  return { amount, live, otherEntryCount };
+}
+
+function toOpeningBalanceState(
+  amount: number,
+  posted: Pick<TransactionDoc, "date" | "txnNo"> | null | undefined,
+  otherEntryCount: number,
+): OpeningBalanceState {
+  return {
+    amount,
+    date: posted ? posted.date.toISOString() : null,
+    txnNo: posted?.txnNo ?? null,
+    editable: otherEntryCount === 0,
+    otherEntryCount,
+  };
+}
+
+export async function getOpeningBalance(kind: AccountKey, id: string): Promise<OpeningBalanceState> {
+  const account = await loadAccount(kind, id);
+  const state = await openingStateOf(account.ledgerAccountId);
+  return toOpeningBalanceState(state.amount, state.live[0], state.otherEntryCount);
+}
+
+/**
+ * Correct an opening balance — only while it is the account's only posting.
+ *
+ * A posted entry is still never rewritten. The live opening is REVERSED and the corrected
+ * figure posted in its place, on the same date and inside one database transaction, the
+ * way an edited payment is. Changing the amount in place would move a balance with nothing
+ * in the ledger to explain it, and leave Opening Equity's running balances disagreeing
+ * with its own entries.
+ *
+ * Once anything else is posted, other entries were checked against this opening (a payment
+ * allowed because the opening covered it), so it locks. A correction after that is an
+ * adjustment, which says what it is.
+ */
+export async function changeOpeningBalance(
+  kind: AccountKey,
+  id: string,
+  input: ChangeOpeningBalanceInput,
+  ctx: audit.AuditContext,
+): Promise<OpeningBalanceState> {
+  // Same rule the posting engine applies to every later movement out of a drawer.
+  if (kind === "CASH" && input.openingBalance < 0) {
+    throw new BadRequestError("A cash drawer cannot open below zero.", "openingBalance");
+  }
+
+  return withTransaction(async (session) => {
+    const account = await loadAccount(kind, id, session);
+    const state = await openingStateOf(account.ledgerAccountId, session);
+
+    if (state.otherEntryCount > 0) {
+      throw new BadRequestError(
+        `${account.name} already has ${state.otherEntryCount} posting${state.otherEntryCount === 1 ? "" : "s"} ` +
+          "besides its opening balance, so the opening is locked. Correct it with an adjustment instead.",
+        "openingBalance",
+      );
+    }
+
+    if (state.amount === input.openingBalance) {
+      return toOpeningBalanceState(state.amount, state.live[0], 0);
+    }
+
+    const original = state.live[0];
+    // The date of the figure being corrected, so a statement for any day reads right.
+    const date = original?.date ?? account.createdAt;
+    const reason =
+      input.reason ||
+      `Opening balance corrected from ${formatINR(state.amount)} to ${formatINR(input.openingBalance)}`;
+
+    for (const txn of state.live) {
+      await reversals.reverseWithin(String(txn._id), { reason, date: txn.date }, ctx, session);
+    }
+
+    // Zero posts nothing: an account may simply open empty.
+    const replacement = await ledger.postOpeningBalance(
+      {
+        ledgerAccountId: account.ledgerAccountId,
+        amount: input.openingBalance,
+        date,
+        label: account.label,
+        createdBy: ctx.userId!,
+      },
+      session,
+      ctx,
+    );
+
+    // Link the chain both ways, as an edited payment does.
+    if (original && replacement) {
+      await Transaction.updateOne(
+        { _id: original._id },
+        { $set: { supersededBy: replacement._id, editReason: reason } },
+        { session },
+      );
+      await Transaction.updateOne(
+        { _id: replacement._id },
+        { $set: { supersedes: original._id, editReason: reason } },
+        { session },
+      );
+    }
+
+    await audit.record(
+      ctx,
+      {
+        action: "BALANCE_ADJUSTED",
+        entity: account.entity,
+        entityId: id,
+        entityLabel: account.name,
+        amount: input.openingBalance,
+        reason,
+        oldValue: { openingBalance: state.amount, txnNo: original?.txnNo ?? null },
+        newValue: { openingBalance: input.openingBalance, txnNo: replacement?.txnNo ?? null },
+      },
+      session,
+    );
+
+    return toOpeningBalanceState(input.openingBalance, replacement, 0);
+  }, { label: `${kind === "BANK" ? "bankAccount" : "cashAccount"}.openingBalance` });
+}
+
+/**
+ * Soft-delete a bank account or a cash drawer. The routes restrict it to a super admin.
+ *
+ * Deleted means hidden, never erased. The master is stamped `deletedAt` and drops out of
+ * every list and picker; it and its ledger account go INACTIVE so nothing new can post to
+ * them. The entries stay, because last March's balance sheet still has to add up, and so
+ * does the audit trail that explains it.
+ *
+ * Refused while the account holds money: hiding a balance would leave the Accounts screen
+ * disagreeing with every report that still counts it. Move the money out — or, if it is
+ * only the opening balance, set that to zero — and then delete.
+ */
+export async function deleteAccount(kind: AccountKey, id: string, ctx: audit.AuditContext): Promise<void> {
+  await withTransaction(async (session) => {
+    const account = await loadAccount(kind, id, session);
+
+    const { balance } = await ledger.computeBalance(account.ledgerAccountId, { session });
+    if (balance !== 0) {
+      throw new BadRequestError(
+        `${account.name} still holds ${formatINR(balance)}. Move it to another account first — ` +
+          "deleting it now would hide money that the reports still count.",
+      );
+    }
+
+    const now = new Date();
+    const stamp = { deletedAt: now, deletedBy: ctx.userId, status: "INACTIVE", updatedBy: ctx.userId };
+
+    if (kind === "BANK") {
+      await BankAccount.updateOne({ _id: account.id }, { $set: stamp }, { session });
+    } else {
+      // The flag comes off before it is handed on: a partial unique index allows only one.
+      await CashAccount.updateOne({ _id: account.id }, { $set: { ...stamp, isDefault: false } }, { session });
+      if (account.isDefault) {
+        const successor = await CashAccount.findOne({ _id: { $ne: account.id }, deletedAt: null, status: "ACTIVE" })
+          .sort({ createdAt: 1 })
+          .select("_id")
+          .session(session)
+          .lean();
+        if (successor) {
+          await CashAccount.updateOne({ _id: successor._id }, { $set: { isDefault: true } }, { session });
+        }
+      }
+    }
+
+    // The ledger account too, or a caller naming it directly could still post to it, and
+    // the ledger pickers would keep offering it.
+    await LedgerAccount.updateOne(
+      { _id: account.ledgerAccountId },
+      { $set: { status: "INACTIVE", deletedAt: now } },
+      { session },
+    );
+
+    await audit.record(
+      ctx,
+      {
+        action: "DELETE",
+        entity: account.entity,
+        entityId: id,
+        entityLabel: account.name,
+        reason: "Soft delete — hidden from the UI; the record, its ledger account and every entry are kept",
+        oldValue: { status: account.status, deletedAt: null },
+        newValue: { status: "INACTIVE", deletedAt: now.toISOString() },
+      },
+      session,
+    );
+  }, { label: `${kind === "BANK" ? "bankAccount" : "cashAccount"}.delete` });
 }

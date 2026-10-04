@@ -95,7 +95,9 @@ ledgerRouter.get(
     const query = req.valid.query as LedgerAccountQuery;
     const page = paging(query, { code: 1 }, ["code", "name", "cachedBalance"]);
 
-    const filter: Record<string, unknown> = {};
+    // A soft-deleted bank account or drawer leaves the pickers too. Its statement still
+    // opens by id — the DayBook links to it — and every report still counts its entries.
+    const filter: Record<string, unknown> = { deletedAt: null };
 
     if (query.kind) filter.kind = query.kind;
     if (query.activeOnly) filter.cachedEntryCount = { $gt: 0 };

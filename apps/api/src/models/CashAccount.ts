@@ -20,6 +20,10 @@ export interface CashAccountDoc extends Document<Types.ObjectId> {
   isDefault: boolean;
   status: RecordStatus;
   notes?: string;
+
+  /** Soft delete — see the bank account model. Hidden everywhere, erased nowhere. */
+  deletedAt?: Date | null;
+  deletedBy?: Types.ObjectId;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
   createdAt: Date;
@@ -34,6 +38,9 @@ const cashAccountSchema = new Schema<CashAccountDoc>(
     isDefault: { type: Boolean, default: false },
     status: { type: String, enum: Object.values(RECORD_STATUS), default: RECORD_STATUS.ACTIVE, index: true },
     notes: { type: String, trim: true, maxlength: 500 },
+
+    deletedAt: { type: Date, default: null },
+    deletedBy: actorField(),
     createdBy: actorField(),
     updatedBy: actorField(),
   },

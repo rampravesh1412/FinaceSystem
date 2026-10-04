@@ -54,6 +54,8 @@ export interface LedgerAccountDoc extends Document<Types.ObjectId> {
   /** System accounts (equity, suspense, bank charges) cannot be deleted or renamed. */
   isSystem: boolean;
   status: RecordStatus;
+  /** Mirrors a soft-deleted bank or cash account, so the ledger pickers hide it too. */
+  deletedAt?: Date | null;
 
   createdBy?: Types.ObjectId;
   createdAt: Date;
@@ -90,6 +92,7 @@ const ledgerAccountSchema = new Schema<LedgerAccountDoc>(
       default: RECORD_STATUS.ACTIVE,
       index: true,
     },
+    deletedAt: { type: Date, default: null },
 
     createdBy: actorField(),
   },
